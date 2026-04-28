@@ -17,6 +17,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The helper runs under nix develop for Node, but the packaged server should
+# start with a production-like env so devshell variables do not leak into PTYs.
 env -i \
   HOME="$HOME" \
   USER="${USER:-}" \
