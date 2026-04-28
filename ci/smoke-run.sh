@@ -30,7 +30,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-XDG_CONFIG_HOME="$scratch/config" "$kolu_bin" \
+env -i \
+  HOME="$HOME" \
+  USER="${USER:-}" \
+  LOGNAME="${LOGNAME:-}" \
+  PATH="/usr/bin:/bin" \
+  XDG_CONFIG_HOME="$scratch/config" \
+  NODE_ENV=production \
+  "$kolu_bin" \
   --host 127.0.0.1 \
   --port "$port" \
   >"$log" 2>&1 &

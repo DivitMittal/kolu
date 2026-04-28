@@ -74,7 +74,7 @@ e2e: nix
 
 # Smoke-test the production wrapper can start and serve health.
 run: nix
-    just ci::_run run bash ci/smoke-run.sh
+    just ci::_run run "nix develop . --accept-flake-config -c bash ci/smoke-run.sh"
 
 # Run vitest unit tests (server + client)
 unit:
