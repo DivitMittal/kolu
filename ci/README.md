@@ -31,6 +31,8 @@ If `CI_SYSTEM` matches the local system, commands run directly (prefixed with `~
 
 Systems run in parallel via just's `[parallel]` attribute. Within each system, steps run sequentially respecting recipe dependencies.
 
+Kolu's project configuration runs the packaged production wrapper on each target system and waits for `/api/health`, so missing runtime dependencies fail CI even when the Nix build itself succeeds.
+
 ## Usage in your project
 
 ### 1. Create `ci/lib.just`
