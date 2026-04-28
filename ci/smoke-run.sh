@@ -3,19 +3,6 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 kolu_bin="$(nix build "$root#default" --print-out-paths --no-link)/bin/kolu"
-port="$(
-  node --input-type=module <<'NODE'
-import { createServer } from "node:net";
-
-const server = createServer();
-server.listen(0, "127.0.0.1", () => {
-  const address = server.address();
-  if (!address || typeof address === "string") process.exit(1);
-  console.log(address.port);
-  server.close();
-});
-NODE
-)"
 
 scratch="$(mktemp -d)"
 log="$scratch/kolu.log"
@@ -39,12 +26,31 @@ env -i \
   NODE_ENV=production \
   "$kolu_bin" \
   --host 127.0.0.1 \
-  --port "$port" \
+  --port 0 \
   >"$log" 2>&1 &
 kolu_pid="$!"
 
 for _ in {1..80}; do
-  if node --input-type=module - "http://127.0.0.1:$port/api/health" <<'NODE'
+  url="$(node --input-type=module - "$log" <<'NODE'
+import { readFileSync } from "node:fs";
+
+const logPath = process.argv.at(-1);
+for (const line of readFileSync(logPath, "utf8").trim().split("\n")) {
+  if (!line) continue;
+  try {
+    const entry = JSON.parse(line);
+    if (entry.msg === "kolu listening" && typeof entry.address === "string") {
+      console.log(entry.address);
+      process.exit(0);
+    }
+  } catch {
+    // Ignore non-JSON lines so startup errors are still printed below.
+  }
+}
+NODE
+)"
+
+  if [[ -n "$url" ]] && node --input-type=module - "$url/api/health" <<'NODE'
 const url = process.argv.at(-1);
 try {
   const response = await fetch(url);
@@ -55,7 +61,7 @@ try {
 }
 NODE
   then
-    echo "kolu health check passed on 127.0.0.1:$port"
+    echo "kolu health check passed at $url"
     exit 0
   fi
 
@@ -68,5 +74,5 @@ NODE
 done
 
 cat "$log" >&2
-echo "kolu did not become healthy on 127.0.0.1:$port" >&2
+echo "kolu did not become healthy" >&2
 exit 1
