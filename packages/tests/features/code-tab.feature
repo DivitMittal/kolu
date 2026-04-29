@@ -57,7 +57,6 @@ Feature: Code tab (review + browse)
     And I run "git commit --allow-empty -m init"
     And I run "printf 'hello\n' > note.txt"
     And I click the Code tab
-    And I click the refresh button in the Code tab
     Then the Code tab should list a changed file "note.txt"
     When I click the changed file "note.txt" in the Code tab
     Then the Code tab should render a diff view
@@ -69,7 +68,6 @@ Feature: Code tab (review + browse)
     And I run "printf 'modified\n' > tracked.txt"
     And I run "printf 'new\n' > untracked.txt"
     And I click the Code tab
-    And I click the refresh button in the Code tab
     Then the Code tab should list a changed file "tracked.txt"
     And the Code tab should list a changed file "untracked.txt"
 
@@ -80,7 +78,6 @@ Feature: Code tab (review + browse)
     And I run "git commit --allow-empty -m init"
     And I run "mkdir -p src/components && printf 'a\n' > src/index.ts && printf 'b\n' > src/components/Button.tsx"
     And I click the Code tab
-    And I click the refresh button in the Code tab
     Then the Code tab should show a directory node "src"
     And the Code tab should list a changed file "src/index.ts"
     And the Code tab should list a changed file "src/components/Button.tsx"
@@ -90,7 +87,6 @@ Feature: Code tab (review + browse)
     And I run "git commit --allow-empty -m init"
     And I run "mkdir -p pkg && printf 'x\n' > pkg/a.ts && printf 'y\n' > pkg/b.ts"
     And I click the Code tab
-    And I click the refresh button in the Code tab
     Then the Code tab should list a changed file "pkg/a.ts"
     When I click the directory node "pkg" in the Code tab
     Then the Code tab should not list a changed file "pkg/a.ts"
@@ -104,7 +100,6 @@ Feature: Code tab (review + browse)
     And I run "git commit --allow-empty -m init"
     And I run "mkdir -p api && printf 'q\n' > api/handler.ts"
     And I click the Code tab
-    And I click the refresh button in the Code tab
     Then the Code tab should list a changed file "api/handler.ts"
     When I right-click the changed file "api/handler.ts" in the Code tab
     And I click the context menu item "Copy path"
@@ -173,7 +168,6 @@ Feature: Code tab (review + browse)
     And I run "printf 'a-one\na-two\na-three\n' > file-a.txt"
     And I run "printf 'b-one\nb-two\nb-three\n' > file-b.txt"
     And I click the Code tab
-    And I click the refresh button in the Code tab
     Then the Code tab should list a changed file "file-a.txt"
     And the Code tab should list a changed file "file-b.txt"
     When I click the changed file "file-a.txt" in the Code tab
@@ -190,3 +184,37 @@ Feature: Code tab (review + browse)
     When I click the context menu item "Copy file-b.txt:1"
     Then the clipboard should contain "file-b.txt:1"
     And the clipboard should not contain "file-a.txt"
+
+  # ── Live updates: filesystem changes propagate without manual refresh ──
+  # The Code view subscribes to a watcher that observes four axes (HEAD,
+  # reflog, index, working tree) and pushes snapshot updates whenever any
+  # changes. These two scenarios open the tab on a selected file, mutate
+  # the file from the shell, and assert the new content reaches the diff
+  # body and the browse body — no click on a refresh button (it's gone).
+  #
+  # The post-tab `I click the terminal canvas` is required: clicking the
+  # right-panel tab moves focus off the terminal, so subsequent keystrokes
+  # would land in the panel instead of the PTY.
+
+  Scenario: Editing a file updates the diff view live
+    When I run "git init /tmp/kolu-live-diff && cd /tmp/kolu-live-diff"
+    And I run "git commit --allow-empty -m init"
+    And I run "printf 'before\n' > note.txt"
+    And I click the Code tab
+    And I click the changed file "note.txt" in the Code tab
+    Then the diff view should contain "before"
+    When I click the terminal canvas
+    And I run "printf 'after\n' > note.txt"
+    Then the diff view should contain "after"
+
+  Scenario: Editing a file updates browse-mode content live
+    When I run "git init /tmp/kolu-live-browse && cd /tmp/kolu-live-browse"
+    And I run "printf 'first version\n' > letters.txt"
+    And I run "git add . && git commit -m init"
+    And I click the Code tab
+    And I click the Code tab mode "browse"
+    And I click the file "letters.txt" in the file browser
+    Then the file content should contain "first version"
+    When I click the terminal canvas
+    And I run "printf 'second version\n' > letters.txt"
+    Then the file content should contain "second version"

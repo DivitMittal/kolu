@@ -141,6 +141,7 @@ export const FsReadFileOutputSchema = z.object({
   /** True if the file exceeded the size limit and was truncated. */
   truncated: z.boolean(),
 });
+export type FsReadFileOutput = z.infer<typeof FsReadFileOutputSchema>;
 
 // --- Derived types ---
 
