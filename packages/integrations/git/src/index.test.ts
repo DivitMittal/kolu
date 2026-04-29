@@ -371,6 +371,22 @@ describe("resolveGitInfo", () => {
     expect(result.value.remoteUrl).toBe("https://github.com/juspay/kolu.git");
   });
 
+  it("keeps repo info when remote URL lookup fails", async () => {
+    const { dir, git } = await initRepo("remote-config-without-url");
+    await git.raw([
+      "config",
+      "remote.origin.fetch",
+      "+refs/heads/*:refs/remotes/origin/*",
+    ]);
+
+    const result = await resolveGitInfo(dir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.repoRoot).toBe(fs.realpathSync(dir));
+    expect(result.value.branch).toBe("main");
+    expect(result.value.remoteUrl).toBeNull();
+  });
+
   it("uses a non-origin remote URL when origin is absent", async () => {
     const { dir, git } = await initRepo("upstream-remote-repo");
     await git.remote(["add", "upstream", "git@github.com:juspay/kolu.git"]);

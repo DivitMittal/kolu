@@ -31,7 +31,7 @@ function redactRemoteUrl(raw: string): string {
   return value;
 }
 
-async function resolveRemoteUrl(
+async function readRemoteUrl(
   git: ReturnType<typeof simpleGit>,
 ): Promise<string | null> {
   const remotes = (await git.raw(["remote"]))
@@ -42,6 +42,22 @@ async function resolveRemoteUrl(
   if (!remote) return null;
   const url = (await git.raw(["remote", "get-url", remote])).trim();
   return url ? redactRemoteUrl(url) : null;
+}
+
+async function resolveRemoteUrl(
+  git: ReturnType<typeof simpleGit>,
+  cwd: string,
+  log?: Logger,
+): Promise<string | null> {
+  try {
+    return await readRemoteUrl(git);
+  } catch (e) {
+    log?.debug(
+      { err: e instanceof Error ? e.message : String(e), cwd },
+      "git: remote url unavailable",
+    );
+    return null;
+  }
 }
 
 /** Fast check: does a .git entry exist in this directory? (stat, not a git subprocess) */
@@ -62,7 +78,6 @@ export async function resolveGitInfo(
 ): Promise<GitResult<GitInfo>> {
   try {
     const git = simpleGit(cwd);
-    const remoteUrl = await resolveRemoteUrl(git);
     // Bare repos (core.bare=true) have no work tree, so `--show-toplevel`
     // throws on them. Detect up front and return a GitInfo rooted at the
     // bare repo's own location — the palette consumer treats the result as
@@ -96,6 +111,7 @@ export async function resolveGitInfo(
         // Detached HEAD in a bare repo (unusual but possible).
         branch = (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
       }
+      const remoteUrl = await resolveRemoteUrl(git, cwd, log);
       return ok({
         repoRoot,
         repoName,
@@ -119,6 +135,7 @@ export async function resolveGitInfo(
     // realpathSync normalizes symlinks (e.g. /tmp → /private/tmp on macOS)
     // so the comparison with repoRoot (which git already resolved) is reliable.
     const gitCommonDir = (await git.revparse(["--git-common-dir"])).trim();
+    const remoteUrl = await resolveRemoteUrl(git, cwd, log);
     const mainRepoRoot = path.dirname(
       fs.realpathSync(path.resolve(cwd, gitCommonDir)),
     );
