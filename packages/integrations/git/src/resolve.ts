@@ -37,6 +37,10 @@ async function readRemoteUrl(
     .filter(Boolean);
   const remote = remotes.includes("origin") ? "origin" : remotes[0];
   if (!remote) return null;
+  const configuredUrl = (
+    await git.raw(["config", "--get", `remote.${remote}.url`])
+  ).trim();
+  if (!configuredUrl) return null;
   const url = (await git.raw(["remote", "get-url", remote])).trim();
   return url ? redactRemoteUrl(url) : null;
 }
