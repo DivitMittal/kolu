@@ -57,6 +57,15 @@ const MetadataInspector: Component<{
                   <Row label="Repo">
                     <span class="text-fg">{git().repoName}</span>
                   </Row>
+                  <Show when={git().remoteUrl}>
+                    {(remoteUrl) => (
+                      <Row label="Remote">
+                        <span class="font-mono text-fg-3 break-all">
+                          {remoteUrl()}
+                        </span>
+                      </Row>
+                    )}
+                  </Show>
                   <Row label="Root">
                     <span class="font-mono text-fg-3">
                       {git().mainRepoRoot}

@@ -13,6 +13,37 @@ import { err, type GitResult, ok } from "./errors.ts";
 import { watchGitHead } from "./head-watcher.ts";
 import type { GitInfo } from "./schemas.ts";
 
+function redactRemoteUrl(raw: string): string {
+  const value = raw.trim();
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.username || url.password)
+    ) {
+      url.username = "";
+      url.password = "";
+      return url.toString();
+    }
+  } catch {
+    return value.replace(/^(https?:\/\/)[^/@\s]+@/i, "$1");
+  }
+  return value;
+}
+
+async function resolveRemoteUrl(
+  git: ReturnType<typeof simpleGit>,
+): Promise<string | null> {
+  const remotes = (await git.raw(["remote"]))
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const remote = remotes.includes("origin") ? "origin" : remotes[0];
+  if (!remote) return null;
+  const url = (await git.raw(["remote", "get-url", remote])).trim();
+  return url ? redactRemoteUrl(url) : null;
+}
+
 /** Fast check: does a .git entry exist in this directory? (stat, not a git subprocess) */
 export function hasGitDir(cwd: string): boolean {
   try {
@@ -31,6 +62,7 @@ export async function resolveGitInfo(
 ): Promise<GitResult<GitInfo>> {
   try {
     const git = simpleGit(cwd);
+    const remoteUrl = await resolveRemoteUrl(git);
     // Bare repos (core.bare=true) have no work tree, so `--show-toplevel`
     // throws on them. Detect up front and return a GitInfo rooted at the
     // bare repo's own location — the palette consumer treats the result as
@@ -69,6 +101,7 @@ export async function resolveGitInfo(
         repoName,
         worktreePath: repoRoot,
         branch,
+        remoteUrl,
         isWorktree: false,
         mainRepoRoot: repoRoot,
       });
@@ -95,6 +128,7 @@ export async function resolveGitInfo(
       repoName: path.basename(mainRepoRoot),
       worktreePath: cwd,
       branch,
+      remoteUrl,
       isWorktree,
       mainRepoRoot,
     });
@@ -119,25 +153,27 @@ export function gitInfoEqual(a: GitInfo | null, b: GitInfo | null): boolean {
   return (
     a.repoRoot === b.repoRoot &&
     a.branch === b.branch &&
-    a.worktreePath === b.worktreePath
+    a.worktreePath === b.worktreePath &&
+    a.remoteUrl === b.remoteUrl
   );
 }
 
 /**
  * Subscribe to the GitInfo stream for a cwd. Owns the full resolve + watch
- * + re-resolve loop: initial resolve, `.git/HEAD` watcher, debounced re-
- * resolve on HEAD change, dedup via `gitInfoEqual`, and `git init` detection
+ * + re-resolve loop: initial resolve, `.git/HEAD`/config watcher, debounced
+ * re-resolve on branch or remote change, dedup via `gitInfoEqual`, and `git init` detection
  * (a same-cwd `setCwd` call on a not-yet-a-repo checks `.git` existence and
  * re-resolves if it appeared since the last resolve).
  *
  * `onChange` fires once per actual change — never for a dedup miss. Initial
  * resolve is best-effort: if the cwd isn't a git repo at start, the watcher
- * sits idle (HEAD watch is a no-op on non-git dirs per `watchGitHead`) until
+ * sits idle (git watch is a no-op on non-git dirs per `watchGitHead`) until
  * `setCwd` tells it to re-check.
  *
  * Callers are the sole source of truth for current GitInfo — never re-read
  * the value elsewhere to drive control flow. The returned handle's `stop()`
- * tears down the HEAD watcher; `setCwd(next)` swaps the watched directory.
+ * tears down the git metadata watcher; `setCwd(next)` swaps the watched
+ * directory.
  */
 export function subscribeGitInfo(
   initialCwd: string,
@@ -146,9 +182,9 @@ export function subscribeGitInfo(
 ): { setCwd(next: string): void; stop(): void } {
   let currentCwd = initialCwd;
   let currentInfo: GitInfo | null = null;
-  let stopHead = watchGitHead(currentCwd, handleHeadChange, log);
+  let stopGitWatch = watchGitHead(currentCwd, handleGitChange, log);
 
-  function handleHeadChange(): void {
+  function handleGitChange(): void {
     void resolve();
   }
 
@@ -175,22 +211,22 @@ export function subscribeGitInfo(
         // Same cwd — only act if the repo state might have changed from
         // outside. Today that's exactly one case: we thought this dir wasn't
         // a repo and `.git` has since appeared (e.g. `git init`). The
-        // existing `stopHead` is a no-op (install failed for a non-git dir),
-        // so re-install here so the new repo's HEAD changes propagate.
+        // existing git watch is a no-op (install failed for a non-git dir),
+        // so re-install here so the new repo's metadata changes propagate.
         if (currentInfo === null && hasGitDir(next)) {
-          stopHead();
-          stopHead = watchGitHead(next, handleHeadChange, log);
+          stopGitWatch();
+          stopGitWatch = watchGitHead(next, handleGitChange, log);
           void resolve();
         }
         return;
       }
       currentCwd = next;
-      stopHead();
-      stopHead = watchGitHead(next, handleHeadChange, log);
+      stopGitWatch();
+      stopGitWatch = watchGitHead(next, handleGitChange, log);
       void resolve();
     },
     stop(): void {
-      stopHead();
+      stopGitWatch();
     },
   };
 }

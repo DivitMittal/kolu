@@ -77,6 +77,19 @@ Then(
 );
 
 Then(
+  "the inspector should show remote {string}",
+  async function (this: KoluWorld, expected: string) {
+    const git = this.page.locator('[data-testid="inspector-branch"]');
+    await git.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    const text = await git.textContent();
+    assert.ok(
+      text?.includes(expected),
+      `Expected inspector git section to show remote "${expected}", got "${text}"`,
+    );
+  },
+);
+
+Then(
   "the inspector should show a theme section",
   async function (this: KoluWorld) {
     // Theme section renders a clickable button with the theme name inside the right panel.

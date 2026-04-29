@@ -10,6 +10,8 @@ export const GitInfoSchema = z.object({
   repoName: z.string(),
   worktreePath: z.string(),
   branch: z.string(),
+  /** Credential-redacted remote URL, preferring origin when present. */
+  remoteUrl: z.string().nullable().default(null),
   isWorktree: z.boolean(),
   mainRepoRoot: z.string(),
 });

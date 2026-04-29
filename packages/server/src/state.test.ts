@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { migrateLegacyTerminal_1_18_0 } from "./state.ts";
+import {
+  migrateLegacyTerminal_1_18_0,
+  migrateTerminalGitRemote_1_19_0,
+} from "./state.ts";
 
 // KOLU_STATE_DIR is set by the `test:unit` script in package.json — state.ts
 // reads it at module load.
@@ -23,6 +26,7 @@ describe("migrateLegacyTerminal_1_18_0", () => {
         // on first restore). No empty-string sentinels.
         repoRoot: "/home/alice/projects/app",
         worktreePath: "/home/alice/projects/app",
+        remoteUrl: null,
         isWorktree: false,
         mainRepoRoot: "/home/alice/projects/app",
       },
@@ -46,6 +50,7 @@ describe("migrateLegacyTerminal_1_18_0", () => {
       repoName: "app",
       worktreePath: "/home/alice/projects/app",
       branch: "feature",
+      remoteUrl: null,
       isWorktree: false,
       mainRepoRoot: "/home/alice/projects/app",
     };
@@ -69,6 +74,7 @@ describe("migrateLegacyTerminal_1_18_0", () => {
       repoName: "real",
       worktreePath: "/home/alice/projects/real",
       branch: "real-branch",
+      remoteUrl: null,
       isWorktree: false,
       mainRepoRoot: "/home/alice/projects/real",
     };
@@ -103,5 +109,49 @@ describe("migrateLegacyTerminal_1_18_0", () => {
       canvasLayout: { x: 10, y: 20, w: 300, h: 200 },
       lastAgentCommand: "claude --model sonnet",
     });
+  });
+});
+
+describe("migrateTerminalGitRemote_1_19_0", () => {
+  it("adds remoteUrl null to existing GitInfo", () => {
+    const migrated = migrateTerminalGitRemote_1_19_0({
+      id: "term-1",
+      cwd: "/home/alice/projects/app",
+      git: {
+        repoRoot: "/home/alice/projects/app",
+        repoName: "app",
+        worktreePath: "/home/alice/projects/app",
+        branch: "main",
+        isWorktree: false,
+        mainRepoRoot: "/home/alice/projects/app",
+      },
+    });
+    expect(migrated).toMatchObject({
+      git: {
+        remoteUrl: null,
+      },
+    });
+  });
+
+  it("preserves an existing remoteUrl", () => {
+    const terminal = {
+      id: "term-2",
+      cwd: "/home/alice/projects/app",
+      git: {
+        repoRoot: "/home/alice/projects/app",
+        repoName: "app",
+        worktreePath: "/home/alice/projects/app",
+        branch: "main",
+        remoteUrl: "https://github.com/juspay/kolu.git",
+        isWorktree: false,
+        mainRepoRoot: "/home/alice/projects/app",
+      },
+    };
+    expect(migrateTerminalGitRemote_1_19_0(terminal)).toBe(terminal);
+  });
+
+  it("leaves non-git terminals unchanged", () => {
+    const terminal = { id: "term-3", cwd: "/tmp", git: null };
+    expect(migrateTerminalGitRemote_1_19_0(terminal)).toBe(terminal);
   });
 });

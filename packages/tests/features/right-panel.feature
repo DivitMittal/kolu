@@ -41,10 +41,11 @@ Feature: Right panel (inspector)
     And there should be no page errors
 
   Scenario: Inspector shows git branch in a git repo
-    When I run "git init /tmp/kolu-inspector-git && cd /tmp/kolu-inspector-git"
+    When I run "git init /tmp/kolu-inspector-git && cd /tmp/kolu-inspector-git && git remote add origin https://github.com/juspay/kolu.git"
     When I press the toggle inspector shortcut
     Then the right panel should be visible
     And the inspector should show a git branch section
+    And the inspector should show remote "https://github.com/juspay/kolu.git"
     And there should be no page errors
 
   Scenario: Inspector shows theme name

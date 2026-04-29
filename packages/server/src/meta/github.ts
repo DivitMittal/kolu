@@ -2,10 +2,10 @@
  * GitHub PR metadata provider — thin adapter around `kolu-github`.
  *
  * The integration owns everything gh-specific: `KOLU_GH_BIN` lookup, the
- * `gh pr view` spawn, branch-change dedup, the 30s polling loop, failure
+ * `gh pr view` spawn, git-context dedup, the 30s polling loop, failure
  * classification and routing. This file just wires the watcher to the
- * server's `git:` channel and pushes resolved `PrResult` values into
- * terminal metadata via `updateServerMetadata`.
+ * server's `git:` channel (repo, branch, remote) and pushes resolved
+ * `PrResult` values into terminal metadata via `updateServerMetadata`.
  *
  * ┌─ FUTURE: PrProvider extraction ──────────────────────────────────────┐
  * │ When Bitbucket (`bkt`) support lands (srid/agency#10), a sibling     │
@@ -51,7 +51,11 @@ export function startGitHubPrProvider(
 
   const abort = new AbortController();
   subscribeForTerminal("git", terminalId, abort.signal, (git) => {
-    watcher.setGit(git?.repoRoot ?? null, git?.branch ?? null);
+    watcher.setGit(
+      git?.repoRoot ?? null,
+      git?.branch ?? null,
+      git?.remoteUrl ?? null,
+    );
   });
 
   return () => {

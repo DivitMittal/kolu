@@ -268,6 +268,7 @@ describe("gitInfoEqual", () => {
     repoName: "repo",
     worktreePath: "/home/user/repo",
     branch: "main",
+    remoteUrl: null,
     isWorktree: false,
     mainRepoRoot: "/home/user/repo",
   };
@@ -294,6 +295,7 @@ describe("gitInfoEqual", () => {
     { field: "repoRoot", value: "/other" },
     { field: "branch", value: "develop" },
     { field: "worktreePath", value: "/other" },
+    { field: "remoteUrl", value: "https://github.com/juspay/kolu.git" },
   ] as const)("detects different $field", ({ field, value }) => {
     expect(gitInfoEqual(info, { ...info, [field]: value })).toBe(false);
   });
@@ -350,12 +352,38 @@ describe("resolveGitInfo", () => {
     expect(result.value.repoRoot).toBe(fs.realpathSync(dir));
     expect(result.value.repoName).toBe("plain-repo");
     expect(result.value.branch).toBe("main");
+    expect(result.value.remoteUrl).toBeNull();
     expect(result.value.isWorktree).toBe(false);
     expect(result.value.mainRepoRoot).toBe(fs.realpathSync(dir));
   });
 
+  it("resolves a credential-redacted remote URL", async () => {
+    const { dir, git } = await initRepo("remote-repo");
+    await git.remote([
+      "add",
+      "origin",
+      "https://user:token@github.com/juspay/kolu.git",
+    ]);
+
+    const result = await resolveGitInfo(dir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.remoteUrl).toBe("https://github.com/juspay/kolu.git");
+  });
+
+  it("uses a non-origin remote URL when origin is absent", async () => {
+    const { dir, git } = await initRepo("upstream-remote-repo");
+    await git.remote(["add", "upstream", "git@github.com:juspay/kolu.git"]);
+
+    const result = await resolveGitInfo(dir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.remoteUrl).toBe("git@github.com:juspay/kolu.git");
+  });
+
   it("resolves a worktree", async () => {
     const { dir: mainDir, git } = await initRepo("main-repo");
+    await git.remote(["add", "origin", "git@github.com:juspay/kolu.git"]);
     const worktreeDir = path.join(tmpDir, "my-worktree");
     await git.raw(["worktree", "add", "-b", "feature", worktreeDir]);
 
@@ -365,6 +393,7 @@ describe("resolveGitInfo", () => {
     expect(result.value.repoRoot).toBe(fs.realpathSync(worktreeDir));
     expect(result.value.repoName).toBe("main-repo");
     expect(result.value.branch).toBe("feature");
+    expect(result.value.remoteUrl).toBe("git@github.com:juspay/kolu.git");
     expect(result.value.isWorktree).toBe(true);
     expect(result.value.mainRepoRoot).toBe(fs.realpathSync(mainDir));
   });
@@ -732,6 +761,27 @@ describe("watchGitHead", () => {
     expect(_sharedHeadWatcherCount()).toBe(0);
   });
 
+  it("a remote config change fans out to every subscriber on the shared watcher", async () => {
+    const { dir, git, gitDir } = await initRepo("remote-dispatch-repo");
+    let fires = 0;
+    const stop = watchGitHead(dir, () => {
+      fires++;
+    });
+    expect(_sharedHeadWatcherCount()).toBe(1);
+
+    await git.remote(["add", "origin", "https://github.com/juspay/kolu.git"]);
+
+    await waitFor(() => fires > 0, 3000).catch(async () => {
+      const config = path.join(gitDir, "config");
+      fs.writeFileSync(config, fs.readFileSync(config));
+      await waitFor(() => fires > 0, 2000);
+    });
+
+    expect(fires).toBeGreaterThan(0);
+    stop();
+    expect(_sharedHeadWatcherCount()).toBe(0);
+  });
+
   it("a listener that throws does not block its peers", async () => {
     const { dir, git, gitDir } = await initRepo("fault-isolation-repo");
     let bFires = 0;
@@ -807,8 +857,8 @@ describe("subscribeGitInfo watcher churn", () => {
     let retires = 0;
     const log = {
       info(_obj: unknown, msg: string) {
-        if (msg === "git: head watcher installed") installs++;
-        if (msg === "git: head watcher retired") retires++;
+        if (msg === "git: metadata watcher installed") installs++;
+        if (msg === "git: metadata watcher retired") retires++;
       },
       debug() {},
       warn() {},
@@ -897,6 +947,26 @@ describe("subscribeGitInfo watcher churn", () => {
 
     expect(counter.installs).toBe(1);
     expect(counter.retires).toBe(1);
+  });
+
+  it("publishes when the origin remote changes", async () => {
+    const { dir, git } = await initRepo("remote-change");
+
+    const updates: (GitInfo | null)[] = [];
+    const sub = subscribeGitInfo(dir, (info) => {
+      updates.push(info);
+    });
+
+    await waitFor(() => updates.length >= 1);
+    expect(updates[0]?.remoteUrl).toBeNull();
+
+    await git.remote(["add", "origin", "https://github.com/juspay/kolu.git"]);
+    await waitFor(() => updates.length >= 2);
+    expect(updates.at(-1)?.remoteUrl).toBe(
+      "https://github.com/juspay/kolu.git",
+    );
+
+    sub.stop();
   });
 
   it("setCwd between two distinct git repos: 1 install + 1 retire per transition", async () => {

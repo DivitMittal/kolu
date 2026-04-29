@@ -23,7 +23,7 @@ Functions accept `log?: Logger` (from `anyagent`). Pass a pino child logger in p
 | Module         | Exports                                                                           | Purpose                                                                  |
 | -------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `schemas.ts`   | `GitInfoSchema`, `GitDiffOutputSchema`, etc.                                      | Zod schemas (re-exported by `kolu-common`)                               |
-| `resolve.ts`   | `resolveGitInfo`, `watchGitHead`, `gitInfoEqual`, `hasGitDir`, `subscribeGitInfo` | Repo context resolution + `.git/HEAD` watching + combined subscribe loop |
+| `resolve.ts`   | `resolveGitInfo`, `watchGitHead`, `gitInfoEqual`, `hasGitDir`, `subscribeGitInfo` | Repo context resolution + git metadata watching + combined subscribe loop |
 | `worktree.ts`  | `worktreeCreate`, `worktreeRemove`, `detectDefaultBranch`                         | Worktree lifecycle                                                       |
 | `review.ts`    | `getStatus`, `getDiff`, `parseNameStatus`                                         | Diff review (local + branch modes)                                       |
 | `safe-path.ts` | `resolveUnder`                                                                    | Path traversal guard                                                     |
@@ -33,7 +33,7 @@ Functions accept `log?: Logger` (from `anyagent`). Pass a pino child logger in p
 
 The server's `meta/git.ts` is a thin adapter around `subscribeGitInfo`:
 
-1. Calls `subscribeGitInfo(cwd, onChange)` — the integration owns the resolve + `.git/HEAD` watch + re-resolve loop, including dedup via `gitInfoEqual` and `git init` detection (same-cwd `setCwd` on a not-yet-a-repo checks `.git` and re-resolves if it appeared)
+1. Calls `subscribeGitInfo(cwd, onChange)` — the integration owns the resolve + `.git/HEAD`/config watch + re-resolve loop, including dedup via `gitInfoEqual` and `git init` detection (same-cwd `setCwd` on a not-yet-a-repo checks `.git` and re-resolves if it appeared)
 2. On change, bridges results into the metadata event system (`updateServerMetadata`, `publishForTerminal("git", …)`) and tracks the repo in the recents list
 3. On terminal cwd change (via the `cwd:` channel), calls `watcher.setCwd(next)` — the integration swaps the watched directory
 

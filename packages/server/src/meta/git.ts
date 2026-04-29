@@ -33,7 +33,7 @@ export function startGitProvider(
       });
       publishForTerminal("git", terminalId, git);
       plog.debug(
-        { repo: git?.repoName, branch: git?.branch },
+        { repo: git?.repoName, branch: git?.branch, remote: git?.remoteUrl },
         "git info updated",
       );
     },

@@ -1,7 +1,7 @@
 /**
- * Refcounted shared `.git/HEAD` watcher.
+ * Refcounted shared git metadata watcher.
  *
- * N terminals open in the same git repo collapse to one `fs.watch` handle
+ * N terminals open in the same git repo collapse to one watcher entry
  * and one debounce timer that fans out to all listeners. First subscriber
  * installs; last unsubscribe tears down and drops the registry entry, so
  * a fresh subscribe after teardown installs a new watcher cleanly.
@@ -10,7 +10,7 @@
  * `packages/integrations/anyagent/src/wal-subscription.ts` — different
  * sharing strategy (module-scope `Map` keyed by gitDir vs factory-private
  * closure) for a different lifetime: WAL subscriptions are scoped to one
- * integration instance; HEAD watchers are scoped to a system-wide path.
+ * integration instance; git metadata watchers are scoped to system-wide paths.
  */
 
 import { execSync } from "node:child_process";
@@ -29,46 +29,62 @@ interface SharedHeadWatcher {
   subscribe(onChange: () => void): () => void;
 }
 
-/** Module-scope registry: one entry per resolved gitDir. */
+interface WatchTarget {
+  dir: string;
+  filenames: Set<string>;
+}
+
+/** Module-scope registry: one entry per resolved gitDir/commonGitDir pair. */
 const sharedHeadWatchers = new Map<string, SharedHeadWatcher>();
 
 function installSharedHeadWatcher(
-  gitDir: string,
+  key: string,
+  targets: WatchTarget[],
   onLast: () => void,
   log?: Logger,
 ): SharedHeadWatcher | null {
   const listeners = new Set<() => void>();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
-  let watcher: fs.FSWatcher;
-  try {
-    watcher = fs.watch(gitDir, (_, filename) => {
-      if (filename !== "HEAD") return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = undefined;
-        // Snapshot before iteration so a listener that unsubscribes
-        // synchronously can't skip a peer for this event.
-        for (const cb of [...listeners]) {
-          try {
-            cb();
-          } catch (e) {
-            log?.error(
-              { err: e instanceof Error ? e.message : String(e), gitDir },
-              "git: head listener threw",
-            );
-          }
+  const watchers: fs.FSWatcher[] = [];
+  const dispatch = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = undefined;
+      // Snapshot before iteration so a listener that unsubscribes
+      // synchronously can't skip a peer for this event.
+      for (const cb of [...listeners]) {
+        try {
+          cb();
+        } catch (e) {
+          log?.error(
+            { err: e instanceof Error ? e.message : String(e), key },
+            "git: metadata listener threw",
+          );
         }
-      }, DEBOUNCE_MS);
-    });
+      }
+    }, DEBOUNCE_MS);
+  };
+
+  try {
+    for (const target of targets) {
+      watchers.push(
+        fs.watch(target.dir, (_, filename) => {
+          const name = filename?.toString();
+          if (!name || !target.filenames.has(name)) return;
+          dispatch();
+        }),
+      );
+    }
   } catch (e) {
+    for (const watcher of watchers) watcher.close();
     log?.error(
-      { err: e instanceof Error ? e.message : String(e), gitDir },
-      "git: failed to watch git dir",
+      { err: e instanceof Error ? e.message : String(e), key },
+      "git: failed to watch metadata",
     );
     return null;
   }
-  log?.info({ gitDir }, "git: head watcher installed");
+  log?.info({ key }, "git: metadata watcher installed");
 
   return {
     subscribe(onChange) {
@@ -83,9 +99,9 @@ function installSharedHeadWatcher(
         if (!listeners.delete(onChange)) return;
         if (listeners.size === 0) {
           if (timer) clearTimeout(timer);
-          watcher.close();
+          for (const watcher of watchers) watcher.close();
           onLast();
-          log?.info({ gitDir }, "git: head watcher retired");
+          log?.info({ key }, "git: metadata watcher retired");
         }
       };
     },
@@ -93,12 +109,13 @@ function installSharedHeadWatcher(
 }
 
 /**
- * Watch .git/HEAD for changes (branch switches, checkout, etc.).
+ * Watch git metadata changes that affect GitInfo (branch switches, checkout,
+ * remote add/remove/set-url, etc.).
  * Returns a cleanup function. Returns a no-op for non-git directories.
  *
- * N callers watching the same `gitDir` share a single `fs.watch` handle
- * and a single debounce timer. Cost per HEAD event is O(listeners)
- * regardless of how many terminals subscribed.
+ * N callers watching the same git dirs share one registry entry and a single
+ * debounce timer. Cost per event is O(listeners) regardless of how many
+ * terminals subscribed.
  */
 export function watchGitHead(
   cwd: string,
@@ -106,33 +123,52 @@ export function watchGitHead(
   log?: Logger,
 ): () => void {
   let gitDir: string;
+  let commonGitDir: string;
   try {
-    const result = execSync("git rev-parse --git-dir", {
+    const gitDirResult = execSync("git rev-parse --git-dir", {
       cwd,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
-    gitDir = path.resolve(cwd, result.trim());
+    const commonGitDirResult = execSync("git rev-parse --git-common-dir", {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    gitDir = path.resolve(cwd, gitDirResult.trim());
+    commonGitDir = path.resolve(cwd, commonGitDirResult.trim());
   } catch {
     // Expected in non-git directories — watchGitHead is called speculatively.
     return () => {};
   }
 
-  let entry = sharedHeadWatchers.get(gitDir);
+  const key = `${gitDir}\0${commonGitDir}`;
+  let entry = sharedHeadWatchers.get(key);
   if (!entry) {
+    const gitDirTarget = {
+      dir: gitDir,
+      filenames: new Set(["HEAD", "config.worktree"]),
+    };
+    const targets: WatchTarget[] = [gitDirTarget];
+    if (commonGitDir === gitDir) {
+      gitDirTarget.filenames.add("config");
+    } else {
+      targets.push({ dir: commonGitDir, filenames: new Set(["config"]) });
+    }
     const fresh = installSharedHeadWatcher(
-      gitDir,
-      () => sharedHeadWatchers.delete(gitDir),
+      key,
+      targets,
+      () => sharedHeadWatchers.delete(key),
       log,
     );
     if (!fresh) return () => {};
-    sharedHeadWatchers.set(gitDir, fresh);
+    sharedHeadWatchers.set(key, fresh);
     entry = fresh;
   }
   return entry.subscribe(onChange);
 }
 
-/** Test-only inspector — number of distinct gitDirs with active shared
+/** Test-only inspector — number of distinct gitDir/commonGitDir pairs with active shared
  *  watchers. Used by unit tests to assert the singleton invariant without
  *  spying on `fs.watch`. */
 export function _sharedHeadWatcherCount(): number {

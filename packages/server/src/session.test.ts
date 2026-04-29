@@ -20,6 +20,7 @@ const terminal: SavedTerminal = {
     repoName: "project",
     worktreePath: "/home/user/project",
     branch: "main",
+    remoteUrl: null,
     isWorktree: false,
     mainRepoRoot: "/home/user/project",
   },

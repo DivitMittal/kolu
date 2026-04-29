@@ -74,12 +74,28 @@ export function migrateLegacyTerminal_1_18_0(
         branch,
         repoRoot: kept.cwd,
         worktreePath: kept.cwd,
+        remoteUrl: null,
         isWorktree: false,
         mainRepoRoot: kept.cwd,
       },
     };
   }
   return { ...kept, git: null };
+}
+
+export function migrateTerminalGitRemote_1_19_0(
+  t: Record<string, unknown>,
+): Record<string, unknown> {
+  const git = t.git;
+  if (!git || typeof git !== "object" || Array.isArray(git)) return t;
+  if ("remoteUrl" in git) return t;
+  return {
+    ...t,
+    git: {
+      ...(git as Record<string, unknown>),
+      remoteUrl: null,
+    },
+  };
 }
 
 /** What conf stores to disk — survives server restart. Internal: clients see
@@ -99,7 +115,7 @@ type PersistedState = z.infer<typeof PersistedStateSchema>;
  * Must be valid semver. `conf` runs all migration handlers
  * whose keys are > the last-seen version and ≤ this value.
  */
-const SCHEMA_VERSION = "1.18.0";
+const SCHEMA_VERSION = "1.19.0";
 
 // Callers must pass an explicit directory via KOLU_STATE_DIR. A bare launch
 // with no env would silently clobber whatever happens to live at conf's
@@ -358,6 +374,20 @@ export const store = new Conf<PersistedState>({
       const terminals = (
         session.terminals as unknown as Record<string, unknown>[]
       ).map(migrateLegacyTerminal_1_18_0);
+      store.set("session", {
+        ...session,
+        terminals: terminals as typeof session.terminals,
+      });
+    },
+    // GitInfo now carries the credential-redacted remote URL used for
+    // display and PR-provider gating. Existing saved sessions re-resolve live
+    // on restore; null is the honest persisted value until then.
+    "1.19.0": (store: Conf<PersistedState>) => {
+      const session = store.get("session");
+      if (!session) return;
+      const terminals = (
+        session.terminals as unknown as Record<string, unknown>[]
+      ).map(migrateTerminalGitRemote_1_19_0);
       store.set("session", {
         ...session,
         terminals: terminals as typeof session.terminals,

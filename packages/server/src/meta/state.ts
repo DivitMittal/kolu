@@ -49,6 +49,7 @@ function publishMetadata(entry: TerminalProcess, terminalId: string): void {
       cwd: m.cwd,
       repo: m.git?.repoName,
       branch: m.git?.branch,
+      remote: m.git?.remoteUrl,
       pr: pr?.number ?? null,
       checks: pr?.checks ?? null,
       prStatus: m.pr.kind,

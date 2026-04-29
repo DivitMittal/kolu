@@ -123,13 +123,23 @@ Then(
 );
 
 Then("the pill tree should not show PR info", async function (this: KoluWorld) {
-  const count = await this.page
+  const prCount = await this.page
     .locator('[data-testid="terminal-meta-pr"]')
     .count();
+  const unavailableCount = await this.page
+    .locator(
+      '[data-testid="terminal-meta-pr-unavailable"], [data-testid="terminal-meta-pr-unavailable-compact"]',
+    )
+    .count();
   assert.strictEqual(
-    count,
+    prCount,
     0,
-    `Expected no PR info in pill tree but found ${count} PR elements`,
+    `Expected no PR info in pill tree but found ${prCount} PR elements`,
+  );
+  assert.strictEqual(
+    unavailableCount,
+    0,
+    `Expected no PR warning in pill tree but found ${unavailableCount} warning elements`,
   );
 });
 

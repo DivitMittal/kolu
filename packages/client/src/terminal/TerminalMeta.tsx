@@ -224,7 +224,11 @@ const NameSpan: Component<{ info: TerminalDisplayInfo }> = (props) => (
     data-testid="terminal-meta-name"
     class="truncate shrink-0 max-w-[20ch]"
     style={{ color: props.info.repoColor }}
-    title={props.info.meta.cwd}
+    title={
+      props.info.meta.git?.remoteUrl
+        ? `${props.info.meta.cwd}\nremote: ${props.info.meta.git.remoteUrl}`
+        : props.info.meta.cwd
+    }
   >
     {props.info.key.group}
   </span>
