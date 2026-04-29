@@ -305,15 +305,20 @@ Then(
 // so we walk the tree (including each `shadowRoot`) and stitch the text.
 // Inlined as a string-evaluate to dodge tsx's `__name` injection, which
 // crashes inside `page.evaluate` arg functions.
-async function waitForViewText(
+async function waitForViewTextPresence(
   world: KoluWorld,
   testid: string,
-  expected: string,
+  needle: string,
+  shouldContain: boolean,
 ) {
+  const missingRootResult = shouldContain ? "false" : "true";
+  const textPredicate = shouldContain
+    ? `text.includes(${JSON.stringify(needle)})`
+    : `!text.includes(${JSON.stringify(needle)})`;
   await world.page.waitForFunction(
     `(() => {
       const root = document.querySelector('[data-testid="${testid}"]');
-      if (!root) return false;
+      if (!root) return ${missingRootResult};
       const stack = [root];
       let text = '';
       while (stack.length) {
@@ -324,11 +329,19 @@ async function waitForViewText(
           for (const ch of node.childNodes) stack.push(ch);
         }
       }
-      return text.includes(${JSON.stringify(expected)});
+      return ${textPredicate};
     })()`,
     undefined,
     { timeout: POLL_TIMEOUT },
   );
+}
+
+async function waitForViewText(
+  world: KoluWorld,
+  testid: string,
+  expected: string,
+) {
+  await waitForViewTextPresence(world, testid, expected, true);
 }
 
 async function waitForViewTextAbsent(
@@ -336,25 +349,7 @@ async function waitForViewTextAbsent(
   testid: string,
   unexpected: string,
 ) {
-  await world.page.waitForFunction(
-    `(() => {
-      const root = document.querySelector('[data-testid="${testid}"]');
-      if (!root) return true;
-      const stack = [root];
-      let text = '';
-      while (stack.length) {
-        const node = stack.pop();
-        if (node.nodeType === 3) text += node.nodeValue || '';
-        if (node.nodeType === 1) {
-          if (node.shadowRoot) for (const ch of node.shadowRoot.childNodes) stack.push(ch);
-          for (const ch of node.childNodes) stack.push(ch);
-        }
-      }
-      return !text.includes(${JSON.stringify(unexpected)});
-    })()`,
-    undefined,
-    { timeout: POLL_TIMEOUT },
-  );
+  await waitForViewTextPresence(world, testid, unexpected, false);
 }
 
 Then(
