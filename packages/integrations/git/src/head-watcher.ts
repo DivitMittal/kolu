@@ -25,7 +25,7 @@ const DEBOUNCE_MS = 150;
  *  handle, and debounce timer are all closure-private — registry lifecycle
  *  and dispatch policy can evolve independently because callers can only
  *  reach what `subscribe` exposes. */
-interface SharedHeadWatcher {
+interface SharedGitMetadataWatcher {
   subscribe(onChange: () => void): () => void;
 }
 
@@ -35,14 +35,14 @@ interface WatchTarget {
 }
 
 /** Module-scope registry: one entry per resolved gitDir/commonGitDir pair. */
-const sharedHeadWatchers = new Map<string, SharedHeadWatcher>();
+const sharedGitMetadataWatchers = new Map<string, SharedGitMetadataWatcher>();
 
-function installSharedHeadWatcher(
+function installSharedGitMetadataWatcher(
   key: string,
   targets: WatchTarget[],
   onLast: () => void,
   log?: Logger,
-): SharedHeadWatcher | null {
+): SharedGitMetadataWatcher | null {
   const listeners = new Set<() => void>();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -117,7 +117,7 @@ function installSharedHeadWatcher(
  * debounce timer. Cost per event is O(listeners) regardless of how many
  * terminals subscribed.
  */
-export function watchGitHead(
+export function watchGitMetadata(
   cwd: string,
   onChange: () => void,
   log?: Logger,
@@ -138,12 +138,12 @@ export function watchGitHead(
     gitDir = path.resolve(cwd, gitDirResult.trim());
     commonGitDir = path.resolve(cwd, commonGitDirResult.trim());
   } catch {
-    // Expected in non-git directories — watchGitHead is called speculatively.
+    // Expected in non-git directories — watchGitMetadata is called speculatively.
     return () => {};
   }
 
   const key = `${gitDir}\0${commonGitDir}`;
-  let entry = sharedHeadWatchers.get(key);
+  let entry = sharedGitMetadataWatchers.get(key);
   if (!entry) {
     const gitDirTarget = {
       dir: gitDir,
@@ -155,22 +155,28 @@ export function watchGitHead(
     } else {
       targets.push({ dir: commonGitDir, filenames: new Set(["config"]) });
     }
-    const fresh = installSharedHeadWatcher(
+    const fresh = installSharedGitMetadataWatcher(
       key,
       targets,
-      () => sharedHeadWatchers.delete(key),
+      () => sharedGitMetadataWatchers.delete(key),
       log,
     );
     if (!fresh) return () => {};
-    sharedHeadWatchers.set(key, fresh);
+    sharedGitMetadataWatchers.set(key, fresh);
     entry = fresh;
   }
   return entry.subscribe(onChange);
 }
 
+/** Compatibility alias for older consumers; prefer `watchGitMetadata`. */
+export const watchGitHead = watchGitMetadata;
+
 /** Test-only inspector — number of distinct gitDir/commonGitDir pairs with active shared
  *  watchers. Used by unit tests to assert the singleton invariant without
  *  spying on `fs.watch`. */
-export function _sharedHeadWatcherCount(): number {
-  return sharedHeadWatchers.size;
+export function _sharedGitMetadataWatcherCount(): number {
+  return sharedGitMetadataWatchers.size;
 }
+
+/** Compatibility alias for older tests/tools; prefer `_sharedGitMetadataWatcherCount`. */
+export const _sharedHeadWatcherCount = _sharedGitMetadataWatcherCount;

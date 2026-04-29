@@ -20,10 +20,10 @@ import {
   resolveGitInfo,
   resolveUnder,
   subscribeGitInfo,
-  watchGitHead,
+  watchGitMetadata,
   worktreeCreate,
 } from "./index.ts";
-import { _sharedHeadWatcherCount } from "./head-watcher.ts";
+import { _sharedGitMetadataWatcherCount } from "./head-watcher.ts";
 
 // Mock randomName to return a predictable value
 vi.mock("memorable-names", () => ({
@@ -642,9 +642,9 @@ describe("worktreeCreate", () => {
   });
 });
 
-// --- watchGitHead: shared refcounted watcher (#748) ---
+// --- watchGitMetadata: shared refcounted watcher (#748) ---
 
-describe("watchGitHead", () => {
+describe("watchGitMetadata", () => {
   let tmpDir: string;
 
   /** Create a git repo with one commit and return its path + .git absolute path. */
@@ -687,26 +687,26 @@ describe("watchGitHead", () => {
   afterEach(() => {
     // Defensive: any test that leaks a subscription would skew the count
     // for the next test. The Map is module-scope, so leaks are sticky.
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   it("returns a no-op for non-git directories", () => {
     const dir = path.join(tmpDir, "no-git");
     fs.mkdirSync(dir, { recursive: true });
-    const stop = watchGitHead(dir, () => {});
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    const stop = watchGitMetadata(dir, () => {});
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
     stop(); // must not throw
   });
 
   it("two subscribers in the same repo share one fs.watch entry", async () => {
     const { dir } = await initRepo("shared-one-repo");
-    const stop1 = watchGitHead(dir, () => {});
-    const stop2 = watchGitHead(dir, () => {});
-    expect(_sharedHeadWatcherCount()).toBe(1);
+    const stop1 = watchGitMetadata(dir, () => {});
+    const stop2 = watchGitMetadata(dir, () => {});
+    expect(_sharedGitMetadataWatcherCount()).toBe(1);
     stop1();
-    expect(_sharedHeadWatcherCount()).toBe(1);
+    expect(_sharedGitMetadataWatcherCount()).toBe(1);
     stop2();
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   it("two subscribers from different cwds in the same repo also share", async () => {
@@ -716,59 +716,59 @@ describe("watchGitHead", () => {
     const sub = path.join(dir, "src", "deep");
     fs.mkdirSync(sub, { recursive: true });
 
-    const stop1 = watchGitHead(dir, () => {});
-    const stop2 = watchGitHead(sub, () => {});
-    expect(_sharedHeadWatcherCount()).toBe(1);
+    const stop1 = watchGitMetadata(dir, () => {});
+    const stop2 = watchGitMetadata(sub, () => {});
+    expect(_sharedGitMetadataWatcherCount()).toBe(1);
     stop1();
     stop2();
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   it("different repos get independent shared watchers", async () => {
     const a = await initRepo("repo-a");
     const b = await initRepo("repo-b");
-    const stopA = watchGitHead(a.dir, () => {});
-    const stopB = watchGitHead(b.dir, () => {});
-    expect(_sharedHeadWatcherCount()).toBe(2);
+    const stopA = watchGitMetadata(a.dir, () => {});
+    const stopB = watchGitMetadata(b.dir, () => {});
+    expect(_sharedGitMetadataWatcherCount()).toBe(2);
     stopA();
     stopB();
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   it("a fresh subscribe after teardown installs a new watcher", async () => {
     const { dir } = await initRepo("rebuild-repo");
-    const stop1 = watchGitHead(dir, () => {});
-    expect(_sharedHeadWatcherCount()).toBe(1);
+    const stop1 = watchGitMetadata(dir, () => {});
+    expect(_sharedGitMetadataWatcherCount()).toBe(1);
     stop1();
-    expect(_sharedHeadWatcherCount()).toBe(0);
-    const stop2 = watchGitHead(dir, () => {});
-    expect(_sharedHeadWatcherCount()).toBe(1);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
+    const stop2 = watchGitMetadata(dir, () => {});
+    expect(_sharedGitMetadataWatcherCount()).toBe(1);
     stop2();
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   it("double-cleanup from the same subscriber is a safe no-op", async () => {
     const { dir } = await initRepo("idempotent-repo");
-    const stop1 = watchGitHead(dir, () => {});
-    const stop2 = watchGitHead(dir, () => {});
+    const stop1 = watchGitMetadata(dir, () => {});
+    const stop2 = watchGitMetadata(dir, () => {});
     stop1();
     stop1(); // must not double-tear-down or affect stop2's subscription
-    expect(_sharedHeadWatcherCount()).toBe(1);
+    expect(_sharedGitMetadataWatcherCount()).toBe(1);
     stop2();
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   it("a HEAD change fans out to every subscriber on the shared watcher", async () => {
     const { dir, git, gitDir } = await initRepo("dispatch-repo");
     let aFires = 0;
     let bFires = 0;
-    const stopA = watchGitHead(dir, () => {
+    const stopA = watchGitMetadata(dir, () => {
       aFires++;
     });
-    const stopB = watchGitHead(dir, () => {
+    const stopB = watchGitMetadata(dir, () => {
       bFires++;
     });
-    expect(_sharedHeadWatcherCount()).toBe(1);
+    expect(_sharedGitMetadataWatcherCount()).toBe(1);
 
     // Branch switch rewrites .git/HEAD, which is what we're watching.
     await git.checkoutLocalBranch("feature");
@@ -788,16 +788,16 @@ describe("watchGitHead", () => {
 
     stopA();
     stopB();
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   it("a remote config change fans out to every subscriber on the shared watcher", async () => {
     const { dir, git, gitDir } = await initRepo("remote-dispatch-repo");
     let fires = 0;
-    const stop = watchGitHead(dir, () => {
+    const stop = watchGitMetadata(dir, () => {
       fires++;
     });
-    expect(_sharedHeadWatcherCount()).toBe(1);
+    expect(_sharedGitMetadataWatcherCount()).toBe(1);
 
     await git.remote(["add", "origin", "https://github.com/juspay/kolu.git"]);
 
@@ -809,16 +809,16 @@ describe("watchGitHead", () => {
 
     expect(fires).toBeGreaterThan(0);
     stop();
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   it("a listener that throws does not block its peers", async () => {
     const { dir, git, gitDir } = await initRepo("fault-isolation-repo");
     let bFires = 0;
-    const stopA = watchGitHead(dir, () => {
+    const stopA = watchGitMetadata(dir, () => {
       throw new Error("boom");
     });
-    const stopB = watchGitHead(dir, () => {
+    const stopB = watchGitMetadata(dir, () => {
       bFires++;
     });
 
@@ -832,7 +832,7 @@ describe("watchGitHead", () => {
     expect(bFires).toBeGreaterThan(0);
     stopA();
     stopB();
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 });
 
@@ -878,7 +878,7 @@ describe("subscribeGitInfo watcher churn", () => {
   });
 
   afterEach(() => {
-    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitMetadataWatcherCount()).toBe(0);
   });
 
   /** Tracks watcher install/retire log lines as a vitest-friendly counter. */

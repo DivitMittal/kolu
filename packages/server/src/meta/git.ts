@@ -1,6 +1,6 @@
 /**
  * Git metadata provider — thin adapter around `subscribeGitInfo` from
- * kolu-git. The resolve + HEAD-watch + re-resolve loop lives in the
+ * kolu-git. The resolve + metadata-watch + re-resolve loop lives in the
  * integration; this file wires the loop into the server's channels:
  *
  *   cwd:<id>        → watcher.setCwd

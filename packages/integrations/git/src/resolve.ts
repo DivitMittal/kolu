@@ -10,7 +10,7 @@ import path from "node:path";
 import type { Logger } from "kolu-shared";
 import { simpleGit } from "simple-git";
 import { err, type GitResult, ok } from "./errors.ts";
-import { watchGitHead } from "./head-watcher.ts";
+import { watchGitMetadata } from "./head-watcher.ts";
 import type { GitInfo } from "./schemas.ts";
 
 function redactRemoteUrl(raw: string): string {
@@ -181,7 +181,7 @@ export function gitInfoEqual(a: GitInfo | null, b: GitInfo | null): boolean {
  *
  * `onChange` fires once per actual change — never for a dedup miss. Initial
  * resolve is best-effort: if the cwd isn't a git repo at start, the watcher
- * sits idle (git watch is a no-op on non-git dirs per `watchGitHead`) until
+ * sits idle (git watch is a no-op on non-git dirs per `watchGitMetadata`) until
  * `setCwd` tells it to re-check.
  *
  * Callers are the sole source of truth for current GitInfo — never re-read
@@ -196,7 +196,7 @@ export function subscribeGitInfo(
 ): { setCwd(next: string): void; stop(): void } {
   let currentCwd = initialCwd;
   let currentInfo: GitInfo | null = null;
-  let stopGitWatch = watchGitHead(currentCwd, handleGitChange, log);
+  let stopGitWatch = watchGitMetadata(currentCwd, handleGitChange, log);
 
   function handleGitChange(): void {
     void resolve();
@@ -229,14 +229,14 @@ export function subscribeGitInfo(
         // so re-install here so the new repo's metadata changes propagate.
         if (currentInfo === null && hasGitDir(next)) {
           stopGitWatch();
-          stopGitWatch = watchGitHead(next, handleGitChange, log);
+          stopGitWatch = watchGitMetadata(next, handleGitChange, log);
           void resolve();
         }
         return;
       }
       currentCwd = next;
       stopGitWatch();
-      stopGitWatch = watchGitHead(next, handleGitChange, log);
+      stopGitWatch = watchGitMetadata(next, handleGitChange, log);
       void resolve();
     },
     stop(): void {
