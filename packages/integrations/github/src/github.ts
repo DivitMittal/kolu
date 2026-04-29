@@ -47,19 +47,19 @@ export function githubPrContextEqual(
   a: GitHubPrContext,
   b: GitHubPrContext,
 ): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.kind === "none" && b.kind === "none") return true;
-  if (a.kind === "absent" && b.kind === "absent") {
-    return a.repoRoot === b.repoRoot && a.branch === b.branch;
-  }
-  if (a.kind === "lookup" && b.kind === "lookup") {
-    return (
-      a.repoRoot === b.repoRoot &&
-      a.branch === b.branch &&
-      a.remoteUrl === b.remoteUrl
-    );
-  }
-  return false;
+  return match({ a, b })
+    .with({ a: { kind: "none" }, b: { kind: "none" } }, () => true)
+    .with({ a: { kind: "absent" }, b: { kind: "absent" } }, ({ a, b }) => {
+      return a.repoRoot === b.repoRoot && a.branch === b.branch;
+    })
+    .with({ a: { kind: "lookup" }, b: { kind: "lookup" } }, ({ a, b }) => {
+      return (
+        a.repoRoot === b.repoRoot &&
+        a.branch === b.branch &&
+        a.remoteUrl === b.remoteUrl
+      );
+    })
+    .otherwise(() => false);
 }
 
 /**
