@@ -47,19 +47,32 @@ export async function worktreeCreate(
     const mainRoot = await resolveMainRepoRoot(repoPath);
     const git = simpleGit(mainRoot);
 
-    log?.info({ mainRoot }, "fetching origin");
-    await git.fetch("origin");
-    // Best-effort: update origin/HEAD to match remote's actual default branch.
-    // Non-fatal — detectDefaultBranch has its own fallback chain.
-    try {
-      await git.remote(["set-head", "origin", "--auto"]);
-    } catch (e) {
-      log?.warn(
-        { err: e instanceof Error ? e.message : String(e) },
-        "could not auto-detect origin HEAD, using fallback",
-      );
+    log?.info({ mainRoot }, "fetching origin and resolving default branch");
+    // Two independent git invocations against the same remote — run in
+    // parallel rather than back-to-back. On macOS each `git` subprocess
+    // pays a noticeable fork tax (sandbox lstat chain through
+    // `/private/var/folders`), so collapsing what was four serial calls
+    // (fetch → set-head → symbolic-ref → fallback) into two overlapped
+    // ones materially trims worktree-create latency. `ls-remote --symref`
+    // gives us the remote's HEAD directly — no need to write
+    // `refs/remotes/origin/HEAD` locally just to read it back. See #771.
+    const [, lsRemote] = await Promise.all([
+      git.fetch("origin"),
+      git.raw(["ls-remote", "--symref", "origin", "HEAD"]).catch((e) => {
+        log?.warn(
+          { err: e instanceof Error ? e.message : String(e) },
+          "ls-remote --symref failed, will fall back to local-ref detection",
+        );
+        return "";
+      }),
+    ]);
+    let defaultBranch = lsRemote.match(/^ref: refs\/heads\/(\S+)/m)?.[1];
+    if (!defaultBranch) {
+      // Symref unavailable (rare — old git, oddly-configured remote). Fall
+      // back to the original detection chain, which reads the local refs
+      // already populated by the fetch above.
+      defaultBranch = await detectDefaultBranch(mainRoot);
     }
-    const defaultBranch = await detectDefaultBranch(mainRoot);
 
     for (let attempt = 0; attempt < 5; attempt++) {
       const branch = randomName();
