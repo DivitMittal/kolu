@@ -190,6 +190,7 @@ function installGitHeadWatcher(
   log?: Logger,
 ): SharedGitHeadWatcher | null {
   const listeners = new Set<GitHeadListener>();
+  let headSnapshot = readHead(gitDir, log);
   let timer: ReturnType<typeof setTimeout> | null = null;
   let watcher: fs.FSWatcher;
   try {
@@ -198,6 +199,9 @@ function installGitHeadWatcher(
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
+        const nextHead = readHead(gitDir, log);
+        if (nextHead === headSnapshot) return;
+        headSnapshot = nextHead;
         for (const listener of [...listeners]) {
           try {
             listener.cb();
@@ -227,9 +231,22 @@ function installGitHeadWatcher(
   };
 }
 
+function readHead(gitDir: string, log?: Logger): string | null {
+  try {
+    return fs.readFileSync(path.join(gitDir, "HEAD"), "utf8");
+  } catch (e) {
+    log?.debug(
+      { err: e instanceof Error ? e.message : String(e), gitDir },
+      "git: failed to read HEAD",
+    );
+    return null;
+  }
+}
+
 function isHeadChange(filename: string | Buffer | null): boolean {
   // Node may omit the filename for directory watches; fall back to re-resolving
-  // rather than missing a branch switch on those platforms.
+  // HEAD content before notifying listeners rather than missing a branch switch
+  // on those platforms.
   return filename === null || filename.toString() === "HEAD";
 }
 

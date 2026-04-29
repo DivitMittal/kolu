@@ -369,6 +369,7 @@ describe("watchGitHead", () => {
 
     expect(watchSpy).toHaveBeenCalledTimes(1);
 
+    fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/next\n");
     callbacks[0]?.("change", "HEAD");
     await vi.advanceTimersByTimeAsync(150);
     expect(first).toHaveBeenCalledTimes(1);
@@ -377,11 +378,18 @@ describe("watchGitHead", () => {
     stopFirst();
     expect(close).not.toHaveBeenCalled();
 
+    callbacks[0]?.("change", null);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+
+    fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/other\n");
     callbacks[0]?.("change", "HEAD");
     await vi.advanceTimersByTimeAsync(150);
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).toHaveBeenCalledTimes(2);
 
+    fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/final\n");
     callbacks[0]?.("change", null);
     await vi.advanceTimersByTimeAsync(150);
     expect(first).toHaveBeenCalledTimes(1);
