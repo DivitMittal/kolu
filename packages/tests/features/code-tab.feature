@@ -220,9 +220,9 @@ Feature: Code tab (review + browse)
     Then the file content should contain "second version"
 
   Scenario: Deleting the selected browse-mode file clears stale content
-    When I run "git init /tmp/kolu-live-browse-delete && cd /tmp/kolu-live-browse-delete"
-    And I run "git commit --allow-empty -m init"
+    When I run "rm -rf /tmp/kolu-live-browse-delete && git init /tmp/kolu-live-browse-delete && cd /tmp/kolu-live-browse-delete"
     And I run "printf 'stale content\n' > scratch.txt"
+    And I run "git add scratch.txt && git commit -m init"
     And I click the Code tab
     And I click the Code tab mode "browse"
     And I click the file "scratch.txt" in the file browser

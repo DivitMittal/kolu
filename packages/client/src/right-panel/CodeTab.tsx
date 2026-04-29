@@ -91,21 +91,6 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
     },
   );
 
-  const diff = createReactiveSubscription(
-    () => {
-      const p = repoPath();
-      const s = selectedPath();
-      const m = diffMode();
-      if (!p || !s || !m) return null;
-      const file = status()?.files.find((f) => f.path === s);
-      return { repoPath: p, filePath: s, mode: m, oldPath: file?.oldPath };
-    },
-    (input, signal) => stream.gitDiff(input, signal),
-    {
-      onError: (err) => toast.error(`Git diff stream: ${err.message}`),
-    },
-  );
-
   // Reset selection when the repo or view changes so a stale path doesn't
   // bleed across modes (e.g. a browse-mode pick showing up in diff mode).
   createEffect(
@@ -132,16 +117,27 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   const branchTooltip = () =>
     `Changes vs ${status()?.base?.ref ?? "branch base"}`;
 
-  // Live updates can remove the selected path from the current tree (file
-  // delete, branch checkout, commit/stage cleanup). Drop the selection once
-  // the tree has a fresh snapshot so the body cannot keep rendering stale
-  // content for a path that no longer exists in this view.
-  createEffect(() => {
+  const selectedVisiblePath = createMemo(() => {
     const selected = selectedPath();
-    if (!selected) return;
-    if (!treeReady()) return;
-    if (!treePaths().includes(selected)) setSelectedPath(null);
+    if (!selected) return null;
+    if (!treeReady()) return null;
+    return treePaths().includes(selected) ? selected : null;
   });
+
+  const diff = createReactiveSubscription(
+    () => {
+      const p = repoPath();
+      const s = selectedVisiblePath();
+      const m = diffMode();
+      if (!p || !s || !m) return null;
+      const file = status()?.files.find((f) => f.path === s);
+      return { repoPath: p, filePath: s, mode: m, oldPath: file?.oldPath };
+    },
+    (input, signal) => stream.gitDiff(input, signal),
+    {
+      onError: (err) => toast.error(`Git diff stream: ${err.message}`),
+    },
+  );
 
   /** Diff value narrowed to "this is a pure-rename" (no hunks, both old +
    *  new file names present and different). Returning the full diff so the
@@ -245,7 +241,7 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
                 <PierreFileTree
                   paths={treePaths()}
                   gitStatus={treeGitStatus()}
-                  selectedPath={selectedPath()}
+                  selectedPath={selectedVisiblePath()}
                   onSelect={handleSelect}
                   initialExpansion={isDiffView() ? "open" : "closed"}
                 />
@@ -256,7 +252,7 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
 
         <div class="flex-1 min-h-0 overflow-auto" data-testid="diff-content">
           <Show
-            when={selectedPath()}
+            when={selectedVisiblePath()}
             keyed
             fallback={
               <FileSelectHint

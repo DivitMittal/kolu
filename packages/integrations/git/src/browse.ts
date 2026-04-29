@@ -1,8 +1,9 @@
 /** File tree browsing — git-filtered file listing and file reading.
  *
- *  Uses `git ls-files --cached --others --exclude-standard` to enumerate
- *  tracked + untracked-but-not-ignored paths in one shot. This avoids
- *  listing `node_modules/`, `.git/`, build artifacts, etc. */
+ *  Uses `git ls-files` to enumerate tracked + untracked-but-not-ignored
+ *  paths, then removes tracked paths deleted from the worktree. This avoids
+ *  listing `node_modules/`, `.git/`, build artifacts, etc., while keeping the
+ *  browse tree aligned with files that can actually be opened. */
 
 import { execFile } from "node:child_process";
 import { readFile as fsReadFile } from "node:fs/promises";
@@ -13,7 +14,10 @@ import { resolveUnder } from "./safe-path.ts";
 
 const execFileAsync = promisify(execFile);
 
-/** Flat list of every repo-relative path (tracked + untracked-but-not-ignored).
+/** Flat list of every readable repo-relative path (tracked +
+ *  untracked-but-not-ignored, excluding tracked files deleted from the
+ *  worktree).
+ *
  *  One-shot snapshot for Pierre's `@pierre/trees`, which builds the tree
  *  hierarchy itself from a flat path list.
  *
@@ -24,12 +28,23 @@ export async function listAll(
   log?: Logger,
 ): Promise<GitResult<string[]>> {
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["ls-files", "--cached", "--others", "--exclude-standard"],
-      { cwd: repoPath, maxBuffer: 64 * 1024 * 1024 },
+    const [{ stdout }, { stdout: deletedStdout }] = await Promise.all([
+      execFileAsync(
+        "git",
+        ["ls-files", "--cached", "--others", "--exclude-standard"],
+        { cwd: repoPath, maxBuffer: 64 * 1024 * 1024 },
+      ),
+      execFileAsync("git", ["ls-files", "--deleted"], {
+        cwd: repoPath,
+        maxBuffer: 64 * 1024 * 1024,
+      }),
+    ]);
+    const deletedPaths = new Set(
+      deletedStdout.split("\n").filter((l) => l.length > 0),
     );
-    const paths = stdout.split("\n").filter((l) => l.length > 0);
+    const paths = stdout
+      .split("\n")
+      .filter((l) => l.length > 0 && !deletedPaths.has(l));
     return ok(paths);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
