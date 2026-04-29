@@ -10,7 +10,11 @@
  */
 
 import fs from "node:fs";
-import { agentInfoEqual } from "anyagent";
+import {
+  agentInfoEqual,
+  logWatcherInstalled,
+  logWatcherRetired,
+} from "anyagent";
 import { match } from "ts-pattern";
 import {
   deriveState,
@@ -118,10 +122,10 @@ export function createSessionWatcher(
       .with({ kind: "waiting" }, ({ dirWatcher }) => dirWatcher())
       .with({ kind: "watching" }, ({ path, fileWatcher }) => {
         fileWatcher.close();
-        plog.info(
-          { path, session: session.sessionId },
-          "claude-code: transcript watcher retired",
-        );
+        logWatcherRetired(plog, "claude-code: transcript", {
+          path,
+          session: session.sessionId,
+        });
       })
       .exhaustive();
     transcriptWatching = { kind: "none" };
@@ -145,10 +149,10 @@ export function createSessionWatcher(
     try {
       const fileWatcher = fs.watch(tp, () => scheduleTranscriptCheck());
       transcriptWatching = { kind: "watching", path: tp, fileWatcher };
-      plog.info(
-        { path: tp, session: session.sessionId },
-        "claude-code: transcript watcher installed",
-      );
+      logWatcherInstalled(plog, "claude-code: transcript", {
+        path: tp,
+        session: session.sessionId,
+      });
     } catch (err) {
       plog.error({ err, path: tp }, "failed to watch transcript");
       transcriptWatching = { kind: "none" };

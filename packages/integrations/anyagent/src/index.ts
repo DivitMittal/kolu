@@ -19,6 +19,7 @@ export {
   TaskProgressSchema,
 } from "./schemas.ts";
 export { readTailLines, type TailReadConfig } from "./tail-lines.ts";
+export { logWatcherInstalled, logWatcherRetired } from "./watcher-events.ts";
 export {
   createWalSubscription,
   type WalSubscription,

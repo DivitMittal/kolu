@@ -16,7 +16,7 @@
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { Logger } from "anyagent";
+import { type Logger, logWatcherInstalled, logWatcherRetired } from "anyagent";
 
 const DEBOUNCE_MS = 150;
 
@@ -68,7 +68,7 @@ function installSharedHeadWatcher(
     );
     return null;
   }
-  log?.info({ gitDir }, "git: head watcher installed");
+  logWatcherInstalled(log, "git: head", { gitDir });
 
   return {
     subscribe(onChange) {
@@ -85,7 +85,7 @@ function installSharedHeadWatcher(
           if (timer) clearTimeout(timer);
           watcher.close();
           onLast();
-          log?.info({ gitDir }, "git: head watcher retired");
+          logWatcherRetired(log, "git: head", { gitDir });
         }
       };
     },

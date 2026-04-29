@@ -20,7 +20,12 @@
 import fs from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import type { Logger } from "anyagent";
-import { agentInfoEqual, readTailLines } from "anyagent";
+import {
+  agentInfoEqual,
+  logWatcherInstalled,
+  logWatcherRetired,
+  readTailLines,
+} from "anyagent";
 import {
   type CodexSession,
   getThreadMetadata,
@@ -172,7 +177,7 @@ export function createCodexWatcher(
     (err) => log?.error({ err, session: session.id }, "wal listener threw"),
     log,
   );
-  log?.info({ session: session.id }, "codex: session watcher installed");
+  logWatcherInstalled(log, "codex: session", { session: session.id });
   refresh();
 
   return {
@@ -185,7 +190,7 @@ export function createCodexWatcher(
       }
       unsubscribe();
       db?.close();
-      log?.info({ session: session.id }, "codex: session watcher retired");
+      logWatcherRetired(log, "codex: session", { session: session.id });
     },
   };
 }

@@ -13,7 +13,11 @@
 
 import type { DatabaseSync } from "node:sqlite";
 import type { Logger } from "anyagent";
-import { agentInfoEqual } from "anyagent";
+import {
+  agentInfoEqual,
+  logWatcherInstalled,
+  logWatcherRetired,
+} from "anyagent";
 import {
   deriveSessionState,
   getLatestAssistantContextTokens,
@@ -140,7 +144,7 @@ export function createOpenCodeWatcher(
     (err) => log?.error({ err, session: session.id }, "wal listener threw"),
     log,
   );
-  log?.info({ session: session.id }, "opencode: session watcher installed");
+  logWatcherInstalled(log, "opencode: session", { session: session.id });
   refresh();
 
   return {
@@ -153,7 +157,7 @@ export function createOpenCodeWatcher(
       }
       unsubscribe();
       db?.close();
-      log?.info({ session: session.id }, "opencode: session watcher retired");
+      logWatcherRetired(log, "opencode: session", { session: session.id });
     },
   };
 }

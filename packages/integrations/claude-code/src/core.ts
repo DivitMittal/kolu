@@ -24,7 +24,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
-import { type Logger, readTailLines } from "anyagent";
+import {
+  type Logger,
+  logWatcherInstalled,
+  logWatcherRetired,
+  readTailLines,
+} from "anyagent";
 import { match } from "ts-pattern";
 import type { ClaudeCodeInfo, TaskProgress } from "./schemas.ts";
 
@@ -392,10 +397,10 @@ export function tryWatchDir(
 ): (() => void) | null {
   try {
     const w = fs.watch(dir, () => onChange());
-    log?.info({ dir }, "claude-code: dir watcher installed");
+    logWatcherInstalled(log, "claude-code: dir", { dir });
     return () => {
       w.close();
-      log?.info({ dir }, "claude-code: dir watcher retired");
+      logWatcherRetired(log, "claude-code: dir", { dir });
     };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -433,19 +438,19 @@ export function watchOrWaitForDir(
       child = attached;
       parentWatcher?.close();
       parentWatcher = null;
-      log?.info({ dir, parent }, "claude-code: parent-dir watcher retired");
+      logWatcherRetired(log, "claude-code: parent-dir", { dir, parent });
       // Kick — dir may already contain files (race: created between our
       // first attempt and the parent event).
       onChange();
     });
-    log?.info({ dir, parent }, "claude-code: parent-dir watcher installed");
+    logWatcherInstalled(log, "claude-code: parent-dir", { dir, parent });
   } catch (err) {
     log?.debug({ err, dir }, "fs.watch parent fallback failed");
   }
   return () => {
     if (parentWatcher) {
       parentWatcher.close();
-      log?.info({ dir, parent }, "claude-code: parent-dir watcher retired");
+      logWatcherRetired(log, "claude-code: parent-dir", { dir, parent });
     }
     child?.();
   };
