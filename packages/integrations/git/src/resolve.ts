@@ -17,16 +17,13 @@ function redactRemoteUrl(raw: string): string {
   const value = raw.trim();
   try {
     const url = new URL(value);
-    if (
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      (url.username || url.password)
-    ) {
+    if (url.username || url.password) {
       url.username = "";
       url.password = "";
       return url.toString();
     }
   } catch {
-    return value.replace(/^(https?:\/\/)[^/@\s]+@/i, "$1");
+    return value.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/i, "$1");
   }
   return value;
 }

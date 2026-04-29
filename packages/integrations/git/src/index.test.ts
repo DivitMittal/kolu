@@ -371,6 +371,20 @@ describe("resolveGitInfo", () => {
     expect(result.value.remoteUrl).toBe("https://github.com/juspay/kolu.git");
   });
 
+  it("redacts credentials from non-HTTP URL remotes", async () => {
+    const { dir, git } = await initRepo("ssh-url-remote-repo");
+    await git.remote([
+      "add",
+      "origin",
+      "ssh://user:token@github.com/juspay/kolu.git",
+    ]);
+
+    const result = await resolveGitInfo(dir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.remoteUrl).toBe("ssh://github.com/juspay/kolu.git");
+  });
+
   it("keeps repo info when remote URL lookup fails", async () => {
     const { dir, git } = await initRepo("remote-config-without-url");
     await git.raw([
