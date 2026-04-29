@@ -218,3 +218,16 @@ Feature: Code tab (review + browse)
     When I click the terminal canvas
     And I run "printf 'second version\n' > letters.txt"
     Then the file content should contain "second version"
+
+  Scenario: Deleting the selected browse-mode file clears stale content
+    When I run "git init /tmp/kolu-live-browse-delete && cd /tmp/kolu-live-browse-delete"
+    And I run "git commit --allow-empty -m init"
+    And I run "printf 'stale content\n' > scratch.txt"
+    And I click the Code tab
+    And I click the Code tab mode "browse"
+    And I click the file "scratch.txt" in the file browser
+    Then the file content should contain "stale content"
+    When I click the terminal canvas
+    And I run "rm scratch.txt"
+    Then the file browser should not show a file "scratch.txt"
+    And the file content should not contain "stale content"

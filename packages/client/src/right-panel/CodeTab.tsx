@@ -132,6 +132,17 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   const branchTooltip = () =>
     `Changes vs ${status()?.base?.ref ?? "branch base"}`;
 
+  // Live updates can remove the selected path from the current tree (file
+  // delete, branch checkout, commit/stage cleanup). Drop the selection once
+  // the tree has a fresh snapshot so the body cannot keep rendering stale
+  // content for a path that no longer exists in this view.
+  createEffect(() => {
+    const selected = selectedPath();
+    if (!selected) return;
+    if (!treeReady()) return;
+    if (!treePaths().includes(selected)) setSelectedPath(null);
+  });
+
   /** Diff value narrowed to "this is a pure-rename" (no hunks, both old +
    *  new file names present and different). Returning the full diff so the
    *  rendering Match can read its names without re-narrowing. */

@@ -292,6 +292,14 @@ Then(
   },
 );
 
+Then(
+  "the file browser should not show a file {string}",
+  async function (this: KoluWorld, path: string) {
+    const item = this.page.locator(fileRow(path));
+    await item.waitFor({ state: "detached", timeout: POLL_TIMEOUT });
+  },
+);
+
 // Pierre's File / FileDiff renderers mount highlighted code inside a
 // shadow root. `Element.textContent` does NOT cross shadow boundaries,
 // so we walk the tree (including each `shadowRoot`) and stitch the text.
@@ -323,10 +331,43 @@ async function waitForViewText(
   );
 }
 
+async function waitForViewTextAbsent(
+  world: KoluWorld,
+  testid: string,
+  unexpected: string,
+) {
+  await world.page.waitForFunction(
+    `(() => {
+      const root = document.querySelector('[data-testid="${testid}"]');
+      if (!root) return true;
+      const stack = [root];
+      let text = '';
+      while (stack.length) {
+        const node = stack.pop();
+        if (node.nodeType === 3) text += node.nodeValue || '';
+        if (node.nodeType === 1) {
+          if (node.shadowRoot) for (const ch of node.shadowRoot.childNodes) stack.push(ch);
+          for (const ch of node.childNodes) stack.push(ch);
+        }
+      }
+      return !text.includes(${JSON.stringify(unexpected)});
+    })()`,
+    undefined,
+    { timeout: POLL_TIMEOUT },
+  );
+}
+
 Then(
   "the file content should contain {string}",
   async function (this: KoluWorld, expected: string) {
     await waitForViewText(this, "pierre-file-view", expected);
+  },
+);
+
+Then(
+  "the file content should not contain {string}",
+  async function (this: KoluWorld, unexpected: string) {
+    await waitForViewTextAbsent(this, "pierre-file-view", unexpected);
   },
 );
 
