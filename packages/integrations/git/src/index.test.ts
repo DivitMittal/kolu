@@ -19,6 +19,7 @@ import {
   parseNameStatus,
   resolveGitInfo,
   resolveUnder,
+  watchGitHead,
   worktreeCreate,
 } from "./index.ts";
 
@@ -577,5 +578,68 @@ describe("worktreeCreate", () => {
     expect(worktreeHead).toBe(latestCommit);
 
     await cloneGit.raw(["worktree", "remove", result.value.path, "--force"]);
+  });
+});
+
+// --- watchGitHead: refcounted singleton ---
+
+describe("watchGitHead", () => {
+  let tmpDir: string;
+
+  async function initRepo(name: string, branch = "main") {
+    const dir = path.join(tmpDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const git = simpleGit(dir);
+    await git.init();
+    await git.checkoutLocalBranch(branch);
+    fs.writeFileSync(path.join(dir, "file.txt"), "hello");
+    await git.add(".");
+    await git.commit("initial");
+    return { dir, git };
+  }
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "kolu-watch-git-head-test-"),
+    );
+  });
+
+  afterAll(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns no-op cleanup for non-git directory", () => {
+    const dir = path.join(tmpDir, "not-a-repo");
+    fs.mkdirSync(dir, { recursive: true });
+    const unsub = watchGitHead(dir, () => {});
+    expect(typeof unsub).toBe("function");
+    unsub();
+  });
+
+  it("shares watcher across subscribers for the same repo", async () => {
+    const { dir, git } = await initRepo("shared-watcher");
+    const calls1: string[] = [];
+    const calls2: string[] = [];
+
+    const unsub1 = watchGitHead(dir, () => calls1.push("fired"));
+    const unsub2 = watchGitHead(dir, () => calls2.push("fired"));
+
+    await git.checkoutLocalBranch("feature-a");
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(calls1.length).toBeGreaterThanOrEqual(1);
+    expect(calls2.length).toBeGreaterThanOrEqual(1);
+
+    unsub1();
+    calls1.length = 0;
+    calls2.length = 0;
+
+    await git.checkoutLocalBranch("feature-b");
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(calls1.length).toBe(0);
+    expect(calls2.length).toBeGreaterThanOrEqual(1);
+
+    unsub2();
   });
 });

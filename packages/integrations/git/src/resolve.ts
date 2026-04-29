@@ -114,9 +114,23 @@ export async function resolveGitInfo(
   }
 }
 
+const sharedHeadWatchers = new Map<
+  string,
+  {
+    watcher: fs.FSWatcher;
+    listeners: Set<() => void>;
+    timer: ReturnType<typeof setTimeout> | null;
+  }
+>();
+
 /**
  * Watch .git/HEAD for changes (branch switches, checkout, etc.).
  * Returns a cleanup function. Returns a no-op for non-git directories.
+ *
+ * Refcounted singleton keyed by resolved gitDir: first subscriber
+ * installs the fs.watch + debounce timer, subsequent subscribers join
+ * the listener set, last unsubscribe tears everything down. N terminals
+ * in the same repo share one watcher instead of installing N.
  */
 export function watchGitHead(
   cwd: string,
@@ -132,29 +146,45 @@ export function watchGitHead(
     });
     gitDir = path.resolve(cwd, result.trim());
   } catch {
-    // Expected in non-git directories — watchGitHead is called speculatively.
     return () => {};
   }
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let watcher: fs.FSWatcher | undefined;
-  try {
-    watcher = fs.watch(gitDir, (_, filename) => {
-      if (filename !== "HEAD") return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(onChange, DEBOUNCE_MS);
-    });
-  } catch (e) {
-    log?.debug(
-      { err: e instanceof Error ? e.message : String(e), gitDir },
-      "git: failed to watch git dir",
-    );
-    return () => {};
+  let entry = sharedHeadWatchers.get(gitDir);
+  if (!entry) {
+    let watcher: fs.FSWatcher;
+    try {
+      watcher = fs.watch(gitDir, (_, filename) => {
+        if (filename !== "HEAD") return;
+        const e = sharedHeadWatchers.get(gitDir);
+        if (!e) return;
+        if (e.timer) clearTimeout(e.timer);
+        e.timer = setTimeout(() => {
+          e.timer = null;
+          for (const cb of [...e.listeners]) {
+            cb();
+          }
+        }, DEBOUNCE_MS);
+      });
+    } catch (e) {
+      log?.debug(
+        { err: e instanceof Error ? e.message : String(e), gitDir },
+        "git: failed to watch git dir",
+      );
+      return () => {};
+    }
+    entry = { watcher, listeners: new Set(), timer: null };
+    sharedHeadWatchers.set(gitDir, entry);
   }
-
+  entry.listeners.add(onChange);
   return () => {
-    if (timer) clearTimeout(timer);
-    watcher?.close();
+    const e = sharedHeadWatchers.get(gitDir);
+    if (!e) return;
+    e.listeners.delete(onChange);
+    if (e.listeners.size === 0) {
+      if (e.timer) clearTimeout(e.timer);
+      e.watcher.close();
+      sharedHeadWatchers.delete(gitDir);
+    }
   };
 }
 
