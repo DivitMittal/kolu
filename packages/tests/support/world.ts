@@ -15,12 +15,24 @@ import type { Browser, BrowserContext, Locator, Page } from "playwright";
 // them without `(window as any)` / `(this as any)` casts.
 import "kolu-common/test-hooks";
 
-setDefaultTimeout(30_000);
+// macOS CI (aarch64-darwin) consistently spends 2-3× as long inside
+// pty-spawn + shell-rc init compared to Linux — the sandbox `lstat` chain
+// through `/private/var/folders` plus a slower fork(2) puts the entire
+// "press Cmd+Enter, see new data-terminal-id" path right at the 20s
+// threshold. The seven worktree-create scenarios in #771 lived just past
+// the cliff. Doubling the budget on darwin absorbs the platform variance
+// without giving up the tight feedback loop on Linux. The
+// worktreeCreate-side fork tax is amortized separately by parallelizing
+// the fetch + ls-remote pair (see worktree.ts).
+const isDarwin = process.platform === "darwin";
 
-const READY_TIMEOUT = 20_000;
-/** Shared timeout for element polling (waitFor / waitForFunction). Generous for darwin CI under load. */
-export const POLL_TIMEOUT = 20_000;
-export const MOD_KEY = process.platform === "darwin" ? "Meta" : "Control";
+setDefaultTimeout(isDarwin ? 60_000 : 30_000);
+
+const READY_TIMEOUT = isDarwin ? 40_000 : 20_000;
+/** Shared timeout for element polling (waitFor / waitForFunction).
+ *  40s on darwin, 20s elsewhere — see the comment on isDarwin above. */
+export const POLL_TIMEOUT = isDarwin ? 40_000 : 20_000;
+export const MOD_KEY = isDarwin ? "Meta" : "Control";
 
 /** Locator for the app's settled state: either a visible terminal screen or the empty state tip. */
 const SETTLED_SELECTOR =
