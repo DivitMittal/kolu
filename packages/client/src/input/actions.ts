@@ -36,7 +36,6 @@ export interface ActionContext {
   handleShuffleTheme: () => void;
   handleScreenshotTerminal: () => void;
   toggleRightPanel: () => void;
-  canvasCenterActive: () => void;
   toggleRecordingPause: () => void;
 }
 
@@ -210,11 +209,6 @@ const _ACTIONS = {
     label: "Toggle inspector panel",
     keybind: { key: "b", code: "KeyB", mod: true },
     handler: (ctx) => ctx.toggleRightPanel(),
-  },
-  canvasCenterActive: {
-    label: "Center on active tile",
-    keybind: { key: "C", code: "KeyC", mod: true, shift: true },
-    handler: (ctx) => ctx.canvasCenterActive(),
   },
   toggleRecordingPause: {
     label: "Pause / resume recording",

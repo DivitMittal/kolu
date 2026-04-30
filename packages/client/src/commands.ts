@@ -53,6 +53,7 @@ export interface CommandDeps extends ActionContext {
   // Canvas — desktop only (always active there); hidden on mobile where
   // the canvas isn't mounted at all.
   isMobile: () => boolean;
+  canvasCenterActive: () => void;
   // Worktree
   handleCreateWorktree: (repoPath: string, initialCommand?: string) => void;
   handleClose: () => void;
@@ -145,7 +146,12 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
       : []),
     actionPaletteCommand("toggleRightPanel", deps),
     ...(!deps.isMobile()
-      ? [actionPaletteCommand("canvasCenterActive", deps)]
+      ? [
+          {
+            name: "Center on active tile",
+            onSelect: () => deps.canvasCenterActive(),
+          },
+        ]
       : []),
     ...(deps.terminalIds().length > 0
       ? [
