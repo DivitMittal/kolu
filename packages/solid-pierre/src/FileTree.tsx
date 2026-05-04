@@ -78,6 +78,15 @@ export const FileTree: Component<FileTreeProps> = (props) => {
   // don't appear in `paths` (Pierre infers them from path prefixes), so
   // membership in this set is a reliable file-vs-folder discriminator.
   const fileSet = createMemo(() => new Set(props.paths));
+  const normalizeSearchQuery = (q: string | null | undefined) =>
+    q && q.length > 0 ? q : null;
+  const applySearchQuery = (q: string | null | undefined) => {
+    try {
+      tree?.setSearch(normalizeSearchQuery(q));
+    } catch (e) {
+      props.onError(toError(e));
+    }
+  };
 
   onMount(() => {
     try {
@@ -98,22 +107,35 @@ export const FileTree: Component<FileTreeProps> = (props) => {
           const p = paths[0] ?? null;
           if (p !== null && !fileSet().has(p)) return;
           props.onSelect?.(p);
-          // Pierre clears its internal search after row selection; when the
-          // host owns searchQuery, re-apply it after Pierre finishes the click.
-          queueMicrotask(() => {
-            const q = untrack(() => props.searchQuery);
-            if (q && q.length > 0) tree?.setSearch(q);
-          });
         },
       });
       tree.render({ containerWrapper: container });
+      const reapplySearchAfterRowClick = (event: MouseEvent) => {
+        const clickedTreeRow = event
+          .composedPath()
+          .some(
+            (target) =>
+              target instanceof HTMLElement &&
+              target.dataset.itemPath !== undefined,
+          );
+        if (!clickedTreeRow) return;
+        // Pierre clears its internal search after row clicks; when the host
+        // owns searchQuery, re-apply it after Pierre finishes the click.
+        queueMicrotask(() => {
+          const q = untrack(() => props.searchQuery);
+          if (normalizeSearchQuery(q) !== null) applySearchQuery(q);
+        });
+      };
+      container.addEventListener("click", reapplySearchAfterRowClick);
+      onCleanup(() =>
+        container.removeEventListener("click", reapplySearchAfterRowClick),
+      );
       // Apply an initial searchQuery if it was already non-empty at mount —
       // the deferred effect below only fires on subsequent changes, so a
       // pre-mount value would otherwise be silently dropped.
       const initialQuery = untrack(() => props.searchQuery);
-      if (initialQuery && initialQuery.length > 0) {
-        tree.setSearch(initialQuery);
-      }
+      if (normalizeSearchQuery(initialQuery) !== null)
+        applySearchQuery(initialQuery);
     } catch (e) {
       props.onError(toError(e));
     }
@@ -151,11 +173,7 @@ export const FileTree: Component<FileTreeProps> = (props) => {
     on(
       () => props.searchQuery,
       (q) => {
-        try {
-          tree?.setSearch(q && q.length > 0 ? q : null);
-        } catch (e) {
-          props.onError(toError(e));
-        }
+        applySearchQuery(q);
       },
       { defer: true },
     ),
