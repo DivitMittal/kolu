@@ -128,13 +128,13 @@ export function gitInfoEqual(a: GitInfo | null, b: GitInfo | null): boolean {
  * Subscribe to the GitInfo stream for a cwd. Owns the full resolve + watch
  * + re-resolve loop: initial resolve, `.git/HEAD` watcher, debounced re-
  * resolve on HEAD change, dedup via `gitInfoEqual`, and `git init` detection
- * (a `.git` entry watcher while outside a repo, plus a same-cwd `setCwd`
+ * (a `.git` entry poller while outside a repo, plus a same-cwd `setCwd`
  * check for shells that report CWD after `git init`).
  *
  * `onChange` fires once per actual change — never for a dedup miss. Initial
  * resolve is best-effort: if the cwd isn't a git repo at start, the HEAD
  * watcher sits idle (HEAD watch is a no-op on non-git dirs per `watchGitHead`)
- * while the `.git` entry watcher waits for a repo to appear.
+ * while the `.git` entry poller waits for a repo to appear.
  *
  * Callers are the sole source of truth for current GitInfo — never re-read
  * the value elsewhere to drive control flow. The returned handle's `stop()`

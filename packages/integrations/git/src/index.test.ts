@@ -890,7 +890,7 @@ describe("subscribeGitInfo watcher churn", () => {
     );
 
     // Initial subscribe on a non-git dir installs no HEAD watcher. The
-    // `.git` entry watcher stays active so repo creation can be detected.
+    // `.git` entry detector stays active so repo creation can be detected.
     expect(counter.headInstalls).toBe(0);
     expect(counter.entryInstalls).toBe(1);
 
@@ -902,9 +902,8 @@ describe("subscribeGitInfo watcher churn", () => {
     await git.add(".");
     await git.commit("initial");
 
-    // Same-cwd setCwd must trigger the install (this is the only path
-    // that does — there's no fs.watch on the parent dir to signal the
-    // .git appearing).
+    // Same-cwd setCwd must still trigger promptly; the entry detector covers
+    // external git init when there is no cwd notification.
     sub.setCwd(dir);
 
     await waitFor(() => updates.length >= 1);
