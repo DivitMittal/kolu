@@ -10,6 +10,7 @@ import path from "node:path";
 import type { Logger } from "kolu-shared";
 import { simpleGit } from "simple-git";
 import { err, type GitResult, ok } from "./errors.ts";
+import { watchGitEntry } from "./git-entry-watcher.ts";
 import { watchGitHead } from "./head-watcher.ts";
 import type { GitInfo } from "./schemas.ts";
 
@@ -127,13 +128,13 @@ export function gitInfoEqual(a: GitInfo | null, b: GitInfo | null): boolean {
  * Subscribe to the GitInfo stream for a cwd. Owns the full resolve + watch
  * + re-resolve loop: initial resolve, `.git/HEAD` watcher, debounced re-
  * resolve on HEAD change, dedup via `gitInfoEqual`, and `git init` detection
- * (a same-cwd `setCwd` call on a not-yet-a-repo checks `.git` existence and
- * re-resolves if it appeared since the last resolve).
+ * (a `.git` entry watcher while outside a repo, plus a same-cwd `setCwd`
+ * check for shells that report CWD after `git init`).
  *
  * `onChange` fires once per actual change — never for a dedup miss. Initial
- * resolve is best-effort: if the cwd isn't a git repo at start, the watcher
- * sits idle (HEAD watch is a no-op on non-git dirs per `watchGitHead`) until
- * `setCwd` tells it to re-check.
+ * resolve is best-effort: if the cwd isn't a git repo at start, the HEAD
+ * watcher sits idle (HEAD watch is a no-op on non-git dirs per `watchGitHead`)
+ * while the `.git` entry watcher waits for a repo to appear.
  *
  * Callers are the sole source of truth for current GitInfo — never re-read
  * the value elsewhere to drive control flow. The returned handle's `stop()`
@@ -147,9 +148,25 @@ export function subscribeGitInfo(
   let currentCwd = initialCwd;
   let currentInfo: GitInfo | null = null;
   let stopHead = watchGitHead(currentCwd, handleHeadChange, log);
+  let stopGitEntry = watchGitEntry(currentCwd, handleGitEntryChange, log);
 
   function handleHeadChange(): void {
     void resolve();
+  }
+
+  function handleGitEntryChange(): void {
+    if (currentInfo !== null || !hasGitDir(currentCwd)) return;
+    stopHead();
+    stopHead = watchGitHead(currentCwd, handleHeadChange, log);
+    void resolve();
+  }
+
+  function resetGitEntryWatcher(): void {
+    stopGitEntry();
+    stopGitEntry =
+      currentInfo === null
+        ? watchGitEntry(currentCwd, handleGitEntryChange, log)
+        : () => {};
   }
 
   async function resolve(): Promise<void> {
@@ -163,6 +180,7 @@ export function subscribeGitInfo(
     }
     if (gitInfoEqual(next, currentInfo)) return;
     currentInfo = next;
+    resetGitEntryWatcher();
     onChange(next);
   }
 
@@ -187,10 +205,12 @@ export function subscribeGitInfo(
       currentCwd = next;
       stopHead();
       stopHead = watchGitHead(next, handleHeadChange, log);
+      resetGitEntryWatcher();
       void resolve();
     },
     stop(): void {
       stopHead();
+      stopGitEntry();
     },
   };
 }

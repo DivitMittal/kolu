@@ -23,6 +23,7 @@ import {
   watchGitHead,
   worktreeCreate,
 } from "./index.ts";
+import { _sharedGitEntryWatcherCount } from "./git-entry-watcher.ts";
 import { _sharedHeadWatcherCount } from "./head-watcher.ts";
 
 // Mock randomName to return a predictable value
@@ -799,6 +800,7 @@ describe("subscribeGitInfo watcher churn", () => {
 
   afterEach(() => {
     expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitEntryWatcherCount()).toBe(0);
   });
 
   /** Tracks watcher install/retire log lines as a vitest-friendly counter. */
@@ -892,6 +894,36 @@ describe("subscribeGitInfo watcher churn", () => {
 
     await waitFor(() => updates.length >= 1);
     expect(updates[0]?.repoRoot).toBe(fs.realpathSync(dir));
+
+    sub.stop();
+
+    expect(counter.installs).toBe(1);
+    expect(counter.retires).toBe(1);
+  });
+
+  it("external git init in the current cwd publishes without setCwd", async () => {
+    const dir = path.join(tmpDir, "external-git-init-dir");
+    fs.mkdirSync(dir, { recursive: true });
+
+    const counter = makeLog();
+    const updates: (GitInfo | null)[] = [];
+    const sub = subscribeGitInfo(
+      dir,
+      (info) => {
+        updates.push(info);
+      },
+      counter.log,
+    );
+
+    expect(counter.installs).toBe(0);
+
+    const git = simpleGit(dir);
+    await git.init();
+    await git.checkoutLocalBranch("main");
+
+    await waitFor(() => updates.length >= 1);
+    expect(updates[0]?.repoRoot).toBe(fs.realpathSync(dir));
+    expect(updates[0]?.branch).toBe("main");
 
     sub.stop();
 

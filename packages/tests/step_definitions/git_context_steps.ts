@@ -32,6 +32,14 @@ When(
   },
 );
 
+When(
+  "a git repo is initialized externally in {string} on branch {string}",
+  async function (this: KoluWorld, repoPath: string, branch: string) {
+    execFileSync("git", ["init"], { cwd: repoPath });
+    execFileSync("git", ["checkout", "-b", branch], { cwd: repoPath });
+  },
+);
+
 Then("the header should show a branch name", async function (this: KoluWorld) {
   await waitForTestIdText(this, "inspector-branch");
 });

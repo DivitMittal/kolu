@@ -24,6 +24,15 @@ Feature: Code tab (review + browse)
     And I click the Code tab
     Then the Code tab should indicate no git repository
 
+  Scenario: Git init after no-repo state refreshes Code tab and pill tree
+    When I run "rm -rf /tmp/kolu-code-init-refresh && mkdir -p /tmp/kolu-code-init-refresh && cd /tmp/kolu-code-init-refresh"
+    And I click the Code tab
+    Then the Code tab should indicate no git repository
+    When a git repo is initialized externally in "/tmp/kolu-code-init-refresh" on branch "code-refresh"
+    Then the Code tab should show the empty-changes message
+    And the pill tree label should show "kolu-code-init-refresh"
+    And the pill tree branch should contain "code-refresh"
+
   Scenario: Shows "no changes" when the repo is clean
     When I run "git init /tmp/kolu-review-clean && cd /tmp/kolu-review-clean"
     And I run "git commit --allow-empty -m init"
