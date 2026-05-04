@@ -951,6 +951,38 @@ describe("subscribeGitInfo watcher churn", () => {
     expect(counter.entryRetires).toBe(1);
   });
 
+  it("stop prevents the initial async resolve from reinstalling watchers", async () => {
+    const dir = path.join(tmpDir, "stop-before-initial-resolve");
+    fs.mkdirSync(dir, { recursive: true });
+
+    const counter = makeLog();
+    const updates: (GitInfo | null)[] = [];
+    const sub = subscribeGitInfo(
+      dir,
+      (info) => {
+        updates.push(info);
+      },
+      counter.log,
+    );
+
+    expect(counter.entryInstalls).toBe(1);
+
+    sub.stop();
+
+    expect(counter.entryRetires).toBe(1);
+    expect(_sharedGitEntryWatcherCount()).toBe(0);
+
+    // Let the initial simple-git resolve settle. Before the stopped guard, its
+    // continuation reinstalled the non-repo entry watcher after teardown.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(updates).toEqual([]);
+    expect(counter.entryInstalls).toBe(1);
+    expect(counter.entryRetires).toBe(1);
+    expect(_sharedHeadWatcherCount()).toBe(0);
+    expect(_sharedGitEntryWatcherCount()).toBe(0);
+  });
+
   it("setCwd between two distinct git repos: 1 install + 1 retire per transition", async () => {
     const a = await initRepo("transition-a");
     const b = await initRepo("transition-b");

@@ -153,14 +153,17 @@ export function subscribeGitInfo(
   let watchMode: GitWatchMode | null = null;
   let headActive = false;
   let entryActive = false;
+  let stopped = false;
   let stopHead: () => void = () => {};
   let stopGitEntry: () => void = () => {};
 
   function handleHeadChange(): void {
+    if (stopped) return;
     void resolve();
   }
 
   function handleGitEntryChange(): void {
+    if (stopped) return;
     if (!hasGitDir(currentCwd)) return;
     syncWatchers("probing");
     void resolve();
@@ -197,7 +200,7 @@ export function subscribeGitInfo(
   async function resolve(): Promise<void> {
     const resolvedCwd = currentCwd;
     const result = await resolveGitInfo(resolvedCwd, log);
-    if (resolvedCwd !== currentCwd) return;
+    if (stopped || resolvedCwd !== currentCwd) return;
     const next: GitInfo | null = result.ok ? result.value : null;
     syncWatchers(next === null ? "non-repo" : "repo");
     if (!result.ok && result.error.code !== "NOT_A_REPO") {
@@ -218,6 +221,7 @@ export function subscribeGitInfo(
 
   return {
     setCwd(next: string): void {
+      if (stopped) return;
       if (next === currentCwd) {
         // Same cwd — only act if the repo state might have changed from
         // outside. Today that's exactly one case: we thought this dir wasn't
@@ -233,6 +237,7 @@ export function subscribeGitInfo(
       void resolve();
     },
     stop(): void {
+      stopped = true;
       stopHead();
       stopGitEntry();
       headActive = false;
