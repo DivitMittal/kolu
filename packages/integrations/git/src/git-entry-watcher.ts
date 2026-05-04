@@ -15,6 +15,8 @@ const gitEntryWatcher = createDirFilenameWatcher({
     try {
       return fs.realpathSync(cwd);
     } catch {
+      // The terminal cwd can be deleted before watcher installation; a null
+      // target matches the other git watchers' no-op behavior for absent dirs.
       return null;
     }
   },
