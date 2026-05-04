@@ -805,12 +805,16 @@ describe("subscribeGitInfo watcher churn", () => {
 
   /** Tracks watcher install/retire log lines as a vitest-friendly counter. */
   function makeLog() {
-    let installs = 0;
-    let retires = 0;
+    let headInstalls = 0;
+    let headRetires = 0;
+    let entryInstalls = 0;
+    let entryRetires = 0;
     const log = {
       info(_obj: unknown, msg: string) {
-        if (msg === "git: head watcher installed") installs++;
-        if (msg === "git: head watcher retired") retires++;
+        if (msg === "git: head watcher installed") headInstalls++;
+        if (msg === "git: head watcher retired") headRetires++;
+        if (msg === "git: entry watcher installed") entryInstalls++;
+        if (msg === "git: entry watcher retired") entryRetires++;
       },
       debug() {},
       warn() {},
@@ -818,11 +822,17 @@ describe("subscribeGitInfo watcher churn", () => {
     };
     return {
       log,
-      get installs() {
-        return installs;
+      get headInstalls() {
+        return headInstalls;
       },
-      get retires() {
-        return retires;
+      get headRetires() {
+        return headRetires;
+      },
+      get entryInstalls() {
+        return entryInstalls;
+      },
+      get entryRetires() {
+        return entryRetires;
       },
     };
   }
@@ -831,7 +841,7 @@ describe("subscribeGitInfo watcher churn", () => {
   // git repo installed the watcher synchronously, then the async resolve
   // saw `currentInfo === null` and tore down + re-installed at the same
   // gitDir. Two install events and a wasted retire per cd into a repo.
-  it("setCwd into a git repo installs the watcher exactly once", async () => {
+  it("setCwd into a git repo installs the HEAD watcher exactly once", async () => {
     const nonGitDir = path.join(tmpDir, "not-a-repo");
     fs.mkdirSync(nonGitDir, { recursive: true });
     const { dir: repoDir } = await initRepo("cd-target");
@@ -855,14 +865,17 @@ describe("subscribeGitInfo watcher churn", () => {
 
     sub.stop();
 
-    // The bug: 2 installs + 1 retire on a single cd into a repo, plus
-    // 1 retire on stop. The fix: 1 install on cd into the repo,
-    // 1 retire on stop. (No watcher on the initial non-git dir.)
-    expect(counter.installs).toBe(1);
-    expect(counter.retires).toBe(1);
+    // The bug: 2 HEAD installs + 1 retire on a single cd into a repo,
+    // plus 1 retire on stop. The fix: 1 HEAD install on cd into the repo,
+    // 1 HEAD retire on stop. The entry watcher is active only while the
+    // cwd is unresolved or non-git, and every entry install is retired.
+    expect(counter.headInstalls).toBe(1);
+    expect(counter.headRetires).toBe(1);
+    expect(counter.entryInstalls).toBe(2);
+    expect(counter.entryRetires).toBe(2);
   });
 
-  it("git init in the current cwd installs the watcher exactly once", async () => {
+  it("git init in the current cwd installs the HEAD watcher exactly once", async () => {
     const dir = path.join(tmpDir, "git-init-dir");
     fs.mkdirSync(dir, { recursive: true });
 
@@ -876,8 +889,10 @@ describe("subscribeGitInfo watcher churn", () => {
       counter.log,
     );
 
-    // Initial subscribe on a non-git dir installs no watcher.
-    expect(counter.installs).toBe(0);
+    // Initial subscribe on a non-git dir installs no HEAD watcher. The
+    // `.git` entry watcher stays active so repo creation can be detected.
+    expect(counter.headInstalls).toBe(0);
+    expect(counter.entryInstalls).toBe(1);
 
     // Simulate `git init` in the same cwd.
     const git = simpleGit(dir);
@@ -897,8 +912,10 @@ describe("subscribeGitInfo watcher churn", () => {
 
     sub.stop();
 
-    expect(counter.installs).toBe(1);
-    expect(counter.retires).toBe(1);
+    expect(counter.headInstalls).toBe(1);
+    expect(counter.headRetires).toBe(1);
+    expect(counter.entryInstalls).toBe(1);
+    expect(counter.entryRetires).toBe(1);
   });
 
   it("external git init in the current cwd publishes without setCwd", async () => {
@@ -915,7 +932,8 @@ describe("subscribeGitInfo watcher churn", () => {
       counter.log,
     );
 
-    expect(counter.installs).toBe(0);
+    expect(counter.headInstalls).toBe(0);
+    expect(counter.entryInstalls).toBe(1);
 
     const git = simpleGit(dir);
     await git.init();
@@ -927,8 +945,10 @@ describe("subscribeGitInfo watcher churn", () => {
 
     sub.stop();
 
-    expect(counter.installs).toBe(1);
-    expect(counter.retires).toBe(1);
+    expect(counter.headInstalls).toBe(1);
+    expect(counter.headRetires).toBe(1);
+    expect(counter.entryInstalls).toBe(1);
+    expect(counter.entryRetires).toBe(1);
   });
 
   it("setCwd between two distinct git repos: 1 install + 1 retire per transition", async () => {
@@ -946,7 +966,7 @@ describe("subscribeGitInfo watcher churn", () => {
     );
 
     // Initial subscribe installed on a's gitDir synchronously.
-    expect(counter.installs).toBe(1);
+    expect(counter.headInstalls).toBe(1);
 
     // Wait for the initial GitInfo to publish before swapping.
     await waitFor(() => updates.length >= 1);
@@ -957,7 +977,9 @@ describe("subscribeGitInfo watcher churn", () => {
     sub.stop();
 
     // Initial install on a + retire on transition + install on b + retire on stop.
-    expect(counter.installs).toBe(2);
-    expect(counter.retires).toBe(2);
+    expect(counter.headInstalls).toBe(2);
+    expect(counter.headRetires).toBe(2);
+    expect(counter.entryInstalls).toBe(2);
+    expect(counter.entryRetires).toBe(2);
   });
 });
