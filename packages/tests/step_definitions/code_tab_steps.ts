@@ -263,12 +263,14 @@ Then(
   async function (this: KoluWorld, value: string) {
     const input = this.page.locator(FILTER_SEARCH);
     await input.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
-    const actual = await input.inputValue();
-    if (actual !== value) {
-      throw new Error(
-        `Expected Code tab filter to contain "${value}", got "${actual}"`,
-      );
-    }
+    await this.page.waitForFunction(
+      ({ expected, selector }) => {
+        const el = document.querySelector<HTMLInputElement>(selector);
+        return el?.value === expected;
+      },
+      { expected: value, selector: FILTER_SEARCH },
+      { timeout: POLL_TIMEOUT },
+    );
   },
 );
 
