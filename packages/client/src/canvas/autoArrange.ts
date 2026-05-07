@@ -19,6 +19,14 @@ export type AutoArrangeOptions = {
 const DEFAULT_TILE_GAP = GRID_SIZE * 2;
 const DEFAULT_GROUP_GAP = GRID_SIZE * 4;
 
+type Rect = { w: number; h: number };
+
+type PackedGrid<T> = {
+  items: { item: T; x: number; y: number }[];
+  w: number;
+  h: number;
+};
+
 function fallbackLayout(tile: AutoArrangeTile): TileLayout {
   return tile.layout ?? { x: 0, y: 0, w: DEFAULT_TILE_W, h: DEFAULT_TILE_H };
 }
@@ -43,6 +51,38 @@ function extentFromOffsets(offsets: number[], lengths: number[]): number {
   return (offsets[last] ?? 0) + (lengths[last] ?? 0);
 }
 
+function packSquareGrid<T>(
+  items: T[],
+  gap: number,
+  measure: (item: T) => Rect,
+): PackedGrid<T> {
+  if (items.length === 0) return { items: [], w: 0, h: 0 };
+  const columns = Math.ceil(Math.sqrt(items.length));
+  const rows = Math.ceil(items.length / columns);
+  const colWidths = Array.from({ length: columns }, () => 0);
+  const rowHeights = Array.from({ length: rows }, () => 0);
+
+  items.forEach((item, index) => {
+    const { w, h } = measure(item);
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    colWidths[col] = Math.max(colWidths[col] ?? 0, w);
+    rowHeights[row] = Math.max(rowHeights[row] ?? 0, h);
+  });
+
+  const colOffsets = gridTracks(colWidths, gap);
+  const rowOffsets = gridTracks(rowHeights, gap);
+  return {
+    items: items.map((item, index) => ({
+      item,
+      x: colOffsets[index % columns] ?? 0,
+      y: rowOffsets[Math.floor(index / columns)] ?? 0,
+    })),
+    w: extentFromOffsets(colOffsets, colWidths),
+    h: extentFromOffsets(rowOffsets, rowHeights),
+  };
+}
+
 function arrangeCluster(
   tiles: AutoArrangeTile[],
   tileGap: number,
@@ -51,64 +91,28 @@ function arrangeCluster(
   w: number;
   h: number;
 } {
-  const columns = Math.ceil(Math.sqrt(tiles.length));
-  const rows = Math.ceil(tiles.length / columns);
-  const colWidths = Array.from({ length: columns }, () => 0);
-  const rowHeights = Array.from({ length: rows }, () => 0);
-
-  const layouts = tiles.map((tile) => fallbackLayout(tile));
-  layouts.forEach((layout, index) => {
-    const col = index % columns;
-    const row = Math.floor(index / columns);
-    colWidths[col] = Math.max(colWidths[col] ?? 0, layout.w);
-    rowHeights[row] = Math.max(rowHeights[row] ?? 0, layout.h);
-  });
-
-  const colOffsets = gridTracks(colWidths, tileGap);
-  const rowOffsets = gridTracks(rowHeights, tileGap);
+  const packed = packSquareGrid(
+    tiles.map((tile) => ({ tile, layout: fallbackLayout(tile) })),
+    tileGap,
+    ({ layout }) => layout,
+  );
   const arranged = new Map<TerminalId, TileLayout>();
 
-  tiles.forEach((tile, index) => {
-    const col = index % columns;
-    const row = Math.floor(index / columns);
-    const layout = layouts[index] ?? fallbackLayout(tile);
+  for (const { item, x, y } of packed.items) {
+    const { tile, layout } = item;
     arranged.set(tile.id, {
-      x: colOffsets[col] ?? 0,
-      y: rowOffsets[row] ?? 0,
+      x,
+      y,
       w: layout.w,
       h: layout.h,
     });
-  });
+  }
 
   return {
     layouts: arranged,
-    w: extentFromOffsets(colOffsets, colWidths),
-    h: extentFromOffsets(rowOffsets, rowHeights),
+    w: packed.w,
+    h: packed.h,
   };
-}
-
-function arrangeRectangles(
-  rects: { w: number; h: number }[],
-  gap: number,
-): { x: number; y: number }[] {
-  const columns = Math.ceil(Math.sqrt(rects.length));
-  const rows = Math.ceil(rects.length / columns);
-  const colWidths = Array.from({ length: columns }, () => 0);
-  const rowHeights = Array.from({ length: rows }, () => 0);
-
-  rects.forEach((rect, index) => {
-    const col = index % columns;
-    const row = Math.floor(index / columns);
-    colWidths[col] = Math.max(colWidths[col] ?? 0, rect.w);
-    rowHeights[row] = Math.max(rowHeights[row] ?? 0, rect.h);
-  });
-
-  const colOffsets = gridTracks(colWidths, gap);
-  const rowOffsets = gridTracks(rowHeights, gap);
-  return rects.map((_, index) => ({
-    x: colOffsets[index % columns] ?? 0,
-    y: rowOffsets[Math.floor(index / columns)] ?? 0,
-  }));
 }
 
 function originFor(
@@ -148,11 +152,14 @@ export function arrangeByRepo(
   const clusters = [...groups.values()].map((group) =>
     arrangeCluster(group, tileGap),
   );
-  const clusterOffsets = arrangeRectangles(clusters, groupGap);
+  const clusterOffsets = packSquareGrid(clusters, groupGap, (cluster) => ({
+    w: cluster.w,
+    h: cluster.h,
+  })).items;
   const result = new Map<TerminalId, TileLayout>();
 
   clusters.forEach((cluster, index) => {
-    const offset = clusterOffsets[index] ?? { x: 0, y: 0 };
+    const offset = clusterOffsets[index] ?? { item: cluster, x: 0, y: 0 };
     for (const [id, layout] of cluster.layouts) {
       result.set(id, {
         ...layout,
