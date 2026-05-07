@@ -11,6 +11,29 @@ import { isLegacyWorkboxCacheName } from "kolu-common/legacyWorkboxCache";
  */
 
 const RELOAD_GUARD_KEY = "kolu:build-reload";
+let inMemoryReloadToken: string | null = null;
+
+function readReloadToken(): string | null {
+  try {
+    return sessionStorage.getItem(RELOAD_GUARD_KEY);
+  } catch (err) {
+    console.warn("Build-reload sessionStorage read failed:", err);
+    return inMemoryReloadToken;
+  }
+}
+
+function writeReloadToken(token: string | null): void {
+  inMemoryReloadToken = token;
+  try {
+    if (token === null) {
+      sessionStorage.removeItem(RELOAD_GUARD_KEY);
+    } else {
+      sessionStorage.setItem(RELOAD_GUARD_KEY, token);
+    }
+  } catch (err) {
+    console.warn("Build-reload sessionStorage write failed:", err);
+  }
+}
 
 /**
  * Drop any legacy app-shell service worker and its caches before navigating.
@@ -57,18 +80,18 @@ export function reloadIfServerBuildChanged(serverCommit: string): void {
     serverCommit === "dev" ||
     serverCommit === __KOLU_COMMIT__
   ) {
-    sessionStorage.removeItem(RELOAD_GUARD_KEY);
+    writeReloadToken(null);
     return;
   }
 
   const reloadToken = `${__KOLU_COMMIT__}->${serverCommit}`;
-  if (sessionStorage.getItem(RELOAD_GUARD_KEY) === reloadToken) {
+  if (readReloadToken() === reloadToken) {
     console.warn(
       `Kolu build still stale after reload: client=${__KOLU_COMMIT__} server=${serverCommit}`,
     );
     return;
   }
 
-  sessionStorage.setItem(RELOAD_GUARD_KEY, reloadToken);
+  writeReloadToken(reloadToken);
   void reloadToFreshBuild();
 }
