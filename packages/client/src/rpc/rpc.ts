@@ -79,7 +79,13 @@ export function onServerInfo(listener: (info: ServerInfo) => void): () => void {
     client.server
       .info()
       .then((info) => {
-        for (const listener of serverInfoListeners) listener(info);
+        for (const listener of serverInfoListeners) {
+          try {
+            listener(info);
+          } catch (err) {
+            console.error("server.info listener failed:", err);
+          }
+        }
         const { processId } = info;
 
         if (isFirstConnect) {
