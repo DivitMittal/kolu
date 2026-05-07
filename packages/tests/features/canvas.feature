@@ -36,18 +36,18 @@ Feature: Canvas workspace
     And the canvas tiles should be visible in the viewport
     And there should be no page errors
 
-  Scenario: New terminal shifts when an existing tile occupies the viewport center
+  Scenario: New terminal flows beside the current repo cluster
     When I create a terminal with keyboard shortcut
     Then there should be 2 canvas tiles
-    And canvas tile 2 should be offset from canvas tile 1
+    And canvas tile 2 should be to the right of canvas tile 1
 
-  Scenario: Creating a terminal after panning opens at the new viewport center
+  Scenario: Creating a terminal after panning still joins the current repo cluster
     When I record the canvas transform
     And I scroll the wheel over the canvas background
     Then the canvas transform should have changed
     When I create a terminal with keyboard shortcut
     Then there should be 2 canvas tiles
-    And the newest canvas tile should be centered in the viewport
+    And canvas tile 2 should be to the right of canvas tile 1
 
   Scenario: Scroll on terminal does not pan the canvas
     When I record the canvas transform

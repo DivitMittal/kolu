@@ -10,6 +10,7 @@ import type {
 } from "kolu-common/surface";
 import { toast } from "solid-sonner";
 import { availableThemes, pickTheme, resolveThemeBgs } from "terminal-themes";
+import { placeNewTileInRepoIsland } from "../canvas/repoIslandPlacement";
 import { CONTEXTUAL_TIPS } from "../settings/tips";
 import { client, preferences } from "../wire";
 import { useTips } from "../settings/useTips";
@@ -62,6 +63,30 @@ export function useTerminalCrud(deps: {
       .catch((err: Error) =>
         toast.error(`Failed to save canvas layouts: ${err.message}`),
       );
+  }
+
+  function initialCanvasLayoutForCreate(
+    cwd: string | undefined,
+    initial: InitialTerminalMetadata | undefined,
+  ): CanvasLayout | undefined {
+    if (initial?.canvasLayout) return initial.canvasLayout;
+    return placeNewTileInRepoIsland({
+      cwd,
+      activeId: store.activeId(),
+      terminals: store.terminalIds().flatMap((id) => {
+        const meta = store.getMetadata(id);
+        if (!meta) return [];
+        return [
+          {
+            id,
+            cwd: meta.cwd,
+            git: meta.git,
+            group: store.getDisplayInfo(id)?.key.group,
+            layout: meta.canvasLayout,
+          },
+        ];
+      }),
+    });
   }
 
   /** Remove a terminal and auto-switch if it was active. */
@@ -127,11 +152,12 @@ export function useTerminalCrud(deps: {
       (peerBgs
         ? pickTheme(availableThemes, { spread: true, peerBgs })
         : undefined);
+    const canvasLayout = initialCanvasLayoutForCreate(cwd, initial);
     const info = await client.terminal
       .create({
         cwd,
         themeName: theme,
-        canvasLayout: initial?.canvasLayout,
+        canvasLayout,
         subPanel: initial?.subPanel,
         lastActivityAt: initial?.lastActivityAt,
       })
