@@ -25,6 +25,28 @@ export function buildWorkspaceEntries(
   return entries;
 }
 
+/** Order entries by recency descending, with canvas (`x`, `y`) as the
+ *  secondary key and stable input order as the final tiebreak. Pure — the
+ *  recency value is plugged in via the accessor. The expanded panel
+ *  re-buckets by agent state, so the visible effect there is
+ *  recency-within-bucket. */
+export function sortBySwitcherOrder(
+  entries: WorkspaceSwitcherSourceEntry[],
+  getRecency: (id: TerminalId) => number,
+): WorkspaceSwitcherSourceEntry[] {
+  return [...entries].sort((a, b) => {
+    const ra = getRecency(a.id);
+    const rb = getRecency(b.id);
+    if (ra !== rb) return rb - ra;
+    const ax = a.layout?.x ?? Infinity;
+    const bx = b.layout?.x ?? Infinity;
+    if (ax !== bx) return ax - bx;
+    const ay = a.layout?.y ?? Infinity;
+    const by = b.layout?.y ?? Infinity;
+    return ay - by;
+  });
+}
+
 export type WorkspaceAgentBucket = "awaiting" | "working" | "none";
 
 /** Stable agent-state buckets shown as columns in the expanded switcher.
@@ -230,10 +252,25 @@ function matchesQuery(
   return tokens.every((token) => entry.searchText.includes(token));
 }
 
+/** Cap on idle (no-agent, non-active) compact pills per repo. Pills that
+ *  carry an active agent OR represent the user's active terminal bypass
+ *  the cap entirely — both are guaranteed reachable from the pill strip
+ *  no matter how many idle peers share the repo. */
+const IDLE_PILLS_PER_REPO = 5;
+
+/** Visible-pill count per repo in the collapsed strip. The model uses
+ *  this to hoist the active terminal into the visible head when its
+ *  natural position would be past the slice boundary, so the renderer
+ *  can `slice(0, COMPACT_VISIBLE_PER_REPO)` without re-deriving active
+ *  awareness. Single point of enforcement for "active is reachable". */
+export const COMPACT_VISIBLE_PER_REPO = 3;
+
 function compactGroupsFor(
   entries: WorkspaceSwitcherEntry[],
+  activeId: TerminalId | null,
 ): WorkspaceSwitcherRepoGroup[] {
   const groups = new Map<string, WorkspaceSwitcherRepoGroup>();
+  const idleCounts = new Map<string, number>();
   for (const entry of entries) {
     let group = groups.get(entry.repoName);
     if (!group) {
@@ -244,6 +281,15 @@ function compactGroupsFor(
       };
       groups.set(entry.repoName, group);
     }
+    // Idle-cap bypass: in-flight agent (salience) or active terminal
+    // (reachability). Names kept so a future divergence stays visible.
+    const hasAgent = entry.info.meta.agent !== null;
+    const isFocused = entry.id === activeId;
+    if (!hasAgent && !isFocused) {
+      const idle = idleCounts.get(entry.repoName) ?? 0;
+      if (idle >= IDLE_PILLS_PER_REPO) continue;
+      idleCounts.set(entry.repoName, idle + 1);
+    }
     group.items.push({
       id: entry.id,
       label: entry.label,
@@ -251,18 +297,43 @@ function compactGroupsFor(
       info: entry.info,
     });
   }
-  return [...groups.values()];
+  // Hoist active into the visible prefix so `Collapsed.tsx`'s
+  // `slice(0, N)` cannot clip a focused-but-not-recent terminal into
+  // the `+N` overflow chip.
+  if (activeId !== null) {
+    for (const group of groups.values()) {
+      const idx = group.items.findIndex((item) => item.id === activeId);
+      if (idx >= COMPACT_VISIBLE_PER_REPO) {
+        // biome-ignore lint/style/noNonNullAssertion: idx came from findIndex on the same array, splice always yields the element.
+        const active = group.items.splice(idx, 1)[0]!;
+        group.items.splice(COMPACT_VISIBLE_PER_REPO - 1, 0, active);
+      }
+    }
+  }
+  // Stable repo slot via alphabetical; intra-repo recency comes from
+  // input order (set upstream by `sortBySwitcherOrder`).
+  return [...groups.values()].sort((a, b) =>
+    a.repoName.localeCompare(b.repoName),
+  );
 }
 
-/** Derive all switcher projections from one live-terminal entry list. */
+/** Derive all switcher projections (search, facets, bucket columns,
+ *  compact groups) from one live-terminal entry list. Owns the ordering
+ *  pipeline — when `getRecency` is provided, applies `sortBySwitcherOrder`
+ *  internally so callers can't feed unsorted entries into the grouping. */
 export function buildWorkspaceSwitcherModel(
   sources: WorkspaceSwitcherSourceEntry[],
   options: {
     query?: string;
     repoFilter?: string | null;
+    activeId?: TerminalId | null;
+    getRecency?: (id: TerminalId) => number;
   } = {},
 ): WorkspaceSwitcherModel {
-  const entries: WorkspaceSwitcherEntry[] = sources.map((source) => {
+  const ordered = options.getRecency
+    ? sortBySwitcherOrder(sources, options.getRecency)
+    : sources;
+  const entries: WorkspaceSwitcherEntry[] = ordered.map((source) => {
     const base = {
       id: source.id,
       repoName: source.info.key.group,
@@ -290,7 +361,7 @@ export function buildWorkspaceSwitcherModel(
 
   return {
     entries,
-    compactGroups: compactGroupsFor(entries),
+    compactGroups: compactGroupsFor(entries, options.activeId ?? null),
     visibleEntries,
     selectedRepo,
     repoFacets,

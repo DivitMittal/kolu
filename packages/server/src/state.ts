@@ -98,7 +98,7 @@ type PersistedState = z.infer<typeof PersistedStateSchema>;
  * Must be valid semver. `conf` runs all migration handlers
  * whose keys are > the last-seen version and ≤ this value.
  */
-const SCHEMA_VERSION = "1.20.0";
+const SCHEMA_VERSION = "1.21.0";
 
 // Callers must pass an explicit directory via KOLU_STATE_DIR. A bare launch
 // with no env would silently clobber whatever happens to live at conf's
@@ -396,6 +396,19 @@ export const store = new Conf<PersistedState>({
         ...current,
         rightPanel: { ...rest, activeTab, codeMode },
       } as Preferences);
+    },
+    // SavedTerminal.lastActivityAt added (#830). Seed legacy terminals to 0
+    // so they fall back to canvas-position ordering until an agent
+    // semantic-key transition stamps a real timestamp.
+    "1.21.0": (store: Conf<PersistedState>) => {
+      const session = store.get("session");
+      if (!session) return;
+      const legacy = session.terminals as unknown as Record<string, unknown>[];
+      const terminals = legacy.map((t) => ({
+        lastActivityAt: 0,
+        ...t,
+      })) as typeof session.terminals;
+      store.set("session", { ...session, terminals });
     },
   },
 });

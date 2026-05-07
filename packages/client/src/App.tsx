@@ -81,13 +81,8 @@ const App: Component = () => {
   const { colorScheme } = useColorScheme();
   const canvasViewport = useCanvasViewport();
 
-  // Workspace-switcher entries are one live terminal list. Desktop and mobile
-  // choose explicit order policies from it: desktop mirrors canvas geometry
-  // (leftmost first, topmost as tie-break), mobile keeps live terminal order
-  // because there is no canvas affordance.
-  //
-  // Layouts are still captured on the source entries so the desktop policy can
-  // reorder live as tiles are dragged without leaking that policy to mobile.
+  // Workspace-switcher feeds — desktop and mobile share the same
+  // accessors; `buildWorkspaceSwitcherModel` owns the ordering pipeline.
   const workspaceEntries = createMemo(() =>
     buildWorkspaceEntries(
       store.terminalIds(),
@@ -95,21 +90,16 @@ const App: Component = () => {
       (id) => store.getMetadata(id)?.canvasLayout,
     ),
   );
-  const desktopWorkspaceEntries = createMemo(() =>
-    [...workspaceEntries()].sort((a, b) => {
-      const ax = a.layout?.x ?? Infinity;
-      const bx = b.layout?.x ?? Infinity;
-      if (ax !== bx) return ax - bx;
-      const ay = a.layout?.y ?? Infinity;
-      const by = b.layout?.y ?? Infinity;
-      return ay - by;
+  const recencyOf = (id: TerminalId): number =>
+    store.getMetadata(id)?.lastActivityAt ?? 0;
+  const mobileWorkspaceModel = createMemo(() =>
+    buildWorkspaceSwitcherModel(workspaceEntries(), {
+      activeId: store.activeId(),
+      getRecency: recencyOf,
     }),
   );
-  const mobileWorkspaceModel = createMemo(() =>
-    buildWorkspaceSwitcherModel(workspaceEntries()),
-  );
   const orderedIds = createMemo(() =>
-    workspaceEntries().map((entry) => entry.id),
+    mobileWorkspaceModel().entries.map((entry) => entry.id),
   );
 
   // Fetch server identity for document title, watermark, and PWA chrome color.
@@ -476,7 +466,9 @@ const App: Component = () => {
           onOpenPalette={() => openPalette()}
           workspaceSwitcher={
             <WorkspaceSwitcher
-              entries={desktopWorkspaceEntries()}
+              entries={workspaceEntries()}
+              activeId={store.activeId()}
+              getRecency={recencyOf}
               openRequest={workspaceSwitcherOpenRequest()}
               onSelect={(id) => {
                 store.setActiveId(id);

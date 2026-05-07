@@ -23,6 +23,7 @@ const terminal: SavedTerminal = {
     isWorktree: false,
     mainRepoRoot: "/home/user/project",
   },
+  lastActivityAt: 0,
 };
 
 describe("session persistence", () => {
@@ -72,9 +73,9 @@ describe("session persistence", () => {
 
   it("preserves multiple terminals with array order", () => {
     const terminals: SavedTerminal[] = [
-      { id: "a", cwd: "/a", git: null },
-      { id: "b", cwd: "/b", git: null },
-      { id: "c", cwd: "/c", git: null, parentId: "a" },
+      { id: "a", cwd: "/a", git: null, lastActivityAt: 0 },
+      { id: "b", cwd: "/b", git: null, lastActivityAt: 0 },
+      { id: "c", cwd: "/c", git: null, parentId: "a", lastActivityAt: 0 },
     ];
     saveSession({ terminals, activeTerminalId: null });
     const session = getSavedSession();
@@ -86,14 +87,37 @@ describe("session persistence", () => {
 
   it("preserves themeName on round-trip", () => {
     const terminals: SavedTerminal[] = [
-      { id: "a", cwd: "/a", git: null, themeName: "Dracula" },
-      { id: "b", cwd: "/b", git: null },
+      {
+        id: "a",
+        cwd: "/a",
+        git: null,
+        themeName: "Dracula",
+        lastActivityAt: 0,
+      },
+      { id: "b", cwd: "/b", git: null, lastActivityAt: 0 },
     ];
     saveSession({ terminals, activeTerminalId: null });
     const session = getSavedSession();
     assert.ok(session !== null, "session round-trip lost the saved value");
     expect(session.terminals[0]?.themeName).toBe("Dracula");
     expect(session.terminals[1]?.themeName).toBeUndefined();
+  });
+
+  it("preserves lastActivityAt on round-trip", () => {
+    // Use real, distinct timestamps so a restore that drops the value
+    // (resetting to 0) cannot pass by coincidence — fixtures of `0`
+    // were the gap that hid the original restore-drops-recency bug.
+    const t1 = 1_700_000_000_000;
+    const t2 = 1_700_000_900_000;
+    const terminals: SavedTerminal[] = [
+      { id: "a", cwd: "/a", git: null, lastActivityAt: t1 },
+      { id: "b", cwd: "/b", git: null, lastActivityAt: t2 },
+    ];
+    saveSession({ terminals, activeTerminalId: null });
+    const session = getSavedSession();
+    assert.ok(session !== null, "session round-trip lost the saved value");
+    expect(session.terminals[0]?.lastActivityAt).toBe(t1);
+    expect(session.terminals[1]?.lastActivityAt).toBe(t2);
   });
 
   it("clearSavedSession removes the session", () => {

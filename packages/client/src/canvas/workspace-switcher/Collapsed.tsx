@@ -6,10 +6,9 @@ import { branchAccent, repoAccent } from "./identity";
 import {
   agentBucket,
   bucketDescriptor,
+  COMPACT_VISIBLE_PER_REPO,
   type WorkspaceSwitcherRepoGroup,
 } from "./model";
-
-const ITEMS_PER_ROW = 3;
 
 /** Collapsed desktop switcher: a miniaturised form of the search-panel
  *  card vocabulary — same rectangle shape, same border treatment, same
@@ -38,9 +37,10 @@ const CollapsedWorkspaceSwitcher: Component<{
 
       <Index each={props.groups}>
         {(group) => {
-          const visible = () => group().items.slice(0, ITEMS_PER_ROW);
+          const visible = () =>
+            group().items.slice(0, COMPACT_VISIBLE_PER_REPO);
           const overflow = () =>
-            Math.max(0, group().items.length - ITEMS_PER_ROW);
+            Math.max(0, group().items.length - COMPACT_VISIBLE_PER_REPO);
           return (
             <div class="pointer-events-auto flex flex-col items-start gap-1.5 min-w-0">
               <div class="flex items-center gap-1.5 max-w-[18ch] min-w-0 pl-0.5">

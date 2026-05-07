@@ -25,6 +25,51 @@ import type { TerminalProcess } from "../terminal-registry.ts";
 import { getLastAgentCommandName } from "./agent-command.ts";
 import { updateServerMetadata } from "./state.ts";
 
+/** Pure decision: does this agent transition warrant a recency bump?
+ *
+ *  - Watcher emits sharing the same `kind`/`sessionId`/`state` are
+ *    dedup'd here so frequent sub-info refreshes (`contextTokens`,
+ *    `summary`) don't perturb ordering.
+ *  - Restore caveat: agent state is transient, so a restored terminal
+ *    always sees a `null → detected` "transition" the moment the
+ *    provider re-observes the still-running session. If the terminal
+ *    already carries a non-zero `lastActivityAt` (from the saved
+ *    session), that's the truth of when the user last interacted —
+ *    don't overwrite it with `Date.now()` just because the live agent
+ *    slot was re-populated. The next real state change inside the
+ *    session will bump as usual. */
+export function shouldBumpRecencyForAgentChange(
+  prev: AgentInfo | null,
+  next: AgentInfo | null,
+  currentLastActivityAt: number,
+): boolean {
+  const transitioning =
+    prev?.kind !== next?.kind ||
+    prev?.sessionId !== next?.sessionId ||
+    prev?.state !== next?.state;
+  if (!transitioning) return false;
+  const isReDetectionAfterRestore =
+    prev === null && next !== null && currentLastActivityAt > 0;
+  return !isReDetectionAfterRestore;
+}
+
+/** Single write-site for `m.agent`. */
+function setAgentMetadata(
+  entry: TerminalProcess,
+  terminalId: string,
+  nextAgent: AgentInfo | null,
+): void {
+  const bump = shouldBumpRecencyForAgentChange(
+    entry.info.meta.agent,
+    nextAgent,
+    entry.info.meta.lastActivityAt,
+  );
+  updateServerMetadata(entry, terminalId, (m) => {
+    m.agent = nextAgent;
+    if (bump) m.lastActivityAt = Date.now();
+  });
+}
+
 /** node-pty may return a full path (e.g. `/nix/store/.../bin/opencode` on
  *  NixOS). Normalize to basename so providers can compare against known
  *  binary names. Mirrors `processBasename` in `process.ts`.
@@ -178,9 +223,7 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
       // Only clear metadata if the terminal's agent is ours to clear.
       // Other providers of different kinds share the same `m.agent` slot.
       if (entry.info.meta.agent?.kind === provider.kind) {
-        updateServerMetadata(entry, terminalId, (m) => {
-          m.agent = null;
-        });
+        setAgentMetadata(entry, terminalId, null);
       }
       return;
     }
@@ -191,15 +234,13 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
       watcher: provider.createWatcher(
         next,
         (info) => {
-          updateServerMetadata(entry, terminalId, (m) => {
-            // Widen Info to AgentInfo — every concrete Info variant is a
-            // member of the AgentInfo discriminated union by construction
-            // (its schema is one of the union's branches). The cast lives
-            // at the sole metadata-write site for agent info, so widening
-            // is confined to this one line rather than smeared across
-            // every provider.
-            m.agent = info as unknown as AgentInfo;
-          });
+          // Widen Info to AgentInfo — every concrete Info variant is a
+          // member of the AgentInfo discriminated union by construction
+          // (its schema is one of the union's branches). The cast lives
+          // at the sole metadata-write site for agent info, so widening
+          // is confined to this one line rather than smeared across
+          // every provider.
+          setAgentMetadata(entry, terminalId, info as unknown as AgentInfo);
         },
         plog,
       ),

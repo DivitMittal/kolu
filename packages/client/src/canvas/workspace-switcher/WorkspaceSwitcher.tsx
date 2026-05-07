@@ -41,6 +41,11 @@ import {
 /** Controller that owns query/filter state and composes both switcher views. */
 const WorkspaceSwitcher: Component<{
   entries: WorkspaceSwitcherSourceEntry[];
+  /** Active terminal id — kept in the collapsed pill strip even if its
+   *  repo's idle cap would otherwise hide it. */
+  activeId: TerminalId | null;
+  /** Per-terminal recency accessor (epoch-ms). */
+  getRecency: (id: TerminalId) => number;
   /** Incremented by the app-level shortcut to latch the panel open. */
   openRequest: number;
   /** Click handler — caller decides whether to pan, swap active, etc. */
@@ -60,6 +65,8 @@ const WorkspaceSwitcher: Component<{
     buildWorkspaceSwitcherModel(props.entries, {
       query: query(),
       repoFilter: repoFilter(),
+      activeId: props.activeId,
+      getRecency: props.getRecency,
     }),
   );
 

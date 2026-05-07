@@ -25,7 +25,10 @@ import { terminalsDirtyChannel } from "../publisher.ts";
 import { surfaceCtx } from "../surface.ts";
 import type { TerminalProcess } from "../terminal-registry.ts";
 
-/** Create initial metadata state for a new terminal. */
+/** Create initial metadata state for a new terminal. `lastActivityAt: 0`
+ *  means "no agent transition observed yet" — the only event that lifts
+ *  the recency clock. Idle terminals tie at 0 and fall back to canvas
+ *  position. */
 export function createMetadata(cwd: string): TerminalMetadata {
   return {
     cwd,
@@ -33,6 +36,7 @@ export function createMetadata(cwd: string): TerminalMetadata {
     pr: { kind: "pending" },
     agent: null,
     foreground: null,
+    lastActivityAt: 0,
   };
 }
 
