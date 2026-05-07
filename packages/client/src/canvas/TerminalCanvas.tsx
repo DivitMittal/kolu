@@ -50,6 +50,14 @@ import { useCanvasViewport } from "./viewport/useCanvasViewport";
 const MIN_W = 300;
 const MIN_H = 200;
 
+type LayoutChange = { id: TerminalId; layout: TileLayout };
+
+type AutoArrangeRequest = {
+  request: number;
+  getGroup: (id: TerminalId) => string | undefined;
+  onLayoutsChange: (layouts: LayoutChange[]) => void;
+};
+
 /** Wheel gestures that start inside an xterm tile should scroll the terminal,
  *  not pan the canvas. The viewport's ownership tracker holds this decision
  *  for ~150ms so mid-gesture cursor drift doesn't hand off. */
@@ -69,14 +77,10 @@ const TerminalCanvas: Component<{
   watermark?: string;
   /** Saved layout for a tile, or undefined if none exists yet. */
   getLayout: (id: TerminalId) => TileLayout | undefined;
-  /** Monotonic trigger for one-shot auto-arrange requests. */
-  autoArrangeRequest?: number;
-  /** Repo/group key used by the auto-arrange command. */
-  getAutoArrangeGroup?: (id: TerminalId) => string | undefined;
+  /** Optional one-shot auto-arrange command wiring. */
+  autoArrange?: AutoArrangeRequest;
   /** Report a layout change (drag commit, resize commit, default assignment). */
   onLayoutChange: (id: TerminalId, layout: TileLayout) => void;
-  /** Report a batch layout change from a single user command. */
-  onLayoutsChange?: (layouts: { id: TerminalId; layout: TileLayout }[]) => void;
   onSelect: (id: TerminalId) => void;
   onClose: (id: TerminalId) => void;
   renderTileTitle: (id: TerminalId) => JSX.Element;
@@ -108,9 +112,7 @@ const TerminalCanvas: Component<{
     setPending((prev) => ({ ...prev, [id]: layout }));
   }
 
-  function setPendingLayouts(
-    layouts: { id: TerminalId; layout: TileLayout }[],
-  ) {
+  function setPendingLayouts(layouts: LayoutChange[]) {
     setPending((prev) => {
       const next = { ...prev };
       for (const { id, layout } of layouts) next[id] = layout;
@@ -146,14 +148,13 @@ const TerminalCanvas: Component<{
 
   createEffect(
     on(
-      () => props.autoArrangeRequest,
+      () => props.autoArrange?.request,
       (request) => {
-        if (!request || !props.getAutoArrangeGroup || !props.onLayoutsChange) {
-          return;
-        }
+        const autoArrange = props.autoArrange;
+        if (!request || !autoArrange) return;
         const arranged = arrangeByRepo(
           props.tileIds.flatMap((id) => {
-            const group = props.getAutoArrangeGroup?.(id);
+            const group = autoArrange.getGroup(id);
             if (!group) return [];
             return [{ id, group, layout: layoutOf(id) }];
           }),
@@ -164,7 +165,7 @@ const TerminalCanvas: Component<{
         }));
         if (layouts.length === 0) return;
         setPendingLayouts(layouts);
-        props.onLayoutsChange(layouts);
+        autoArrange.onLayoutsChange(layouts);
       },
     ),
   );

@@ -547,15 +547,14 @@ const App: Component = () => {
                     tileIds={store.terminalIds()}
                     watermark={appTitle()}
                     getLayout={(id) => store.getMetadata(id)?.canvasLayout}
-                    autoArrangeRequest={canvasAutoArrangeRequest()}
-                    getAutoArrangeGroup={(id) =>
-                      store.getDisplayInfo(id)?.key.group
-                    }
+                    autoArrange={{
+                      request: canvasAutoArrangeRequest(),
+                      getGroup: (id) => store.getDisplayInfo(id)?.key.group,
+                      onLayoutsChange: (layouts) =>
+                        crud.setCanvasLayouts(layouts),
+                    }}
                     onLayoutChange={(id, layout) =>
                       crud.setCanvasLayout(id, layout)
-                    }
-                    onLayoutsChange={(layouts) =>
-                      crud.setCanvasLayouts(layouts)
                     }
                     onSelect={(id) => store.setActiveId(id)}
                     onClose={(id) => closeTerminal(id)}
