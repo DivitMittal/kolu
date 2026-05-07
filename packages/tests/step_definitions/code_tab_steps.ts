@@ -375,6 +375,30 @@ Then(
 );
 
 Then(
+  "the file content should wrap long lines",
+  async function (this: KoluWorld) {
+    const row = this.page.locator(`${FILE_VIEW} [data-line]`).first();
+    await row.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    const line = await row.elementHandle();
+    if (line === null) throw new Error("Expected a rendered file content line");
+
+    await this.page.waitForFunction(
+      (node) => {
+        const line = node as Element;
+        const style = getComputedStyle(line);
+        const lineHeight = Number.parseFloat(style.lineHeight);
+        const singleLineHeight = Number.isFinite(lineHeight)
+          ? lineHeight
+          : Number.parseFloat(style.fontSize) * 1.2;
+        return line.getBoundingClientRect().height > singleLineHeight * 1.5;
+      },
+      line,
+      { timeout: POLL_TIMEOUT },
+    );
+  },
+);
+
+Then(
   "the diff view should contain {string}",
   async function (this: KoluWorld, expected: string) {
     await waitForViewText(this, "pierre-diff-view", expected);
