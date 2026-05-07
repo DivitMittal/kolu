@@ -94,7 +94,7 @@ function emitListChanged(): void {
 /** Create a new terminal, spawn a PTY process. `initial` seeds
  *  client-owned metadata onto `meta` before the first `emitListChanged()`,
  *  so the list snapshot already carries it — used by session restore
- *  to avoid racing post-hoc `setCanvasLayout` / `setTheme` / `setSubPanel`
+ *  to avoid racing post-hoc layout / theme / sub-panel
  *  RPCs against the client's canvas-cascade effect (#642). */
 export function createTerminal(
   cwd?: string,
@@ -207,16 +207,6 @@ export function setTerminalParent(
       m.parentId = newParent;
     });
   }
-}
-
-/** Store a terminal's canvas layout position (client-reported).
- *  Publishes via metadata so canvas tiles read their position from the
- *  same source as other metadata — no client-side dual store required. */
-export function setCanvasLayout(
-  id: TerminalId,
-  layout: { x: number; y: number; w: number; h: number },
-): void {
-  setCanvasLayouts([{ id, layout }]);
 }
 
 /** Store multiple terminal canvas layouts from one client command. */

@@ -49,16 +49,7 @@ export function useTerminalCrud(deps: {
       );
   }
 
-  /** Persist a terminal's canvas tile position/size on the server. */
-  function setCanvasLayout(id: TerminalId, layout: CanvasLayout) {
-    void client.terminal
-      .setCanvasLayout({ id, layout })
-      .catch((err: Error) =>
-        toast.error(`Failed to save canvas layout: ${err.message}`),
-      );
-  }
-
-  /** Persist several canvas tile positions/sizes from a single user command. */
+  /** Persist canvas tile positions/sizes from one server command. */
   function setCanvasLayouts(layouts: CanvasLayoutUpdate[]) {
     if (layouts.length === 0) return;
     void client.terminal
@@ -217,7 +208,6 @@ export function useTerminalCrud(deps: {
 
   return {
     setThemeName,
-    setCanvasLayout,
     setCanvasLayouts,
     removeAndAutoSwitch,
     handleCreate,

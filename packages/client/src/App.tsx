@@ -554,7 +554,7 @@ const App: Component = () => {
                         crud.setCanvasLayouts(layouts),
                     }}
                     onLayoutChange={(id, layout) =>
-                      crud.setCanvasLayout(id, layout)
+                      crud.setCanvasLayouts([{ id, layout }])
                     }
                     onSelect={(id) => store.setActiveId(id)}
                     onClose={(id) => closeTerminal(id)}

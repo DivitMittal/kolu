@@ -57,13 +57,13 @@ export const TerminalSetThemeInputSchema = z.object({
   themeName: z.string(),
 });
 
-export const TerminalSetCanvasLayoutInputSchema = z.object({
+export const TerminalCanvasLayoutUpdateSchema = z.object({
   id: TerminalIdSchema,
   layout: CanvasLayoutSchema,
 });
 
 export const TerminalSetCanvasLayoutsInputSchema = z.object({
-  layouts: z.array(TerminalSetCanvasLayoutInputSchema),
+  layouts: z.array(TerminalCanvasLayoutUpdateSchema),
 });
 
 export const TerminalSetSubPanelInputSchema = z.object({
@@ -122,9 +122,6 @@ export const contract = oc.router({
     resize: oc.input(TerminalResizeInputSchema).output(z.void()),
     sendInput: oc.input(TerminalSendInputSchema).output(z.void()),
     setTheme: oc.input(TerminalSetThemeInputSchema).output(z.void()),
-    setCanvasLayout: oc
-      .input(TerminalSetCanvasLayoutInputSchema)
-      .output(z.void()),
     setCanvasLayouts: oc
       .input(TerminalSetCanvasLayoutsInputSchema)
       .output(z.void()),
