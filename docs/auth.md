@@ -60,7 +60,7 @@ Browser → Caddy (TLS/ACME) → oauth2-proxy → Kolu (127.0.0.1:7681)
 3. User authorizes on GitHub → redirected back with code
 4. oauth2-proxy: exchanges code, validates user, sets encrypted session cookie
 5. Proxies request to Kolu on localhost
-6. Browser loads SPA, manifest, service worker — all with valid cookie
+6. Browser loads SPA, manifest, and static assets — all with valid cookie
 7. WebSocket upgrade to `/rpc/ws` — cookie sent on upgrade, validated by oauth2-proxy
 
 Cookie-based auth is PWA-safe. oauth2-proxy proxies WebSockets by default (`proxy_websockets = true`). No route whitelisting needed — all routes require auth.

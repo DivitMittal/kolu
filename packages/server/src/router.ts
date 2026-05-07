@@ -19,6 +19,7 @@ import { prValue } from "kolu-github/schemas";
 import { loadOpenCodeTranscript } from "kolu-opencode";
 import { transcriptToHtml } from "kolu-transcript-html";
 import { match } from "ts-pattern";
+import { buildCommit } from "./buildInfo.ts";
 import { saveClipboardImage } from "./clipboard.ts";
 import { serverHostname, serverProcessId } from "./hostname.ts";
 import { log } from "./log.ts";
@@ -50,6 +51,7 @@ export const appRouter = t.router({
     info: t.server.info.handler(async () => ({
       identity: pwaIdentityForHostname(serverHostname),
       processId: serverProcessId,
+      build: { commit: buildCommit },
     })),
   },
   terminal: {

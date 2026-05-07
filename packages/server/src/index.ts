@@ -15,6 +15,7 @@ import { getCacheControlHeader } from "./cacheControl.ts";
 import { startDiagnostics } from "./diagnostics.ts";
 import { serverHostname } from "./hostname.ts";
 import { ensureKoluRoot, shutdownCleanup } from "./koluRoot.ts";
+import { LEGACY_SERVICE_WORKER } from "./legacyServiceWorker.ts";
 import { log } from "./log.ts";
 import { pwaIdentityForHostname } from "./pwaIdentity.ts";
 import { appRouter } from "./router.ts";
@@ -167,6 +168,17 @@ app.get("/manifest.webmanifest", (c) => {
     { headers: { "Content-Type": "application/manifest+json" } },
   );
 });
+
+app.get(
+  "/sw.js",
+  () =>
+    new Response(LEGACY_SERVICE_WORKER, {
+      headers: {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "no-store, max-age=0",
+      },
+    }),
+);
 
 // --- Static files (production) ---
 const clientDist = process.env.KOLU_CLIENT_DIST;

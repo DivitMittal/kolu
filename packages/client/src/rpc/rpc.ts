@@ -13,6 +13,7 @@
 
 import { createMemo, createSignal } from "solid-js";
 import { match } from "ts-pattern";
+import { reloadIfServerBuildChanged } from "../pwa";
 import { client, ws } from "../wire";
 
 export type WsStatus = "connecting" | "open" | "closed";
@@ -70,7 +71,9 @@ export { serverProcessId, wsStatus };
     // fails fast; partysocket will fire another `open` after reconnect.
     client.server
       .info()
-      .then(({ processId }) => {
+      .then(({ build, processId }) => {
+        reloadIfServerBuildChanged(build.commit);
+
         if (isFirstConnect) {
           knownProcessId = processId;
           setLifecycle({ kind: "connected", processId });

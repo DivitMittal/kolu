@@ -1,38 +1,60 @@
 /**
- * PWA deploy-synchronization helpers. Owns "make sure the user's next
- * navigation lands on the fresh build" — so callers (right now just the
- * `TransportOverlay` restart button) don't have to know about
- * `navigator.serviceWorker` at all.
+ * Deploy-synchronization helpers. Owns "make sure the user's next navigation
+ * lands on the fresh build" so transport UI and lifecycle probing do not own
+ * asset freshness policy.
  *
- * Extracting this boundary also means future additions (version-hash
- * comparison, install-progress UI, analytics on reload) land here instead
- * of growing a `TransportOverlay` whose declared role is transport-state
- * display, not SW lifecycle.
+ * Kolu no longer registers a service worker. The service-worker calls here are
+ * strictly legacy cleanup for users who already installed the old Workbox
+ * app-shell worker.
  */
 
+const RELOAD_GUARD_KEY = "kolu:build-reload";
+
 /**
- * Install any pending service-worker update, then reload the page.
- *
- * Without the `update()` await, the reload serves the old Workbox precache
- * while the new SW is still installing — the user sees stale UI until a
- * *second* reload. Awaiting the Update algorithm (§3.2.8 of the SW spec)
- * ensures the new SW has installed and (with `skipWaiting`+`clientsClaim`,
- * which vite-plugin-pwa's autoUpdate mode enables by default) is controlling
- * the page before navigation fires.
- *
- * Safe on HTTP: `navigator.serviceWorker` is `undefined` in insecure
- * contexts per the `[SecureContext]` IDL annotation, so the optional
- * chain short-circuits and the reload proceeds as a plain navigation.
+ * Drop any legacy app-shell service worker and its caches before navigating.
+ * This makes the manual "Server updated" reload useful even for clients still
+ * controlled by the removed Workbox worker.
  */
-export async function forceUpdateAndReload(): Promise<void> {
+async function clearLegacyAppShellCache(): Promise<void> {
   try {
     const reg = await navigator.serviceWorker?.getRegistration();
     await reg?.update();
+    await reg?.unregister();
+
+    if ("caches" in window) {
+      const cacheNames = await caches.keys();
+      await Promise.all(
+        cacheNames.map((cacheName) => caches.delete(cacheName)),
+      );
+    }
   } catch (err) {
-    // Best-effort: the user clicked Reload, honour that intent even if the
-    // SW update couldn't complete (network drop mid-click, script parse
-    // error, etc.). Log so a chronically-failing update doesn't hide.
-    console.warn("SW update before reload failed:", err);
+    console.warn("Legacy app-shell cleanup before reload failed:", err);
   }
+}
+
+export async function reloadToFreshBuild(): Promise<void> {
+  await clearLegacyAppShellCache();
   location.reload();
+}
+
+export function reloadIfServerBuildChanged(serverCommit: string): void {
+  if (
+    __KOLU_COMMIT__ === "dev" ||
+    serverCommit === "dev" ||
+    serverCommit === __KOLU_COMMIT__
+  ) {
+    sessionStorage.removeItem(RELOAD_GUARD_KEY);
+    return;
+  }
+
+  const reloadToken = `${__KOLU_COMMIT__}->${serverCommit}`;
+  if (sessionStorage.getItem(RELOAD_GUARD_KEY) === reloadToken) {
+    console.warn(
+      `Kolu build still stale after reload: client=${__KOLU_COMMIT__} server=${serverCommit}`,
+    );
+    return;
+  }
+
+  sessionStorage.setItem(RELOAD_GUARD_KEY, reloadToken);
+  void reloadToFreshBuild();
 }

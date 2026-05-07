@@ -104,6 +104,10 @@ export const ServerInfoSchema = z.object({
   identity: ServerIdentitySchema,
   /** Unique ID for this server process — changes on restart. */
   processId: z.string().uuid(),
+  /** Build identity — changes when deployed client assets change. */
+  build: z.object({
+    commit: z.string(),
+  }),
 });
 
 // ── The contract ──────────────────────────────────────────────────────
