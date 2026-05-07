@@ -71,9 +71,9 @@ body {
  *      agent-state ring on the outside.
  *
  *   2. Agent-state — driven by `--pill-state-color` (bucket accent
- *      from `WORKSPACE_AGENT_BUCKETS`). `.pill-border-awaiting`
- *      breathes; `.pill-border-working` is a static ring; idle has
- *      no class.
+ *      from `AGENT_BUCKETS` in `agent/agentPresentation.ts`).
+ *      `.pill-border-awaiting` breathes; `.pill-border-working` is a
+ *      static ring; idle has no class.
  *
  * The two channels never read the same CSS variable, so a card that
  * is both active and has an agent renders an outer bucket-colored
