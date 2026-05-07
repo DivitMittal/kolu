@@ -10,7 +10,6 @@ import type {
 } from "kolu-common/surface";
 import { toast } from "solid-sonner";
 import { availableThemes, pickTheme, resolveThemeBgs } from "terminal-themes";
-import { placeNewTileInRepoIsland } from "../canvas/repoIslandPlacement";
 import { CONTEXTUAL_TIPS } from "../settings/tips";
 import { client, preferences } from "../wire";
 import { useTips } from "../settings/useTips";
@@ -23,6 +22,10 @@ export type CanvasLayoutUpdate = { id: TerminalId; layout: CanvasLayout };
 export function useTerminalCrud(deps: {
   store: TerminalStore;
   subscribeExit: (id: TerminalId) => void;
+  /** Pluggable canvas-placement strategy. Returning `undefined` falls back
+   *  to the canvas's default cascade. Composition root supplies this so
+   *  CRUD stays agnostic to whichever placement policy is in force. */
+  computeInitialLayout?: (cwd: string | undefined) => CanvasLayout | undefined;
 }) {
   const { store } = deps;
   const subPanel = useSubPanel();
@@ -63,30 +66,6 @@ export function useTerminalCrud(deps: {
       .catch((err: Error) =>
         toast.error(`Failed to save canvas layouts: ${err.message}`),
       );
-  }
-
-  function initialCanvasLayoutForCreate(
-    cwd: string | undefined,
-    initial: InitialTerminalMetadata | undefined,
-  ): CanvasLayout | undefined {
-    if (initial?.canvasLayout) return initial.canvasLayout;
-    return placeNewTileInRepoIsland({
-      cwd,
-      activeId: store.activeId(),
-      terminals: store.terminalIds().flatMap((id) => {
-        const meta = store.getMetadata(id);
-        if (!meta) return [];
-        return [
-          {
-            id,
-            cwd: meta.cwd,
-            git: meta.git,
-            group: store.getDisplayInfo(id)?.key.group,
-            layout: meta.canvasLayout,
-          },
-        ];
-      }),
-    });
   }
 
   /** Remove a terminal and auto-switch if it was active. */
@@ -152,7 +131,8 @@ export function useTerminalCrud(deps: {
       (peerBgs
         ? pickTheme(availableThemes, { spread: true, peerBgs })
         : undefined);
-    const canvasLayout = initialCanvasLayoutForCreate(cwd, initial);
+    const canvasLayout =
+      initial?.canvasLayout ?? deps.computeInitialLayout?.(cwd);
     const info = await client.terminal
       .create({
         cwd,

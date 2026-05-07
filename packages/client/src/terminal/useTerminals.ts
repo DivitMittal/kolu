@@ -12,6 +12,7 @@
 import type { TerminalId } from "kolu-common/surface";
 import { createRoot } from "solid-js";
 import { toast } from "solid-sonner";
+import { placeNewTileInRepoIsland } from "../canvas/repoIslandPlacement";
 import { isExpectedCleanupError } from "../rpc/streamCleanup";
 import { app } from "../wire";
 import { useSessionRestore } from "./useSessionRestore";
@@ -75,6 +76,25 @@ export function useTerminals() {
   const crud = useTerminalCrud({
     store,
     subscribeExit,
+    computeInitialLayout: (cwd) =>
+      placeNewTileInRepoIsland({
+        cwd,
+        activeId: store.activeId(),
+        terminals: store.terminalIds().flatMap((id) => {
+          const meta = store.getMetadata(id);
+          const key = store.getDisplayInfo(id)?.key;
+          if (!meta || !key) return [];
+          return [
+            {
+              id,
+              cwd: meta.cwd,
+              git: meta.git,
+              key,
+              layout: meta.canvasLayout,
+            },
+          ];
+        }),
+      }),
   });
 
   const session = useSessionRestore({

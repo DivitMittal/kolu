@@ -24,6 +24,7 @@ import CloseConfirm, { type CloseConfirmTarget } from "./CloseConfirm";
 import CommandPalette from "./CommandPalette";
 import "kolu-common/test-hooks";
 import CanvasWatermark from "./canvas/CanvasWatermark";
+import { arrangeRepoIslands } from "./canvas/repoIslandPlacement";
 import WorkspaceSwitcher, {
   buildWorkspaceEntries,
   buildWorkspaceSwitcherModel,
@@ -549,7 +550,14 @@ const App: Component = () => {
                     getLayout={(id) => store.getMetadata(id)?.canvasLayout}
                     autoArrange={{
                       request: canvasAutoArrangeRequest(),
-                      getGroup: (id) => store.getDisplayInfo(id)?.key.group,
+                      arrange: (current) =>
+                        arrangeRepoIslands(
+                          store.terminalIds().flatMap((id) => {
+                            const group = store.getDisplayInfo(id)?.key.group;
+                            if (!group) return [];
+                            return [{ id, group, layout: current.get(id) }];
+                          }),
+                        ),
                       onLayoutsChange: (layouts) =>
                         crud.applyCanvasLayouts(layouts),
                     }}

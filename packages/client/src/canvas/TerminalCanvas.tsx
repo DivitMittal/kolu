@@ -41,7 +41,6 @@ import {
   DEFAULT_TILE_W,
   findFreeTilePosition,
 } from "./tilePlacement";
-import { arrangeByRepo } from "./autoArrange";
 import { useTileTheme } from "./useTileTheme";
 import { useViewPosture } from "./useViewPosture";
 import { capturePointerGesture } from "./viewport/capturePointerGesture";
@@ -52,9 +51,16 @@ const MIN_H = 200;
 
 type LayoutChange = { id: TerminalId; layout: TileLayout };
 
+/** One-shot auto-arrange wiring. The canvas owns when (request bump) and
+ *  what (apply layouts, center on active) but stays agnostic to how the
+ *  target layouts are computed — `arrange` is given the current effective
+ *  layouts and returns the desired layouts for whichever tiles it wants
+ *  to move. Repo-grouping policy lives at the call site. */
 type AutoArrangeRequest = {
   request: number;
-  getGroup: (id: TerminalId) => string | undefined;
+  arrange: (
+    current: ReadonlyMap<TerminalId, TileLayout>,
+  ) => Map<TerminalId, TileLayout>;
   onLayoutsChange: (layouts: LayoutChange[]) => void;
 };
 
@@ -165,13 +171,8 @@ const TerminalCanvas: Component<{
       (request) => {
         const autoArrange = props.autoArrange;
         if (!request || !autoArrange) return;
-        const merged = effectiveLayouts();
-        const arranged = arrangeByRepo(
-          props.tileIds.flatMap((id) => {
-            const group = autoArrange.getGroup(id);
-            if (!group) return [];
-            return [{ id, group, layout: merged[id] }];
-          }),
+        const arranged = autoArrange.arrange(
+          new Map(Object.entries(effectiveLayouts())),
         );
         const layouts = [...arranged.entries()].map(([id, layout]) => ({
           id,

@@ -1,22 +1,29 @@
 import type { TerminalId } from "kolu-common/surface";
+import { type TerminalKey, terminalKey } from "kolu-common/terminalKey";
 import type { GitInfo } from "kolu-git/schemas";
 import type { TileLayout } from "./TileLayout";
 import { DEFAULT_TILE_H, DEFAULT_TILE_W } from "./tilePlacement";
 import { GRID_SIZE, snapToGrid } from "./viewport/transforms";
 
-/** Terminal tile input for repo-island layout policy. */
+/** Terminal tile input for repo-island layout policy. The `group` is the
+ *  bucket key used to cluster tiles into islands; callers must derive it
+ *  from `terminalKey(...).group` so identity, presentation, and packing
+ *  read the same projection. */
 export type RepoIslandTile = {
   id: TerminalId;
   group: string;
   layout?: TileLayout;
 };
 
-/** Snapshot needed to decide where a newly created terminal should appear. */
+/** Snapshot needed to decide where a newly created terminal should appear.
+ *  `key` is the canonical projection from `terminalKey(meta)` — never
+ *  re-derived inside this module. `git` is kept only so we can infer which
+ *  sibling's repo would contain a new cwd that hasn't been resolved yet. */
 export type RepoIslandTerminalSnapshot = {
   id: TerminalId;
   cwd: string;
   git: GitInfo | null;
-  group: string | undefined;
+  key: TerminalKey;
   layout?: TileLayout;
 };
 
@@ -115,7 +122,9 @@ export function placeNewTileInRepoIsland({
   if (!targetGroup) return undefined;
 
   const groupLayouts = terminals.flatMap((terminal) =>
-    terminal.group === targetGroup && terminal.layout ? [terminal.layout] : [],
+    terminal.key.group === targetGroup && terminal.layout
+      ? [terminal.layout]
+      : [],
   );
   const bounds = boundsOfLayouts(groupLayouts);
   if (!bounds) return undefined;
@@ -152,15 +161,18 @@ function targetGroupForCreate({
 }: NewTilePlacementInput): string | undefined {
   const active = terminals.find((terminal) => terminal.id === activeId);
   const targetCwd = cwd ?? active?.cwd;
-  if (!targetCwd) return active?.group;
-  if (active?.cwd === targetCwd) return active.group;
+  if (!targetCwd) return active?.key.group;
+  if (active?.cwd === targetCwd) return active.key.group;
 
-  const exact = terminals.find(
-    (terminal) => terminal.group && terminal.cwd === targetCwd,
-  );
-  if (exact) return exact.group;
+  const exact = terminals.find((terminal) => terminal.cwd === targetCwd);
+  if (exact) return exact.key.group;
 
-  return mostSpecificGitMatch(terminals, targetCwd)?.group;
+  // The new cwd hasn't been git-resolved yet, so we infer git from a sibling
+  // whose repo roots already contain it; the new tile's canonical group is
+  // then whatever `terminalKey()` would project from that inherited git.
+  const sibling = siblingContainingCwd(terminals, targetCwd);
+  if (!sibling?.git) return undefined;
+  return terminalKey({ git: sibling.git, cwd: targetCwd }).group;
 }
 
 function arrangeCluster(
@@ -281,31 +293,30 @@ function layoutsOverlap(a: TileLayout, b: TileLayout): boolean {
   );
 }
 
-function mostSpecificGitMatch(
+/** Find a sibling whose git repo contains `cwd`, preferring the most-
+ *  specific match when repo roots are nested. Returns the sibling itself
+ *  so callers can read its canonical key without re-projecting. */
+function siblingContainingCwd(
   terminals: RepoIslandTerminalSnapshot[],
   cwd: string,
 ): RepoIslandTerminalSnapshot | undefined {
   let best:
-    | { terminal: RepoIslandTerminalSnapshot; matchingRootLength: number }
+    | { terminal: RepoIslandTerminalSnapshot; rootLength: number }
     | undefined;
 
   for (const terminal of terminals) {
-    if (!terminal.group) continue;
-    const matchingRootLength = longestMatchingGitRootLength(terminal.git, cwd);
-    if (matchingRootLength === undefined) continue;
-    if (!best || matchingRootLength > best.matchingRootLength) {
-      best = { terminal, matchingRootLength };
+    if (!terminal.git) continue;
+    const rootLength = longestContainingRoot(terminal.git, cwd);
+    if (rootLength === undefined) continue;
+    if (!best || rootLength > best.rootLength) {
+      best = { terminal, rootLength };
     }
   }
 
   return best?.terminal;
 }
 
-function longestMatchingGitRootLength(
-  git: GitInfo | null,
-  cwd: string,
-): number | undefined {
-  if (!git) return undefined;
+function longestContainingRoot(git: GitInfo, cwd: string): number | undefined {
   const matches = [git.repoRoot, git.mainRepoRoot, git.worktreePath].filter(
     (root) => pathContains(root, cwd),
   );
