@@ -15,6 +15,7 @@ import { type Component, createMemo, For, type JSX, Show } from "solid-js";
 import type { AgentBucket } from "../agent/agentPresentation";
 import { CHROME_ICON_BUTTON_CLASS } from "../ui/chromeSpacing";
 import { MaximizeIcon, RestoreIcon } from "../ui/Icons";
+import { UnreadDot } from "../ui/UnreadDot";
 import { RESIZE_HANDLES, type ResizeDirection } from "./resizeGeometry";
 import { tileBorderEncoding } from "./tileBorderEncoding";
 import type { TileLayout } from "./TileLayout";
@@ -172,14 +173,10 @@ const CanvasTile: Component<{
         {...(props.maximized ? {} : draggable.dragActivators)}
       >
         <Show when={props.unread}>
-          <span
+          <UnreadDot
             data-testid="canvas-tile-alert"
-            class="relative inline-flex h-2 w-2 mt-1.5 shrink-0"
-            aria-hidden="true"
-          >
-            <span class="absolute inline-flex h-full w-full rounded-full bg-alert opacity-75 animate-ping" />
-            <span class="relative inline-flex rounded-full h-2 w-2 bg-alert" />
-          </span>
+            class="relative mt-1.5 shrink-0"
+          />
         </Show>
         <div class="flex-1 min-w-0">{props.renderTitle()}</div>
         <div class="flex items-center gap-1 shrink-0">

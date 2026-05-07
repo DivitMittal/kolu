@@ -2,6 +2,7 @@ import type { TerminalId } from "kolu-common/surface";
 import { type Component, Index, Show } from "solid-js";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import { PlusIcon } from "../../ui/Icons";
+import { UnreadDot } from "../../ui/UnreadDot";
 import { agentBucket, bucketDescriptor } from "../../agent/agentPresentation";
 import { branchAccent, repoAccent } from "./identity";
 import {
@@ -114,13 +115,7 @@ const CollapsedWorkspaceSwitcher: Component<{
                         title={item().info.meta.cwd}
                       >
                         <Show when={unread()}>
-                          <span
-                            class="absolute -top-1 -right-1 inline-flex h-2 w-2"
-                            aria-hidden="true"
-                          >
-                            <span class="absolute inline-flex h-full w-full rounded-full bg-alert opacity-75 animate-ping" />
-                            <span class="relative inline-flex rounded-full h-2 w-2 bg-alert" />
-                          </span>
+                          <UnreadDot class="absolute -top-1 -right-1" />
                         </Show>
                         <span
                           class="truncate min-w-0 font-medium"

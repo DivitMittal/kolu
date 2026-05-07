@@ -2,6 +2,7 @@ import type { TerminalId } from "kolu-common/surface";
 import { type Component, createEffect, Index, Show } from "solid-js";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import { CloseIcon } from "../../ui/Icons";
+import { UnreadDot } from "../../ui/UnreadDot";
 import { useTileTheme } from "../useTileTheme";
 import { agentLabel, metaLine, prSummary, tokenLine } from "./chrome";
 
@@ -304,13 +305,7 @@ const WorkspaceCard: Component<{
         />
       </Show>
       <Show when={props.unread}>
-        <span
-          class="absolute right-2 top-2 inline-flex h-2 w-2"
-          aria-hidden="true"
-        >
-          <span class="absolute inline-flex h-full w-full rounded-full bg-alert opacity-75 animate-ping" />
-          <span class="relative inline-flex rounded-full h-2 w-2 bg-alert" />
-        </span>
+        <UnreadDot class="absolute right-2 top-2" />
       </Show>
 
       {/* Eyebrow: repo identity + (right) PR # if resolved. */}
