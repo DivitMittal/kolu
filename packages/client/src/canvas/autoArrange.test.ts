@@ -86,7 +86,7 @@ describe("arrangeByRepo", () => {
     expect(otherRepo).toMatchObject({ w: 96, h: 72 });
     expect(second.x - (first.x + first.w)).toBe(24);
     expect(second.y).toBe(first.y);
-    expect(otherRepo.x - (second.x + second.w)).toBeGreaterThanOrEqual(192);
+    expect(otherRepo.x - (second.x + second.w)).toBeGreaterThanOrEqual(768);
     expect(first.x % 24).toBe(0);
     expect(otherRepo.x % 24).toBe(0);
   });
@@ -110,7 +110,7 @@ describe("arrangeByRepo", () => {
 
     expect(scattered.get("a")).toEqual(plain.get("a"));
     expect(scattered.get("b")).toEqual(plain.get("b"));
-    expect(scattered.get("c")).toEqual({ x: 600, y: 96, w: 96, h: 72 });
+    expect(scattered.get("c")).toEqual({ x: 1368, y: 192, w: 96, h: 72 });
   });
 
   it("anchors the arrangement at the existing bounding origin by default", () => {

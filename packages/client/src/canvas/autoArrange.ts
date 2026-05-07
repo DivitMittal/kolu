@@ -19,8 +19,10 @@ export type AutoArrangeOptions = {
 };
 
 const DEFAULT_TILE_GAP = GRID_SIZE;
-const DEFAULT_GROUP_GAP = GRID_SIZE * 12;
-const DEFAULT_GROUP_JITTER = GRID_SIZE * 4;
+// Keep repo islands visually distinct on the minimap; terminals keep their
+// real widths, so inter-repo spacing needs to be tile-scale, not toolbar-scale.
+const DEFAULT_GROUP_GAP = GRID_SIZE * 40;
+const DEFAULT_GROUP_JITTER = GRID_SIZE * 8;
 
 type Rect = { w: number; h: number };
 
