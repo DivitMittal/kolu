@@ -144,6 +144,11 @@ const WorkspaceSwitcher: Component<{
     closePanel();
   };
 
+  const arrangeAndClose = () => {
+    props.onAutoArrange();
+    closePanel();
+  };
+
   return (
     <div
       ref={containerRef}
@@ -165,7 +170,7 @@ const WorkspaceSwitcher: Component<{
           <CollapsedWorkspaceSwitcher
             groups={switcher().compactGroups}
             onCreate={props.onCreate}
-            onAutoArrange={props.onAutoArrange}
+            onAutoArrange={arrangeAndClose}
             onSelect={selectAndClose}
           />
           {/* Explicit toggle — clicking opens the panel and latches it open

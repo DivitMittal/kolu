@@ -88,6 +88,13 @@ Feature: Workspace switcher
     Then the workspace switcher panel should not be visible
     And there should be no page errors
 
+  Scenario: Arrange action dismisses the workspace switcher panel
+    When I click the workspace switcher toggle
+    Then the workspace switcher panel should be visible
+    When I click the workspace switcher arrange button
+    Then the workspace switcher panel should not be visible
+    And there should be no page errors
+
   Scenario: Escape dismisses the workspace switcher panel
     When I click the workspace switcher toggle
     Then the workspace switcher panel should be visible
