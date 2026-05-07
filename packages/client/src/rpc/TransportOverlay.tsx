@@ -12,7 +12,7 @@
  */
 import { type Component, Show } from "solid-js";
 import { match } from "ts-pattern";
-import { reloadToFreshBuild } from "../pwa";
+import { reloadToFreshBuild } from "../deployFreshness";
 import { lifecycle } from "./rpc";
 
 const TransportOverlay: Component = () => {

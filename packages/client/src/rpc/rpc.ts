@@ -13,7 +13,7 @@
 
 import { createMemo, createSignal } from "solid-js";
 import { match } from "ts-pattern";
-import { reloadIfServerBuildChanged } from "../pwa";
+import { reloadIfServerBuildChanged } from "../deployFreshness";
 import { client, ws } from "../wire";
 
 export type WsStatus = "connecting" | "open" | "closed";
