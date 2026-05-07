@@ -38,7 +38,7 @@ describe("arrangeByRepo", () => {
         tile("d", "gamma", { x: 0, y: 0, w: 96, h: 72 }),
         tile("e", "delta", { x: 0, y: 0, w: 96, h: 72 }),
       ],
-      { tileGap: 24, groupGap: 48, originX: 0, originY: 0 },
+      { tileGap: 24, groupGap: 48, groupJitter: 0, originX: 0, originY: 0 },
     );
 
     expect(arranged.get("a")).toEqual({ x: 0, y: 0, w: 96, h: 72 });
@@ -58,6 +58,32 @@ describe("arrangeByRepo", () => {
     expect(arranged.get("a")).toMatchObject({ w: 601, h: 421 });
     expect(arranged.get("b")).toMatchObject({ w: 523, h: 367 });
     expect(arranged.get("c")).toMatchObject({ w: 733, h: 511 });
+  });
+
+  it("defaults to compact same-repo spacing and island-like repo separation", () => {
+    const arranged = arrangeByRepo(
+      [
+        tile("a", "alpha", { x: 0, y: 0, w: 96, h: 72 }),
+        tile("b", "alpha", { x: 0, y: 0, w: 96, h: 72 }),
+        tile("c", "beta", { x: 0, y: 0, w: 96, h: 72 }),
+      ],
+      { originX: 0, originY: 0 },
+    );
+
+    const first = arranged.get("a");
+    const second = arranged.get("b");
+    const otherRepo = arranged.get("c");
+    if (!first || !second || !otherRepo) {
+      throw new Error("Expected all arranged layouts to be present");
+    }
+    expect(first).toMatchObject({ w: 96, h: 72 });
+    expect(second).toMatchObject({ w: 96, h: 72 });
+    expect(otherRepo).toMatchObject({ w: 96, h: 72 });
+    expect(second.x - (first.x + first.w)).toBe(24);
+    expect(second.y).toBe(first.y);
+    expect(otherRepo.x - (second.x + second.w)).toBeGreaterThanOrEqual(192);
+    expect(first.x % 24).toBe(0);
+    expect(otherRepo.x % 24).toBe(0);
   });
 
   it("anchors the arrangement at the existing bounding origin by default", () => {

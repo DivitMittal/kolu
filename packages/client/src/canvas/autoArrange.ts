@@ -12,12 +12,14 @@ export type AutoArrangeTile = {
 export type AutoArrangeOptions = {
   tileGap?: number;
   groupGap?: number;
+  groupJitter?: number;
   originX?: number;
   originY?: number;
 };
 
-const DEFAULT_TILE_GAP = GRID_SIZE * 2;
-const DEFAULT_GROUP_GAP = GRID_SIZE * 4;
+const DEFAULT_TILE_GAP = GRID_SIZE;
+const DEFAULT_GROUP_GAP = GRID_SIZE * 12;
+const DEFAULT_GROUP_JITTER = GRID_SIZE * 4;
 
 type Rect = { w: number; h: number };
 
@@ -115,6 +117,20 @@ function arrangeCluster(
   };
 }
 
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function jitterFor(group: string, axis: "x" | "y", maxJitter: number): number {
+  const steps = Math.floor(maxJitter / GRID_SIZE);
+  if (steps <= 0) return 0;
+  return (hashString(`${axis}:${group}`) % (steps + 1)) * GRID_SIZE;
+}
+
 function originFor(
   tiles: AutoArrangeTile[],
   axis: "x" | "y",
@@ -125,11 +141,12 @@ function originFor(
   return values.length > 0 ? Math.min(...values) : 0;
 }
 
-/** Arrange live terminal tiles into repo clusters.
+/** Arrange live terminal tiles into repo islands.
  *
- * Each repo group becomes a small square-ish grid; repo groups themselves are
- * then packed into a square-ish outer grid. Width and height are preserved for
- * every tile — the command only rewrites x/y.
+ * Each repo group becomes a compact square-ish grid; repo islands themselves
+ * get a wider, deterministic stagger so the minimap still reads as distinct
+ * groups instead of one tiled mass. Width and height are preserved for every
+ * tile — the command only rewrites x/y.
  */
 export function arrangeByRepo(
   tiles: AutoArrangeTile[],
@@ -149,9 +166,12 @@ export function arrangeByRepo(
     else groups.set(tile.group, [tile]);
   }
 
-  const clusters = [...groups.values()].map((group) =>
-    arrangeCluster(group, tileGap),
-  );
+  const clusters = [...groups.entries()].map(([group, groupTiles]) => ({
+    group,
+    ...arrangeCluster(groupTiles, tileGap),
+  }));
+  const groupJitter =
+    clusters.length > 1 ? (options.groupJitter ?? DEFAULT_GROUP_JITTER) : 0;
   const clusterOffsets = packSquareGrid(clusters, groupGap, (cluster) => ({
     w: cluster.w,
     h: cluster.h,
@@ -160,11 +180,13 @@ export function arrangeByRepo(
 
   clusters.forEach((cluster, index) => {
     const offset = clusterOffsets[index] ?? { item: cluster, x: 0, y: 0 };
+    const jitterX = jitterFor(cluster.group, "x", groupJitter);
+    const jitterY = jitterFor(cluster.group, "y", groupJitter);
     for (const [id, layout] of cluster.layouts) {
       result.set(id, {
         ...layout,
-        x: originX + offset.x + layout.x,
-        y: originY + offset.y + layout.y,
+        x: originX + offset.x + jitterX + layout.x,
+        y: originY + offset.y + jitterY + layout.y,
       });
     }
   });
