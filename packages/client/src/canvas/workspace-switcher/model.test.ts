@@ -3,8 +3,8 @@ import type { GitInfo } from "kolu-git/schemas";
 import { describe, expect, it } from "vitest";
 import type { TerminalDisplayInfo } from "../../terminal/terminalDisplay";
 import type { TileLayout } from "../TileLayout";
+import { agentBucket } from "../../agent/agentPresentation";
 import {
-  agentBucket,
   buildWorkspaceSwitcherModel,
   sortBySwitcherOrder,
   type WorkspaceSwitcherSourceEntry,

@@ -2,6 +2,7 @@
  *  Auto-hides the map when ≤2 tiles. */
 
 import { type Component, createMemo, createSignal, For, Show } from "solid-js";
+import { agentBucket, tileMinimapColor } from "../agent/agentPresentation";
 import { useTerminalStore } from "../terminal/useTerminalStore";
 import {
   handleMinimapClick,
@@ -225,12 +226,25 @@ const CanvasMinimap: Component<{
                   },
                 );
               };
+              // Bucket-coloured border replaces the theme edge once an
+              // agent signal is present — same encoding as the canvas
+              // tile + workspace switcher, just static (animation is
+              // jittery at minimap scale and burns paint).
+              const bucket = () =>
+                agentBucket(store.getDisplayInfo(id)?.meta.agent);
+              const borderColor = () =>
+                bucket() === "none"
+                  ? tileMinimapBorder(theme())
+                  : tileMinimapColor(bucket());
+              const unread = () => store.isUnread(id);
               return (
                 <Show when={pos()}>
                   {(p) => (
                     <div
                       data-testid="minimap-tile-rect"
                       data-tile-id={id}
+                      data-agent-bucket={bucket()}
+                      data-unread={unread() ? "true" : undefined}
                       class="absolute rounded-sm transition-opacity cursor-pointer hover:opacity-100 hover:ring-1 hover:ring-accent/40"
                       classList={{
                         "opacity-100 ring-1 ring-accent/60":
@@ -243,12 +257,19 @@ const CanvasMinimap: Component<{
                         width: `${p().w}px`,
                         height: `${p().h}px`,
                         "background-color": theme().bg,
-                        border: `1px solid ${tileMinimapBorder(theme())}`,
+                        border: `1px solid ${borderColor()}`,
                       }}
                       title={id}
                       onPointerDown={handleTilePointerDown}
                       onClick={handleTileClick}
-                    />
+                    >
+                      <Show when={unread()}>
+                        <span
+                          aria-hidden="true"
+                          class="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-alert"
+                        />
+                      </Show>
+                    </div>
                   )}
                 </Show>
               );

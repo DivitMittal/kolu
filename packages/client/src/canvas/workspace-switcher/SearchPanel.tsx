@@ -19,13 +19,9 @@ function formatTimeAgo(ts: number): string {
   if (hr < 24) return `${hr}h ago`;
   return `${Math.floor(hr / 24)}d ago`;
 }
+import { agentBucket, bucketDescriptor } from "../../agent/agentPresentation";
 import { branchAccent, repoAccent } from "./identity";
-import {
-  agentBucket,
-  bucketDescriptor,
-  type WorkspaceSwitcherEntry,
-  type WorkspaceSwitcherModel,
-} from "./model";
+import type { WorkspaceSwitcherEntry, WorkspaceSwitcherModel } from "./model";
 
 /** Expanded hover panel with repo facets, search, and agent-state columns.
  *

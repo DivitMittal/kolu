@@ -12,9 +12,11 @@
 
 import { createDraggable } from "@thisbeyond/solid-dnd";
 import { type Component, For, type JSX, Show } from "solid-js";
+import type { AgentBucket } from "../agent/agentPresentation";
 import { CHROME_ICON_BUTTON_CLASS } from "../ui/chromeSpacing";
 import { MaximizeIcon, RestoreIcon } from "../ui/Icons";
 import { RESIZE_HANDLES, type ResizeDirection } from "./resizeGeometry";
+import { tileBorderEncoding } from "./tileBorderEncoding";
 import type { TileLayout } from "./TileLayout";
 import {
   type TileTheme,
@@ -34,6 +36,13 @@ const CanvasTile: Component<{
    *  drag/resize are disabled. Toggled by double-clicking the title bar. */
   maximized: boolean;
   theme: TileTheme;
+  /** Agent-state bucket — drives the outer ring channel of the border. */
+  bucket: AgentBucket;
+  /** Per-terminal repo accent — drives the inset focus glow. */
+  cardColor: string;
+  /** Pulsing alert dot when the terminal has caught the user's attention
+   *  (e.g. agent transitioned to waiting and the user hasn't acknowledged). */
+  unread: boolean;
   onSelect: () => void;
   onClose: () => void;
   /** Toggle between tiled and maximized. Bound to title-bar double-click. */
@@ -60,6 +69,19 @@ const CanvasTile: Component<{
 
   const bg = () => props.theme.bg;
 
+  // Outer ring (agent state) + inset glow (focus) come from the encoding
+  // helper. Drop shadow stays here as a pure depth cue — it does not carry
+  // colour, so it can't compete with the bucket ring.
+  const encoding = () =>
+    tileBorderEncoding({
+      active: props.active,
+      maximized: props.maximized,
+      bucket: props.bucket,
+      cardColor: props.cardColor,
+      // rounded-xl is 0.75rem; pill-border ::before sits at inset -2px.
+      radius: "calc(0.75rem + 2px)",
+    });
+
   // While maximized: ignore drag transform and pin to viewport. While
   // tiled: absolute-positioned at layout(), drag transform follows.
   const tiledStyle = () => ({
@@ -71,11 +93,12 @@ const CanvasTile: Component<{
     "z-index": props.active ? 10 : 1,
     opacity: props.active ? 1 : 0.92,
     "box-shadow": props.active
-      ? `0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px var(--color-accent)`
-      : `0 2px 8px rgba(0,0,0,0.2)`,
+      ? "0 8px 32px rgba(0,0,0,0.4)"
+      : "0 2px 8px rgba(0,0,0,0.2)",
     // Drag transform is screen-space — divide by zoom so the tile
     // moves at the correct rate in the scaled canvas coordinate system.
     transform: `translate(${draggable.transform.x / props.zoom()}px, ${draggable.transform.y / props.zoom()}px)`,
+    ...encoding().style,
   });
 
   return (
@@ -85,7 +108,9 @@ const CanvasTile: Component<{
       data-terminal-id={id}
       data-active={props.active ? "true" : undefined}
       data-maximized={props.maximized ? "true" : undefined}
-      class="flex flex-col overflow-hidden border transition-shadow duration-200"
+      data-agent-bucket={props.bucket}
+      data-unread={props.unread ? "true" : undefined}
+      class={`flex flex-col overflow-hidden transition-shadow duration-200 ${encoding().class}`}
       classList={{
         // Maximized stays `absolute inset-0` so it fills the canvas
         // container — NOT `fixed`, because the transformed pan/zoom
@@ -98,19 +123,12 @@ const CanvasTile: Component<{
         absolute: true,
         "inset-0 z-40": props.maximized,
         "rounded-xl": !props.maximized,
-        "border-accent/60 shadow-xl": props.active && !props.maximized,
-        // Active-tile right edge is the visual handshake to the right
-        // panel (the panel inspects this tile). The other three edges
-        // stay at accent/60 via the rule above; this overrides only the
-        // right edge to full accent so the cue reads asymmetrically as
-        // "this side points at the inspector." Sits in classList rather
-        // than tiledStyle() so it isn't re-evaluated on every drag tick.
-        "border-r-[var(--color-accent)]": props.active && !props.maximized,
-        "border-edge/40 hover:border-edge/60":
-          !props.active && !props.maximized,
-        "border-transparent": props.maximized,
       }}
-      style={props.maximized ? { "background-color": bg() } : tiledStyle()}
+      style={
+        props.maximized
+          ? { "background-color": bg(), ...encoding().style }
+          : tiledStyle()
+      }
       onMouseDown={() => props.onSelect()}
     >
       {/* Title bar — uses tile foreground at low opacity for guaranteed
@@ -152,6 +170,16 @@ const CanvasTile: Component<{
         }}
         {...(props.maximized ? {} : draggable.dragActivators)}
       >
+        <Show when={props.unread}>
+          <span
+            data-testid="canvas-tile-alert"
+            class="relative inline-flex h-2 w-2 mt-1.5 shrink-0"
+            aria-hidden="true"
+          >
+            <span class="absolute inline-flex h-full w-full rounded-full bg-alert opacity-75 animate-ping" />
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-alert" />
+          </span>
+        </Show>
         <div class="flex-1 min-w-0">{props.renderTitle()}</div>
         <div class="flex items-center gap-1 shrink-0">
           {props.renderTitleActions?.()}

@@ -6,7 +6,6 @@
  *  without spreading import churn across the client. */
 export { default } from "./WorkspaceSwitcher";
 export {
-  agentBucket,
   buildWorkspaceEntries,
   buildWorkspaceSwitcherModel,
   sortBySwitcherOrder,

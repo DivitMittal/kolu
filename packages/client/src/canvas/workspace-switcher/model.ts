@@ -1,4 +1,10 @@
-import type { AgentInfo, TerminalId } from "kolu-common/surface";
+import type { TerminalId } from "kolu-common/surface";
+import {
+  AGENT_BUCKETS,
+  type AgentBucket,
+  agentBucket,
+  type AgentBucketDescriptor,
+} from "../../agent/agentPresentation";
 import type { TerminalDisplayInfo } from "../../terminal/terminalDisplay";
 import type { TileLayout } from "../TileLayout";
 import { repoAccent } from "./identity";
@@ -47,61 +53,13 @@ export function sortBySwitcherOrder(
   });
 }
 
-export type WorkspaceAgentBucket = "awaiting" | "working" | "none";
-
-/** Stable agent-state buckets shown as columns in the expanded switcher.
- *
- *  Co-locates each bucket's label, empty-state copy, and full visual
- *  encoding — text color, accent CSS variable for the column rule,
- *  the animated `pill-border-*` class set, and the status glyph used
- *  on cards. Adding or renaming a bucket is a single edit here;
- *  presentation reads from this record rather than re-deriving the
- *  same mapping in each component. */
-export const WORKSPACE_AGENT_BUCKETS: readonly {
-  key: WorkspaceAgentBucket;
-  label: string;
-  empty: string;
-  textClass: string;
-  accentVar: string;
-  borderClass: string;
-  glyph: string;
-}[] = [
-  {
-    key: "awaiting",
-    label: "Awaiting you",
-    empty: "No terminals need input",
-    textClass: "text-alert",
-    accentVar: "var(--color-alert)",
-    borderClass: "pill-border pill-border-awaiting",
-    glyph: "⏵",
-  },
-  {
-    key: "working",
-    label: "Working",
-    empty: "No agents are running",
-    textClass: "text-accent",
-    accentVar: "var(--color-accent)",
-    borderClass: "pill-border pill-border-working",
-    glyph: "▸",
-  },
-  {
-    key: "none",
-    label: "No agent",
-    empty: "No plain shells match",
-    textClass: "text-fg-3",
-    accentVar: "var(--color-fg-3)",
-    borderClass: "",
-    glyph: "·",
-  },
-];
-
 /** Searchable live-terminal entry used by the expanded switcher panel. */
 export type WorkspaceSwitcherEntry = {
   id: TerminalId;
   repoName: string;
   label: string;
   suffix?: string;
-  bucket: WorkspaceAgentBucket;
+  bucket: AgentBucket;
   info: TerminalDisplayInfo;
   searchText: string;
 };
@@ -129,10 +87,9 @@ export type WorkspaceRepoFacet = {
 };
 
 /** Agent bucket plus the entries currently visible in that column. */
-export type WorkspaceSwitcherColumn =
-  (typeof WORKSPACE_AGENT_BUCKETS)[number] & {
-    entries: WorkspaceSwitcherEntry[];
-  };
+export type WorkspaceSwitcherColumn = AgentBucketDescriptor & {
+  entries: WorkspaceSwitcherEntry[];
+};
 
 /** Complete derived model for collapsed and expanded switcher renderers. */
 export type WorkspaceSwitcherModel = {
@@ -143,40 +100,6 @@ export type WorkspaceSwitcherModel = {
   repoFacets: WorkspaceRepoFacet[];
   columns: WorkspaceSwitcherColumn[];
 };
-
-/** Classify live agent metadata into the switcher's fixed column set. */
-export function agentBucket(
-  agent: AgentInfo | null | undefined,
-): WorkspaceAgentBucket {
-  switch (agent?.state) {
-    case "waiting":
-      return "awaiting";
-    case "thinking":
-    case "tool_use":
-      return "working";
-    case undefined:
-      return "none";
-  }
-}
-
-const BUCKET_BY_KEY: Record<
-  WorkspaceAgentBucket,
-  (typeof WORKSPACE_AGENT_BUCKETS)[number]
-> = WORKSPACE_AGENT_BUCKETS.reduce(
-  (acc, bucket) => {
-    acc[bucket.key] = bucket;
-    return acc;
-  },
-  {} as Record<WorkspaceAgentBucket, (typeof WORKSPACE_AGENT_BUCKETS)[number]>,
-);
-
-/** Look up a bucket descriptor by its key. Used by presentation code
- *  that has an entry's bucket and needs the matching label/color. */
-export function bucketDescriptor(
-  bucket: WorkspaceAgentBucket,
-): (typeof WORKSPACE_AGENT_BUCKETS)[number] {
-  return BUCKET_BY_KEY[bucket];
-}
 
 function add(values: string[], value: unknown): void {
   if (value === null || value === undefined) return;
@@ -354,7 +277,7 @@ export function buildWorkspaceSwitcherModel(
     options.repoFilter ?? null,
   );
 
-  const columns = WORKSPACE_AGENT_BUCKETS.map((bucket) => ({
+  const columns = AGENT_BUCKETS.map((bucket) => ({
     ...bucket,
     entries: visibleEntries.filter((entry) => entry.bucket === bucket.key),
   }));

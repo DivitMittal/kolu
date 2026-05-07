@@ -30,6 +30,7 @@ import {
   on,
   Show,
 } from "solid-js";
+import { agentBucket } from "../agent/agentPresentation";
 import { useTerminalStore } from "../terminal/useTerminalStore";
 import CanvasMinimap from "./CanvasMinimap";
 import CanvasTile from "./CanvasTile";
@@ -323,6 +324,11 @@ const TerminalCanvas: Component<{
               active={maximized || store.activeId() === id}
               maximized={maximized}
               theme={tileTheme(id)}
+              bucket={agentBucket(store.getDisplayInfo(id)?.meta.agent)}
+              cardColor={
+                store.getDisplayInfo(id)?.repoColor ?? "var(--color-accent)"
+              }
+              unread={store.isUnread(id)}
               onSelect={() => props.onSelect(id)}
               onClose={() => props.onClose(id)}
               onToggleMaximize={posture.toggle}

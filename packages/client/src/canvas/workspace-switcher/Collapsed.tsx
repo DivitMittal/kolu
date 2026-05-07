@@ -2,10 +2,9 @@ import type { TerminalId } from "kolu-common/surface";
 import { type Component, Index, Show } from "solid-js";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import { PlusIcon } from "../../ui/Icons";
+import { agentBucket, bucketDescriptor } from "../../agent/agentPresentation";
 import { branchAccent, repoAccent } from "./identity";
 import {
-  agentBucket,
-  bucketDescriptor,
   COMPACT_VISIBLE_PER_REPO,
   type WorkspaceSwitcherRepoGroup,
 } from "./model";
