@@ -12,7 +12,7 @@
  *
  * Providers publish server-derived fields via `updateServerMetadata`; client
  * RPC handlers persist client-owned fields via `updateClientMetadata` (or
- * direct mutation for paths that skip the metadata publish). Both functions
+ * `updateClientMetadataBatch`, or direct mutation for paths that skip the metadata publish). Both functions
  * share the same publish/auto-save path — the type difference is a
  * compile-time fence so a provider cannot accidentally write canvasLayout
  * and an RPC handler cannot accidentally write git.
@@ -50,6 +50,7 @@ import { startProcessProvider } from "./process.ts";
 
 export {
   createMetadata,
+  updateClientMetadataBatch,
   updateClientMetadata,
   updateServerMetadata,
 } from "./state.ts";

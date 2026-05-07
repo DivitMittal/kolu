@@ -40,11 +40,13 @@ export function createMetadata(cwd: string): TerminalMetadata {
   };
 }
 
-/** Log + publish the current metadata snapshot and trigger debounced
- *  session auto-save. Shared tail for both `updateServerMetadata` and
- *  `updateClientMetadata` so the publish/audit path is identical regardless
- *  of who wrote the fields. */
-function publishMetadata(entry: TerminalProcess, terminalId: string): void {
+/** Log + publish the current metadata snapshot. Shared tail for metadata
+ *  updates so the publish/audit path is identical regardless of who wrote
+ *  the fields. */
+function publishMetadataSnapshot(
+  entry: TerminalProcess,
+  terminalId: string,
+): void {
   const m = entry.info.meta;
   const pr = prValue(m.pr);
   const prUnavailable = prUnavailableReason(m.pr);
@@ -65,6 +67,11 @@ function publishMetadata(entry: TerminalProcess, terminalId: string): void {
     "metadata publish",
   );
   surfaceCtx.collections.terminalMetadata.upsert(terminalId, { ...m });
+}
+
+/** Publish one metadata snapshot and trigger debounced session auto-save. */
+function publishMetadata(entry: TerminalProcess, terminalId: string): void {
+  publishMetadataSnapshot(entry, terminalId);
   terminalsDirtyChannel.publish({});
 }
 
@@ -92,4 +99,25 @@ export function updateClientMetadata(
 ): void {
   mutate(entry.info.meta);
   publishMetadata(entry, terminalId);
+}
+
+/** Atomically mutate multiple client-owned metadata entries, publish their
+ *  snapshots after every mutation has landed, then trigger one session
+ *  auto-save. This keeps batch commands from exposing intermediate state
+ *  through the session persistence channel. */
+export function updateClientMetadataBatch(
+  updates: {
+    entry: TerminalProcess;
+    terminalId: string;
+    mutate: (meta: TerminalClientMetadata) => void;
+  }[],
+): void {
+  if (updates.length === 0) return;
+  for (const { entry, mutate } of updates) {
+    mutate(entry.info.meta);
+  }
+  for (const { entry, terminalId } of updates) {
+    publishMetadataSnapshot(entry, terminalId);
+  }
+  terminalsDirtyChannel.publish({});
 }

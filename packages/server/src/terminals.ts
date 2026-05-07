@@ -14,6 +14,7 @@
 import type {
   CanvasLayout,
   InitialTerminalMetadata,
+  TerminalClientMetadata,
   SavedTerminal,
   TerminalId,
   TerminalInfo,
@@ -23,6 +24,7 @@ import { log } from "./log.ts";
 import {
   createMetadata,
   startProviders,
+  updateClientMetadataBatch,
   updateClientMetadata,
   updateServerMetadata,
 } from "./meta/index.ts";
@@ -214,20 +216,28 @@ export function setCanvasLayout(
   id: TerminalId,
   layout: { x: number; y: number; w: number; h: number },
 ): void {
-  const entry = getTerminal(id);
-  if (!entry) return;
-  updateClientMetadata(entry, id, (m) => {
-    m.canvasLayout = layout;
-  });
+  setCanvasLayouts([{ id, layout }]);
 }
 
 /** Store multiple terminal canvas layouts from one client command. */
 export function setCanvasLayouts(
   layouts: { id: TerminalId; layout: CanvasLayout }[],
 ): void {
-  for (const { id, layout } of layouts) {
-    setCanvasLayout(id, layout);
-  }
+  updateClientMetadataBatch(
+    layouts.flatMap(({ id, layout }) => {
+      const entry = getTerminal(id);
+      if (!entry) return [];
+      return [
+        {
+          entry,
+          terminalId: id,
+          mutate: (m: TerminalClientMetadata) => {
+            m.canvasLayout = layout;
+          },
+        },
+      ];
+    }),
+  );
 }
 
 /** Store a terminal's sub-panel state (client-reported).
