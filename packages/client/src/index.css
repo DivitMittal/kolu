@@ -83,9 +83,15 @@ body {
  * per-element via `--pill-border-radius` so the same animation works
  * on rectangular cards (rounded-md / rounded-lg). */
 
-.pill-border {
-  position: relative;
-}
+/* `.pill-border` does NOT set `position` — the caller is responsible
+ * for establishing a positioning context (`relative`, `absolute`, or
+ * `fixed`) on the element so the `::before` ring can position itself.
+ * Setting `position: relative` here clobbered Tailwind's `.absolute`
+ * utility on canvas tiles, which left them in document flow and
+ * snapped them back on every drag attempt. All current call sites
+ * (canvas tile, switcher pill, expanded card) already establish their
+ * own positioning, so this rule is redundant — and dangerous when
+ * absent. */
 .pill-border::before {
   content: "";
   position: absolute;

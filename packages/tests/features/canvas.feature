@@ -106,6 +106,31 @@ Feature: Canvas workspace
     And canvas tile 1 should be the active tile
     And there should be no page errors
 
+  Scenario: Dragging an inactive canvas tile by its title bar moves it
+    Given I create a terminal
+    And I create a terminal
+    When I save canvas tile 1 position
+    And I drag canvas tile 1 by x=80 y=60
+    Then canvas tile 1 position should have changed
+    And there should be no page errors
+
+  Scenario: Dragging the active canvas tile by its title bar moves it
+    Given I create a terminal
+    And I create a terminal
+    When I save canvas tile 2 position
+    And I drag canvas tile 2 by x=80 y=60
+    Then canvas tile 2 position should have changed
+    And there should be no page errors
+
+  Scenario: Tile with a working agent stays absolutely positioned
+    # Regression guard: the bucket-border chassis must not strip the
+    # tile's absolute positioning, otherwise drag transforms apply
+    # against a document-flow base and the tile snaps back.
+    When a Claude Code session is mocked with state "thinking"
+    Then the tile chrome should show an agent indicator with state "thinking"
+    Then canvas tile 1 should be absolutely positioned
+    And there should be no page errors
+
   # Viewport-pan assertion is flaky after the maximize signal landed
   # (sibling order in canvas-container changed; see Show wrapping the
   # Workspace switcher + minimap). The selection half of the behaviour is covered

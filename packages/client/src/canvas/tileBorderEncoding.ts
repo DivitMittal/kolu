@@ -17,7 +17,13 @@
 import { type AgentBucket, bucketDescriptor } from "../agent/agentPresentation";
 
 export type TileBorderEncoding = {
-  class: string;
+  /** SolidJS classList map — spread into the tile's `classList` prop.
+   *  Returning a map (rather than a string for `class={…}`) is mandatory:
+   *  combining a reactive `class` template with a reactive `classList`
+   *  on the same element loses every `classList` entry when the
+   *  template re-runs, which previously stripped `absolute`/`rounded-xl`
+   *  off the tile and left it in document flow. */
+  classList: Record<string, boolean>;
   style: Record<string, string>;
 };
 
@@ -31,28 +37,33 @@ export function tileBorderEncoding(args: {
   bucket: AgentBucket;
   cardColor: string;
 }): TileBorderEncoding {
+  const style: Record<string, string> = { "--card-color": args.cardColor };
   if (args.maximized) {
-    return { class: "border border-transparent", style: {} };
+    return {
+      classList: { border: true, "border-transparent": true },
+      style,
+    };
   }
   const desc = bucketDescriptor(args.bucket);
   const hasBucketRing = desc.borderClass !== "";
-  const classes = ["border"];
-  if (hasBucketRing) {
-    // pill-border ::before paints the ring; suppress the underlying
-    // Tailwind border-color so the chassis doesn't fight a default 1px line.
-    classes.push("border-transparent", desc.borderClass);
-  } else if (args.active) {
-    classes.push("border-edge-bright/70");
-  } else {
-    classes.push("border-edge/40", "hover:border-edge/60");
-  }
-  if (args.active) classes.push("pill-glow-inner");
-  const style: Record<string, string> = {
-    "--card-color": args.cardColor,
-  };
   if (hasBucketRing) {
     style["--pill-state-color"] = desc.accentVar;
     style["--pill-border-radius"] = TILE_BORDER_RADIUS;
   }
-  return { class: classes.join(" "), style };
+  return {
+    classList: {
+      border: true,
+      // pill-border ::before paints the ring; suppress the underlying
+      // Tailwind border-color so the chassis doesn't fight a default 1px line.
+      "border-transparent": hasBucketRing,
+      "pill-border": hasBucketRing,
+      "pill-border-awaiting": args.bucket === "awaiting",
+      "pill-border-working": args.bucket === "working",
+      "pill-glow-inner": args.active,
+      "border-edge-bright/70": !hasBucketRing && args.active,
+      "border-edge/40": !hasBucketRing && !args.active,
+      "hover:border-edge/60": !hasBucketRing && !args.active,
+    },
+    style,
+  };
 }

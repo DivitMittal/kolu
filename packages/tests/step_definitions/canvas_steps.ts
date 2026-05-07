@@ -854,6 +854,100 @@ Then(
   },
 );
 
+Then(
+  "canvas tile {int} should be absolutely positioned",
+  async function (this: KoluWorld, index: number) {
+    const result = await this.page.evaluate(
+      ({ idx }: { idx: number }) => {
+        const tiles = document.querySelectorAll('[data-testid="canvas-tile"]');
+        const tile = tiles.item(idx) as HTMLElement | null;
+        if (!tile) return { found: false };
+        return {
+          found: true,
+          position: getComputedStyle(tile).position,
+          inlineLeft: tile.style.left,
+          inlineTop: tile.style.top,
+          rectLeft: tile.getBoundingClientRect().left,
+          dataActive: tile.getAttribute("data-active"),
+          dataAgentBucket: tile.getAttribute("data-agent-bucket"),
+          classes: tile.className,
+        };
+      },
+      { idx: index - 1 },
+    );
+    if (!result.found) throw new Error(`canvas tile ${index} not found`);
+    assert.strictEqual(
+      result.position,
+      "absolute",
+      `tile ${index} computed position is "${result.position}" (inline left=${result.inlineLeft}, bucket=${result.dataAgentBucket}, active=${result.dataActive}, classes=${result.classes}); the tile must stay absolutely positioned regardless of bucket-border chassis`,
+    );
+  },
+);
+
+When(
+  "I drag canvas tile {int} by x={int} y={int}",
+  async function (this: KoluWorld, index: number, dx: number, dy: number) {
+    // solid-dnd's pointer sensor listens on `document` (not window) and
+    // activates after either 250ms or >10px of movement. The activation
+    // intermediates ("pre-activation move <= 10px is ignored, post-
+    // activation moves drive sensorMove") matter here: we cross the
+    // threshold in one move, then walk the rest of the delta so the
+    // intermediate sensorMove calls feed handleDragMove.
+    await this.page.evaluate(
+      ({ idx, dx, dy }: { idx: number; dx: number; dy: number }) => {
+        const bars = document.querySelectorAll(
+          '[data-testid="canvas-tile-titlebar"]',
+        );
+        const bar = bars.item(idx) as HTMLElement | null;
+        if (!bar) throw new Error(`titlebar ${idx + 1} not found`);
+        const box = bar.getBoundingClientRect();
+        const cx = box.left + 24;
+        const cy = box.top + box.height / 2;
+        const eventInit = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          button: 0,
+          buttons: 1,
+        };
+        bar.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            ...eventInit,
+            clientX: cx,
+            clientY: cy,
+          }),
+        );
+        // First move crosses the 10px activation threshold; subsequent
+        // moves walk the remaining delta on `document` so sensorMove
+        // fires for handleDragMove to capture.
+        const steps = [0.4, 0.7, 1];
+        for (const t of steps) {
+          document.dispatchEvent(
+            new PointerEvent("pointermove", {
+              ...eventInit,
+              clientX: cx + dx * t,
+              clientY: cy + dy * t,
+            }),
+          );
+        }
+        document.dispatchEvent(
+          new PointerEvent("pointerup", {
+            ...eventInit,
+            buttons: 0,
+            clientX: cx + dx,
+            clientY: cy + dy,
+          }),
+        );
+      },
+      { idx: index - 1, dx, dy },
+    );
+    await this.waitForFrame();
+  },
+);
+
 When(
   "I move the canvas tile to x={int} y={int}",
   async function (this: KoluWorld, x: number, y: number) {

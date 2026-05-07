@@ -116,7 +116,7 @@ const CanvasTile: Component<{
       data-maximized={props.maximized ? "true" : undefined}
       data-agent-bucket={props.bucket}
       data-unread={props.unread ? "true" : undefined}
-      class={`flex flex-col overflow-hidden transition-shadow duration-200 ${encoding().class}`}
+      class="flex flex-col overflow-hidden transition-shadow duration-200"
       classList={{
         // Maximized stays `absolute inset-0` so it fills the canvas
         // container — NOT `fixed`, because the transformed pan/zoom
@@ -129,6 +129,7 @@ const CanvasTile: Component<{
         absolute: true,
         "inset-0 z-40": props.maximized,
         "rounded-xl": !props.maximized,
+        ...encoding().classList,
       }}
       style={tileStyle()}
       onMouseDown={() => props.onSelect()}
