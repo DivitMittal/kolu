@@ -52,7 +52,10 @@ import {
 } from "kolu-git";
 import { log } from "./log.ts";
 import { publisher } from "./publisher.ts";
-import { getSavedSession } from "./session.ts";
+import {
+  cancelPendingSessionAutoSave,
+  getSavedSession,
+} from "./session-store.ts";
 import { store } from "./state.ts";
 import { getTerminal, listTerminals } from "./terminal-registry.ts";
 
@@ -71,8 +74,15 @@ const activityFeedStore: CellStore<ActivityFeed> = confStore<ActivityFeed>(
   store,
   "activityFeed",
 );
-const savedSessionStore: CellStore<SavedSession | null> =
+const rawSavedSessionStore: CellStore<SavedSession | null> =
   confStore<SavedSession | null>(store, "session");
+const savedSessionStore: CellStore<SavedSession | null> = {
+  get: () => getSavedSession(),
+  set: (value) => {
+    cancelPendingSessionAutoSave();
+    rawSavedSessionStore.set(value);
+  },
+};
 
 // ── Surface implementation ─────────────────────────────────────────────
 
@@ -131,7 +141,7 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
       session: {
         // Reads through `getSavedSession` to keep the "empty terminals = null"
         // legacy normalization at one site (`session.ts` owns that invariant).
-        store: { get: () => getSavedSession(), set: savedSessionStore.set },
+        store: savedSessionStore,
       },
       terminalList: {
         // Live registry; the in-memory store has no persistent slot.

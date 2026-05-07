@@ -12,12 +12,13 @@
 import type { SavedSession, SavedTerminal } from "kolu-common/surface";
 import { log } from "./log.ts";
 import { terminalsDirtyChannel } from "./publisher.ts";
-import { store } from "./state.ts";
+import {
+  cancelPendingSessionAutoSave,
+  scheduleSessionAutoSave,
+} from "./session-store.ts";
 import { surfaceCtx } from "./surface.ts";
 
-/** Pending autosave timer — declared at module top so `setSavedSession`
- *  can cancel it (see comment on that function for the race). */
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
+export { getSavedSession } from "./session-store.ts";
 
 /** Write the session blob (or clear it). The surface owns persist+publish. */
 function writeSession(next: SavedSession | null): void {
@@ -40,13 +41,6 @@ export function saveSession(snapshot: {
   });
 }
 
-/** Get the saved session, or null if none exists. */
-export function getSavedSession(): SavedSession | null {
-  const session = store.get("session");
-  if (!session || session.terminals.length === 0) return null;
-  return session;
-}
-
 /** Clear the saved session (e.g. after successful restore). */
 export function clearSavedSession(): void {
   writeSession(null);
@@ -64,10 +58,7 @@ export function clearSavedSession(): void {
  *  terminal snapshot, and `saveSession([])` rewrites the session to null —
  *  the restore card disappears mid-scenario. */
 export function setSavedSession(session: SavedSession | null): void {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = undefined;
-  }
+  cancelPendingSessionAutoSave();
   writeSession(session);
 }
 
@@ -95,11 +86,7 @@ export function initSessionAutoSave(
   void (async () => {
     try {
       for await (const _ of terminalsDirtyChannel.subscribe(undefined)) {
-        if (saveTimer) continue;
-        saveTimer = setTimeout(() => {
-          saveTimer = undefined;
-          saveSession(snapshot());
-        }, 500);
+        scheduleSessionAutoSave(() => saveSession(snapshot()));
       }
     } catch (err) {
       log.error({ err }, "session auto-save subscription failed");
