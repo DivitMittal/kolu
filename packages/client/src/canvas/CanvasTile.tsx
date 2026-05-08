@@ -97,13 +97,16 @@ const CanvasTile: Component<{
       width: `${layout().w}px`,
       height: `${layout().h}px`,
       "z-index": props.active ? 10 : 1,
-      opacity: props.active ? 1 : 0.92,
-      // Layered elevation — long soft shadow for ambient lift +
-      // shorter contact shadow for grounding. Inactive tiles stay
-      // nearly flat so the focused tile clearly hovers above peers.
+      // Inactive tiles fade noticeably so the focused tile reads as
+      // raised by contrast — pure drop shadow alone disappears on the
+      // near-black dark-mode canvas.
+      opacity: props.active ? 1 : 0.7,
+      // Layered elevation — wide ambient shadow + tight contact
+      // shadow + hairline ambient highlight that survives a near-
+      // black background.
       "box-shadow": props.active
-        ? "0 24px 48px -12px rgba(0,0,0,0.55), 0 6px 14px -4px rgba(0,0,0,0.4)"
-        : "0 1px 3px rgba(0,0,0,0.18)",
+        ? "0 32px 64px -12px rgba(0,0,0,0.95), 0 12px 24px -6px rgba(0,0,0,0.7), 0 0 0 1px color-mix(in oklch, var(--card-color) 14%, transparent)"
+        : "0 1px 3px rgba(0,0,0,0.15)",
       // Drag transform is screen-space — divide by zoom so the tile
       // moves at the correct rate in the scaled canvas coordinate system.
       transform: `translate(${draggable.transform.x / props.zoom()}px, ${draggable.transform.y / props.zoom()}px)`,

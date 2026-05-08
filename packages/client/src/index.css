@@ -100,31 +100,19 @@ body {
 .tile-ring--breath {
   animation: tile-ring-breath 1.6s ease-in-out infinite;
 }
-.tile-ring--breath.tile-ring--active {
-  animation-name: tile-ring-breath-active;
-}
 @keyframes tile-ring-breath {
   0%,
   100% {
-    outline-color: color-mix(in oklch, var(--color-alert) 35%, transparent);
+    outline-color: color-mix(in oklch, var(--color-alert) 45%, transparent);
   }
   50% {
-    outline-color: color-mix(in oklch, var(--color-alert) 80%, transparent);
-  }
-}
-@keyframes tile-ring-breath-active {
-  0%,
-  100% {
-    outline-color: color-mix(in oklch, var(--color-alert) 60%, transparent);
-  }
-  50% {
-    outline-color: color-mix(in oklch, var(--color-alert) 100%, transparent);
+    outline-color: color-mix(in oklch, var(--color-alert) 95%, transparent);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .tile-ring--breath {
     animation: none;
-    outline-color: color-mix(in oklch, var(--color-alert) 80%, transparent);
+    outline-color: color-mix(in oklch, var(--color-alert) 85%, transparent);
   }
 }
 

@@ -1,18 +1,12 @@
-/** Canvas tile border encoding — names the policy for combining the
- *  three signals the tile carries: agent state, focus, and idle baseline.
+/** Canvas tile border encoding.
  *
- *    Outer ring  → agent state via `pill-border-{awaiting,working}`
- *                  (single source of truth: `bucketDescriptor`).
- *    Inset glow  → active focus via `pill-glow-inner` driven by
- *                  `--card-color` (per-terminal repo accent).
- *    Edge tint   → idle baseline (`border-edge/40`) for tiles with
- *                  no bucket signal — independent of the chassis so
- *                  the tile stays legible when no agent is present.
- *
- *  The two coloured channels coexist when both are present — outer
- *  carries bucket, inset carries identity, so an active+working tile
- *  shows a steady accent ring around a brighter inset rim. Maximized
- *  drops both: edge-to-edge fill, no border at all. */
+ *  The tile-ring is a single channel that encodes BUCKET + IDENTITY
+ *  (not focus): every tile gets a ring whose colour and thickness
+ *  depend only on its agent bucket. Idle tiles paint `--card-color`
+ *  (per-terminal repo accent) at 1px; bucket tiles paint accent /
+ *  alert at 2px. Active vs inactive is signalled separately via
+ *  drop shadow + opacity + z-index — the ring does not change with
+ *  focus. Maximized drops the ring (edge-to-edge fill). */
 
 import type { AgentBucket } from "../agent/agentPresentation";
 
@@ -27,31 +21,20 @@ export type TileBorderEncoding = {
   style: Record<string, string>;
 };
 
-/** Two channels, both expressed through the `tile-ring` chassis:
- *  bucket → ring colour, focus → ring thickness. Every tile gets a
- *  ring (no neutral fallback) — idle tiles paint `--card-color` at
- *  60% / 100% intensity, bucket tiles paint accent / alert at 70% /
- *  95%. Thickness steps 1px → 2px → 3px so the active tile in any
- *  bucket stays distinguishable from inactive peers without inventing
- *  a third channel. Awaiting layers a breath animation on top — the
- *  only animated state. */
-function tileRingColor(args: { active: boolean; bucket: AgentBucket }): string {
-  if (args.bucket === "none") {
-    const intensity = args.active ? "100%" : "60%";
-    return `color-mix(in oklch, var(--card-color) ${intensity}, transparent)`;
-  }
+/** The `tile-ring` chassis paints one ring per tile — colour from
+ *  bucket, thickness from bucket alone (NOT focus). Active vs inactive
+ *  is signalled outside the ring entirely (drop shadow + opacity +
+ *  z-index in `tileStyle`); the ring stays constant so the user sees
+ *  identity/state, not focus, on the border channel. */
+function tileRingColor(bucket: AgentBucket): string {
+  if (bucket === "none") return "var(--card-color)";
   const base =
-    args.bucket === "working" ? "var(--color-accent)" : "var(--color-alert)";
-  const intensity = args.active ? "95%" : "70%";
-  return `color-mix(in oklch, ${base} ${intensity}, transparent)`;
+    bucket === "working" ? "var(--color-accent)" : "var(--color-alert)";
+  return `color-mix(in oklch, ${base} 80%, transparent)`;
 }
 
-function tileRingThickness(args: {
-  active: boolean;
-  bucket: AgentBucket;
-}): string {
-  if (args.bucket === "none") return args.active ? "2px" : "1px";
-  return args.active ? "3px" : "2px";
+function tileRingThickness(bucket: AgentBucket): string {
+  return bucket === "none" ? "1px" : "2px";
 }
 
 export function tileBorderEncoding(args: {
@@ -66,12 +49,11 @@ export function tileBorderEncoding(args: {
     // border. Caller still needs the layout positioning classes.
     return { classList: {}, style };
   }
-  style["--tile-ring-color"] = tileRingColor(args);
-  style["--tile-ring-thickness"] = tileRingThickness(args);
+  style["--tile-ring-color"] = tileRingColor(args.bucket);
+  style["--tile-ring-thickness"] = tileRingThickness(args.bucket);
   return {
     classList: {
       "tile-ring": true,
-      "tile-ring--active": args.active,
       "tile-ring--breath": args.bucket === "awaiting",
     },
     style,
