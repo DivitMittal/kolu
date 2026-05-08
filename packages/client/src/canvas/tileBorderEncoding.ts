@@ -28,18 +28,17 @@ export type TileBorderEncoding = {
 };
 
 /** Two channels, both expressed through the `tile-ring` chassis:
- *  bucket → ring colour, focus → ring thickness. Idle inactive tiles
- *  get a 1px neutral edge; idle active swaps in `--card-color` so the
- *  focused tile's identity reads even without a bucket signal; bucket
- *  rings step from 2px (inactive) to 3px (active) and brighten from
- *  70% to 95% mix so active+working stays distinguishable from
- *  inactive+working without inventing a third channel. Awaiting
- *  layers a breath animation on top — the only animated state. */
+ *  bucket → ring colour, focus → ring thickness. Every tile gets a
+ *  ring (no neutral fallback) — idle tiles paint `--card-color` at
+ *  60% / 100% intensity, bucket tiles paint accent / alert at 70% /
+ *  95%. Thickness steps 1px → 2px → 3px so the active tile in any
+ *  bucket stays distinguishable from inactive peers without inventing
+ *  a third channel. Awaiting layers a breath animation on top — the
+ *  only animated state. */
 function tileRingColor(args: { active: boolean; bucket: AgentBucket }): string {
   if (args.bucket === "none") {
-    return args.active
-      ? "var(--card-color)"
-      : "color-mix(in oklch, var(--color-edge) 80%, transparent)";
+    const intensity = args.active ? "100%" : "60%";
+    return `color-mix(in oklch, var(--card-color) ${intensity}, transparent)`;
   }
   const base =
     args.bucket === "working" ? "var(--color-accent)" : "var(--color-alert)";
@@ -72,6 +71,7 @@ export function tileBorderEncoding(args: {
   return {
     classList: {
       "tile-ring": true,
+      "tile-ring--active": args.active,
       "tile-ring--breath": args.bucket === "awaiting",
     },
     style,

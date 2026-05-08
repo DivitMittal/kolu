@@ -84,41 +84,47 @@ body {
  * on rectangular cards (rounded-md / rounded-lg). */
 
 /* ── Tile ring ──────────────────────────────────────────────
- * Outer ring driven by two CSS variables — color (bucket) and
- * thickness (focus). Always paints, even when idle, so the canvas
- * keeps a consistent edge treatment instead of switching between
- * border-utility and chassis-ring rendering. The breath modifier is
- * the only animated variant; everything else is static. */
-.tile-ring::before {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: var(--tile-ring-radius, calc(0.75rem + 2px));
-  padding: var(--tile-ring-thickness, 1px);
-  background: var(--tile-ring-color, transparent);
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
+ * Outer ring driven by two CSS variables — colour (bucket) and
+ * thickness (focus). Painted via `outline` rather than a `::before`
+ * pseudo-element because the tile carries `overflow-hidden` (xterm
+ * scrollback must clip to the rounded corners), which clips
+ * pseudo-elements at the bottom edge — `outline` renders outside
+ * the element box and the parent's overflow doesn't reach it.
+ * `outline` follows `border-radius` in modern browsers, so the
+ * rounded-xl tile gets a rounded ring without extra plumbing. */
+.tile-ring {
+  outline: var(--tile-ring-thickness, 1px) solid
+    var(--tile-ring-color, transparent);
+  outline-offset: 0px;
 }
-.tile-ring--breath::before {
+.tile-ring--breath {
   animation: tile-ring-breath 1.6s ease-in-out infinite;
+}
+.tile-ring--breath.tile-ring--active {
+  animation-name: tile-ring-breath-active;
 }
 @keyframes tile-ring-breath {
   0%,
   100% {
-    opacity: 0.55;
+    outline-color: color-mix(in oklch, var(--color-alert) 35%, transparent);
   }
   50% {
-    opacity: 1;
+    outline-color: color-mix(in oklch, var(--color-alert) 80%, transparent);
+  }
+}
+@keyframes tile-ring-breath-active {
+  0%,
+  100% {
+    outline-color: color-mix(in oklch, var(--color-alert) 60%, transparent);
+  }
+  50% {
+    outline-color: color-mix(in oklch, var(--color-alert) 100%, transparent);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .tile-ring--breath::before {
+  .tile-ring--breath {
     animation: none;
-    opacity: 0.85;
+    outline-color: color-mix(in oklch, var(--color-alert) 80%, transparent);
   }
 }
 
