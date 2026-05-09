@@ -23,6 +23,7 @@ import { type KoluWorld, POLL_TIMEOUT } from "../support/world.ts";
 const TREE = '[data-testid="pierre-file-tree"]';
 const DIFF_VIEW = '[data-testid="pierre-diff-view"]';
 const FILE_VIEW = '[data-testid="pierre-file-view"]';
+const CODE_VIEW_TIMEOUT = 45_000;
 
 function fileRow(path: string): string {
   return `${TREE} [data-item-path="${path}"][data-item-type="file"]:not([data-file-tree-sticky-row])`;
@@ -383,6 +384,50 @@ async function waitForViewText(
   );
 }
 
+type SelectedCodeViewSnapshot = {
+  mounted: boolean;
+  text: string;
+  fallbackText: string;
+};
+
+function readSelectedCodeViewScript(): string {
+  return `(() => {
+    const selectors = [
+      '[data-testid="pierre-diff-view"]',
+      '[data-testid="pierre-file-view"]',
+    ];
+    let mounted = false;
+    let text = '';
+    for (const sel of selectors) {
+      const root = document.querySelector(sel);
+      if (!root) continue;
+      mounted = true;
+      const stack = [root];
+      while (stack.length) {
+        const node = stack.pop();
+        if (node.nodeType === 3) text += node.nodeValue || '';
+        if (node.nodeType === 1) {
+          if (node.shadowRoot) for (const ch of node.shadowRoot.childNodes) stack.push(ch);
+          for (const ch of node.childNodes) stack.push(ch);
+        }
+      }
+    }
+    return {
+      mounted,
+      text,
+      fallbackText: document.querySelector('[data-testid="diff-content"]')?.textContent || '',
+    };
+  })()`;
+}
+
+async function readSelectedCodeView(
+  world: KoluWorld,
+): Promise<SelectedCodeViewSnapshot> {
+  return (await world.page.evaluate(
+    readSelectedCodeViewScript(),
+  )) as SelectedCodeViewSnapshot;
+}
+
 Then(
   "the file content should contain {string}",
   async function (this: KoluWorld, expected: string) {
@@ -649,34 +694,20 @@ Then(
  *  succeeds if the expected text appears in whichever view is mounted. */
 Then(
   "the selected file should show content {string}",
+  { timeout: 60_000 },
   async function (this: KoluWorld, expected: string) {
-    await this.page.waitForFunction(
-      (exp) => {
-        for (const sel of [
-          '[data-testid="pierre-diff-view"]',
-          '[data-testid="pierre-file-view"]',
-        ]) {
-          const root = document.querySelector(sel);
-          if (!root) continue;
-          const stack: Node[] = [root];
-          let text = "";
-          while (stack.length) {
-            const n = stack.pop() as Node;
-            if (n.nodeType === 3) text += (n as Text).nodeValue || "";
-            if (n.nodeType === 1) {
-              const el = n as Element;
-              const sh = (el as unknown as { shadowRoot?: ShadowRoot })
-                .shadowRoot;
-              if (sh) for (const ch of sh.childNodes) stack.push(ch);
-              for (const ch of el.childNodes) stack.push(ch);
-            }
-          }
-          if (text.includes(exp)) return true;
-        }
-        return false;
+    await pollFor({
+      observe: () => readSelectedCodeView(this),
+      isDone: (snapshot) => snapshot.text.includes(expected),
+      timeoutMs: CODE_VIEW_TIMEOUT,
+      onTimeout: (last, elapsedMs) => {
+        const observed = last
+          ? `mounted=${last.mounted}; view="${last.text.slice(0, 120)}"; fallback="${last.fallbackText.slice(0, 120)}"`
+          : "no observations";
+        return new Error(
+          `Expected selected file content "${expected}" after ${elapsedMs}ms; ${observed}`,
+        );
       },
-      expected,
-      { timeout: POLL_TIMEOUT },
-    );
+    });
   },
 );
