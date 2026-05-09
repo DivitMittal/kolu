@@ -39,6 +39,7 @@ import {
   GitInfoSchema,
   GitStatusInputSchema,
   GitStatusOutputSchema,
+  WorktreeNameSchema,
 } from "kolu-git/schemas";
 import { PrResultSchema } from "kolu-github/schemas";
 import { OpenCodeInfoSchema } from "kolu-opencode/schemas";
@@ -261,7 +262,7 @@ export const ActivityFeedSchema = z.object({
 export const QueuedWorktreeSchema = z.object({
   id: z.string().uuid(),
   repoPath: z.string(),
-  worktreeName: z.string().optional(),
+  worktreeName: WorktreeNameSchema.optional(),
   intent: z.string().min(1),
   createdAt: z.number(),
 });
