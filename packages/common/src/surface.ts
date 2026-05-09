@@ -252,21 +252,16 @@ export const ColorSchemeSchema = z.enum(["light", "dark", "system"]);
 /** Sub-view of the Code tab: local/branch diff modes or the file browser. */
 export const CodeTabViewSchema = z.enum(["local", "branch", "browse"]);
 
-/** Which tab is currently displayed in the right panel. */
-export const RightPanelTabKindSchema = z.enum(["inspector", "code"]);
-
-/** Right-panel preferences. `activeTab` and `codeMode` live as flat fields so
- *  the storage layer's shallow merge is correct — Solid's `setStore` deep-merge
- *  cannot preserve discriminated-union variant invariants without a per-path
- *  `reconcile` escape hatch. Storing `codeMode` independently of `activeTab`
- *  also lets the Code tab restore its last sub-mode when the user toggles
- *  back from Inspector. The DU view (`{ kind: "inspector" } | { kind: "code",
- *  mode }`) is exposed via `rightPanelView()` for ergonomic pattern-matching
- *  at use sites. */
-export const RightPanelPrefsSchema = z.object({
+/** Legacy right-panel preferences slot. Phase 1 of the canvas-peer
+ *  companion rollout (kolu#852) deleted every consumer; the field is
+ *  retained here so existing serialized preference blobs still
+ *  deserialize cleanly. Phase 2 will migrate companion presence to a
+ *  per-terminal field and drop this entirely. Kept anonymous so no name
+ *  outside this module can be mistaken for live state. */
+const _legacyRightPanelSchema = z.object({
   collapsed: z.boolean(),
   size: z.number(),
-  activeTab: RightPanelTabKindSchema,
+  activeTab: z.enum(["inspector", "code"]),
   codeMode: CodeTabViewSchema,
 });
 
@@ -286,7 +281,7 @@ export const PreferencesSchema = z.object({
    *  many terminals). `dom` forces DOM everywhere, eliminating the font-
    *  rendering shift on focus swap at the cost of WebGL throughput. */
   terminalRenderer: z.enum(["auto", "webgl", "dom"]),
-  rightPanel: RightPanelPrefsSchema,
+  rightPanel: _legacyRightPanelSchema,
 });
 
 /** Preference patch — top-level fields are optional; nested objects are deep-partial. */
@@ -294,7 +289,7 @@ export const PreferencesPatchSchema = PreferencesSchema.omit({
   rightPanel: true,
 })
   .partial()
-  .extend({ rightPanel: RightPanelPrefsSchema.partial().optional() });
+  .extend({ rightPanel: _legacyRightPanelSchema.partial().optional() });
 
 // ── Schema-derived domain types — single source of truth via SurfaceTypes ──
 //
@@ -333,15 +328,6 @@ export type RecentAgent = z.infer<typeof RecentAgentSchema>;
 export type SavedTerminal = z.infer<typeof SavedTerminalSchema>;
 export type ColorScheme = z.infer<typeof ColorSchemeSchema>;
 export type CodeTabView = z.infer<typeof CodeTabViewSchema>;
-export type RightPanelTabKind = z.infer<typeof RightPanelTabKindSchema>;
-
-/** Discriminated-union view of the right panel's active tab. Derived from the
- *  flat `activeTab` + `codeMode` storage shape — see `rightPanelView()`. Use
- *  this for pattern matching at consumption sites; never write code that
- *  matches on `activeTab` and reads `codeMode` separately. */
-export type RightPanelTab =
-  | { kind: "inspector" }
-  | { kind: "code"; mode: CodeTabView };
 
 export type TaskProgress = z.infer<typeof TaskProgressSchema>;
 
@@ -361,18 +347,6 @@ export const DEFAULT_PREFERENCES: z.infer<typeof PreferencesSchema> = {
     codeMode: "local",
   },
 };
-
-/** Project the flat `RightPanelPrefs` shape onto its DU view. Storage stays
- *  flat (Solid's setStore shallow-merges correctly); use sites get the
- *  exhaustive-match-friendly DU. */
-export function rightPanelView(p: {
-  activeTab: RightPanelTabKind;
-  codeMode: CodeTabView;
-}): RightPanelTab {
-  return p.activeTab === "inspector"
-    ? { kind: "inspector" }
-    : { kind: "code", mode: p.codeMode };
-}
 
 // `applyPreferencesPatch` references `Preferences` / `PreferencesPatch`
 // before the surface is built, so we lift them off the schemas directly
