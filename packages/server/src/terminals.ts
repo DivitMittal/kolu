@@ -154,6 +154,7 @@ export function createTerminal(
   // Seed client-owned initial metadata BEFORE startProviders so the first
   // `terminalMetadata` collection yield carries these fields (see #642).
   if (initial?.themeName) meta.themeName = initial.themeName;
+  if (initial?.intent) meta.intent = initial.intent;
   if (initial?.canvasLayout) meta.canvasLayout = initial.canvasLayout;
   if (initial?.subPanel) meta.subPanel = initial.subPanel;
   if (initial?.lastActivityAt !== undefined)
@@ -265,6 +266,17 @@ export function setTerminalTheme(id: TerminalId, themeName: string): void {
       m.themeName = themeName;
     });
   }
+}
+
+/** Set or clear the user-authored intent for a terminal. */
+export function setTerminalIntent(id: TerminalId, intent?: string): void {
+  const entry = getTerminal(id);
+  if (!entry) return;
+  const next = intent?.trim();
+  updateClientMetadata(entry, id, (m) => {
+    if (next) m.intent = next;
+    else delete m.intent;
+  });
 }
 
 /** Kill and remove all terminals. Used by tests to reset server state between scenarios. */

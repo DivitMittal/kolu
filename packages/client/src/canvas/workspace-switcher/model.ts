@@ -1,8 +1,10 @@
 import type {
   AgentInfo,
+  QueuedWorktree,
   TerminalId,
   TerminalMetadata,
 } from "kolu-common/surface";
+import { cwdBasename } from "kolu-common/path";
 import type { TerminalDisplayInfo } from "../../terminal/terminalDisplay";
 import type { TileLayout } from "../TileLayout";
 
@@ -131,6 +133,12 @@ export type WorkspaceRepoFacet = {
   color: string;
 };
 
+/** Queued worktree projection rendered separately from live terminals. */
+export type WorkspaceSwitcherQueuedWorktree = QueuedWorktree & {
+  repoName: string;
+  searchText: string;
+};
+
 /** Agent bucket plus the entries currently visible in that column.
  *  `nonStaleCount` is the active subset — entries whose last observed
  *  agent transition is recent enough to count toward the visible badge.
@@ -145,8 +153,10 @@ export type WorkspaceSwitcherColumn =
 /** Complete derived model for collapsed and expanded switcher renderers. */
 export type WorkspaceSwitcherModel = {
   entries: WorkspaceSwitcherEntry[];
+  queuedWorktrees: WorkspaceSwitcherQueuedWorktree[];
   compactGroups: WorkspaceSwitcherRepoGroup[];
   visibleEntries: WorkspaceSwitcherEntry[];
+  visibleQueuedWorktrees: WorkspaceSwitcherQueuedWorktree[];
   selectedRepo: string | null;
   repoFacets: WorkspaceRepoFacet[];
   columns: WorkspaceSwitcherColumn[];
@@ -241,6 +251,7 @@ function searchTextFor(entry: {
 
   add(values, entry.suffix);
   add(values, info.meta.cwd);
+  add(values, info.meta.intent);
   add(values, info.meta.lastAgentCommand);
   add(values, git?.repoRoot);
   add(values, git?.repoName);
@@ -266,10 +277,16 @@ function queryTokens(query: string): string[] {
 }
 
 function matchesQuery(
-  entry: WorkspaceSwitcherEntry,
+  entry: { searchText: string },
   tokens: string[],
 ): boolean {
   return tokens.every((token) => entry.searchText.includes(token));
+}
+
+function queuedSearchTextFor(q: WorkspaceSwitcherQueuedWorktree): string {
+  const values: string[] = [q.repoName, q.repoPath, q.intent];
+  add(values, q.worktreeName);
+  return values.join(" ").toLowerCase();
 }
 
 /** Cap on idle (no-agent, non-active) compact pills per repo. Pills that
@@ -351,6 +368,7 @@ export function buildWorkspaceSwitcherModel(
     activeId?: TerminalId | null;
     getRecency?: (id: TerminalId) => number;
     isStale?: (lastActivityAt: number) => boolean;
+    queuedWorktrees?: QueuedWorktree[];
   } = {},
 ): WorkspaceSwitcherModel {
   const ordered = options.getRecency
@@ -370,12 +388,20 @@ export function buildWorkspaceSwitcherModel(
       searchText: searchTextFor(base),
     };
   });
+  const queuedWorktrees: WorkspaceSwitcherQueuedWorktree[] = (
+    options.queuedWorktrees ?? []
+  ).map((q) => {
+    const base = { ...q, repoName: cwdBasename(q.repoPath), searchText: "" };
+    return { ...base, searchText: queuedSearchTextFor(base) };
+  });
 
-  const { repoFacets, selectedRepo, visibleEntries } = searchResults(
-    entries,
-    options.query ?? "",
-    options.repoFilter ?? null,
-  );
+  const { repoFacets, selectedRepo, visibleEntries, visibleQueuedWorktrees } =
+    searchResults(
+      entries,
+      queuedWorktrees,
+      options.query ?? "",
+      options.repoFilter ?? null,
+    );
 
   const isStale = options.isStale;
   const columns = WORKSPACE_AGENT_BUCKETS.map((bucket) => {
@@ -393,8 +419,10 @@ export function buildWorkspaceSwitcherModel(
 
   return {
     entries,
+    queuedWorktrees,
     compactGroups: compactGroupsFor(entries, options.activeId ?? null),
     visibleEntries,
+    visibleQueuedWorktrees,
     selectedRepo,
     repoFacets,
     columns,
@@ -409,30 +437,39 @@ export function buildWorkspaceSwitcherModel(
  *  silent reordering bug. */
 function searchResults(
   entries: WorkspaceSwitcherEntry[],
+  queuedWorktrees: WorkspaceSwitcherQueuedWorktree[],
   query: string,
   repoFilter: string | null,
 ): {
   repoFacets: WorkspaceRepoFacet[];
   selectedRepo: string | null;
   visibleEntries: WorkspaceSwitcherEntry[];
+  visibleQueuedWorktrees: WorkspaceSwitcherQueuedWorktree[];
 } {
   const tokens = queryTokens(query);
   const queryMatches =
     tokens.length === 0
       ? entries
       : entries.filter((entry) => matchesQuery(entry, tokens));
+  const queuedMatches =
+    tokens.length === 0
+      ? queuedWorktrees
+      : queuedWorktrees.filter((q) => matchesQuery(q, tokens));
 
   const facetCounts = new Map<string, { count: number; color: string }>();
-  for (const entry of queryMatches) {
-    const facet = facetCounts.get(entry.repoName);
+  const addFacet = (repoName: string, color: string) => {
+    const facet = facetCounts.get(repoName);
     if (facet) {
       facet.count += 1;
     } else {
-      facetCounts.set(entry.repoName, {
-        count: 1,
-        color: entry.info.repoColor,
-      });
+      facetCounts.set(repoName, { count: 1, color });
     }
+  };
+  for (const entry of queryMatches) {
+    addFacet(entry.repoName, entry.info.repoColor);
+  }
+  for (const q of queuedMatches) {
+    addFacet(q.repoName, "var(--color-accent)");
   }
   const repoFacets = [...facetCounts.entries()].map(
     ([repoName, { count, color }]) => ({
@@ -447,6 +484,9 @@ function searchResults(
   const visibleEntries = selectedRepo
     ? queryMatches.filter((entry) => entry.repoName === selectedRepo)
     : queryMatches;
+  const visibleQueuedWorktrees = selectedRepo
+    ? queuedMatches.filter((q) => q.repoName === selectedRepo)
+    : queuedMatches;
 
-  return { repoFacets, selectedRepo, visibleEntries };
+  return { repoFacets, selectedRepo, visibleEntries, visibleQueuedWorktrees };
 }

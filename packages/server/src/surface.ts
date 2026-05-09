@@ -33,6 +33,7 @@ import { match } from "ts-pattern";
 import type {
   ActivityFeed,
   Preferences,
+  QueuedWorktrees,
   SavedSession,
   TerminalMetadata,
 } from "kolu-common/surface";
@@ -73,6 +74,8 @@ const activityFeedStore: CellStore<ActivityFeed> = confStore<ActivityFeed>(
   store,
   "activityFeed",
 );
+const queuedWorktreesStore: CellStore<QueuedWorktrees> =
+  confStore<QueuedWorktrees>(store, "queuedWorktrees");
 const savedSessionStore: CellStore<SavedSession | null> =
   confStore<SavedSession | null>(store, "session");
 
@@ -139,6 +142,7 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
           ),
       },
       activityFeed: { store: activityFeedStore },
+      queuedWorktrees: { store: queuedWorktreesStore },
       session: {
         // Reads through `getSavedSession` to keep the "empty terminals = null"
         // legacy normalization at one site (`session.ts` owns that invariant).

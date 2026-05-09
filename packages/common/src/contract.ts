@@ -57,6 +57,11 @@ export const TerminalSetThemeInputSchema = z.object({
   themeName: z.string(),
 });
 
+export const TerminalSetIntentInputSchema = z.object({
+  id: TerminalIdSchema,
+  intent: z.string().optional(),
+});
+
 export const TerminalSetCanvasLayoutInputSchema = z.object({
   id: TerminalIdSchema,
   layout: CanvasLayoutSchema,
@@ -118,6 +123,7 @@ export const contract = oc.router({
     resize: oc.input(TerminalResizeInputSchema).output(z.void()),
     sendInput: oc.input(TerminalSendInputSchema).output(z.void()),
     setTheme: oc.input(TerminalSetThemeInputSchema).output(z.void()),
+    setIntent: oc.input(TerminalSetIntentInputSchema).output(z.void()),
     setCanvasLayout: oc
       .input(TerminalSetCanvasLayoutInputSchema)
       .output(z.void()),

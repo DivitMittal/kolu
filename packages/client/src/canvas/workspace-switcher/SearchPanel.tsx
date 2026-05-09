@@ -1,7 +1,7 @@
 import type { TerminalId } from "kolu-common/surface";
 import { type Component, createEffect, Index, Show } from "solid-js";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
-import { CloseIcon } from "../../ui/Icons";
+import { CloseIcon, ResumeIcon, TerminalIcon } from "../../ui/Icons";
 import { useTileTheme } from "../useTileTheme";
 import { agentLabel, metaLine, prSummary, tokenLine } from "./chrome";
 
@@ -24,6 +24,7 @@ import {
   bucketDescriptor,
   type WorkspaceSwitcherEntry,
   type WorkspaceSwitcherModel,
+  type WorkspaceSwitcherQueuedWorktree,
 } from "./model";
 
 /** Expanded hover panel with repo facets, search, and agent-state columns.
@@ -41,11 +42,19 @@ const WorkspaceSearchPanel: Component<{
   onSearchFocused: () => void;
   onRepoFilterChange: (repoName: string | null) => void;
   onSelect: (id: TerminalId) => void;
+  recentAgentCommands: string[];
+  onStartQueuedWorktree: (id: string, agentCommand?: string) => void;
+  onDeleteQueuedWorktree: (id: string) => void;
   onClose: () => void;
 }> = (props) => {
   const store = useTerminalStore();
   const tileTheme = useTileTheme();
-  const columnCount = () => Math.max(1, props.model.columns.length);
+  const columnCount = () =>
+    Math.max(
+      1,
+      props.model.columns.length +
+        (props.model.queuedWorktrees.length > 0 ? 1 : 0),
+    );
   const totalCount = () =>
     props.model.repoFacets.reduce((sum, facet) => sum + facet.count, 0);
   let searchInputRef: HTMLInputElement | undefined;
@@ -83,7 +92,7 @@ const WorkspaceSearchPanel: Component<{
           value={props.query}
           onInput={(e) => props.onQueryChange(e.currentTarget.value)}
           class="flex-1 min-w-0 bg-transparent border-0 outline-none font-mono text-[0.8rem] text-fg placeholder:text-fg-3/60 caret-accent"
-          placeholder="repo, branch, pr, agent, cwd…"
+          placeholder="repo, intent, branch, pr, agent, cwd..."
           aria-label="Search workspaces"
           spellcheck={false}
           autocomplete="off"
@@ -149,6 +158,54 @@ const WorkspaceSearchPanel: Component<{
               "grid-template-columns": `repeat(${columnCount()}, minmax(0, 1fr))`,
             }}
           >
+            <Show when={props.model.queuedWorktrees.length > 0}>
+              <div data-testid="workspace-switcher-column" class="min-w-0">
+                <div
+                  class="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b"
+                  style={{
+                    "border-color":
+                      "color-mix(in oklch, var(--color-accent) 22%, var(--color-edge))",
+                  }}
+                >
+                  <div class="font-mono text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-accent">
+                    Queued
+                  </div>
+                  <div class="font-mono text-[0.65rem] text-fg-3 tabular-nums">
+                    {props.model.visibleQueuedWorktrees.length
+                      .toString()
+                      .padStart(2, "0")}
+                  </div>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <Show
+                    when={props.model.visibleQueuedWorktrees.length > 0}
+                    fallback={
+                      <div class="font-mono text-[0.7rem] text-fg-3/70 tracking-wide py-3 text-center">
+                        -- no queued worktrees match --
+                      </div>
+                    }
+                  >
+                    <Index each={props.model.visibleQueuedWorktrees}>
+                      {(queued) => (
+                        <QueuedWorktreeCard
+                          queued={queued()}
+                          recentAgentCommands={props.recentAgentCommands}
+                          onStart={(agentCommand) =>
+                            props.onStartQueuedWorktree(
+                              queued().id,
+                              agentCommand,
+                            )
+                          }
+                          onDelete={() =>
+                            props.onDeleteQueuedWorktree(queued().id)
+                          }
+                        />
+                      )}
+                    </Index>
+                  </Show>
+                </div>
+              </div>
+            </Show>
             <Index each={props.model.columns}>
               {(column) => (
                 <div
@@ -201,12 +258,83 @@ const WorkspaceSearchPanel: Component<{
               )}
             </Index>
           </div>
-          <Show when={props.model.visibleEntries.length === 0}>
+          <Show
+            when={
+              props.model.visibleEntries.length === 0 &&
+              props.model.visibleQueuedWorktrees.length === 0
+            }
+          >
             <div class="mt-4 font-mono text-[0.75rem] text-fg-3/80 text-center tracking-wide">
-              ── no live terminals match ──
+              -- no workspaces match --
             </div>
           </Show>
         </section>
+      </div>
+    </div>
+  );
+};
+
+const QueuedWorktreeCard: Component<{
+  queued: WorkspaceSwitcherQueuedWorktree;
+  recentAgentCommands: string[];
+  onStart: (agentCommand?: string) => void;
+  onDelete: () => void;
+}> = (props) => {
+  const agentCommands = () => props.recentAgentCommands.slice(0, 3);
+  return (
+    <div
+      data-testid="workspace-switcher-queued-worktree"
+      data-queued-worktree-id={props.queued.id}
+      data-repo-name={props.queued.repoName}
+      class="relative rounded-lg border border-accent/35 bg-surface-0/55 p-2.5 text-left"
+      title={props.queued.intent}
+    >
+      <div class="flex items-center justify-between gap-2 min-w-0">
+        <span class="font-mono text-[0.6rem] font-bold uppercase tracking-[0.16em] truncate min-w-0 text-accent">
+          {props.queued.repoName}
+        </span>
+        <button
+          type="button"
+          class="shrink-0 flex items-center justify-center w-5 h-5 -mr-1 rounded-md text-fg-3 hover:text-fg hover:bg-surface-2 active:bg-surface-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+          aria-label="Delete queued worktree"
+          title="Delete queued worktree"
+          onClick={() => props.onDelete()}
+        >
+          <CloseIcon class="w-3 h-3" />
+        </button>
+      </div>
+      <div
+        data-testid="workspace-switcher-queued-intent"
+        class="mt-1 text-[0.9rem] font-semibold leading-tight text-fg truncate"
+      >
+        {props.queued.intent}
+      </div>
+      <div class="mt-0.5 font-mono text-[0.65rem] text-fg-3 truncate">
+        {props.queued.worktreeName ?? "name chosen on start"}
+      </div>
+      <div class="mt-2 flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          class="inline-flex items-center gap-1 rounded-md border border-edge/70 px-2 py-1 font-mono text-[0.65rem] text-fg-2 hover:text-fg hover:bg-surface-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+          title="Start in a plain shell"
+          onClick={() => props.onStart()}
+        >
+          <TerminalIcon class="w-3 h-3" />
+          <span>Shell</span>
+        </button>
+        <Index each={agentCommands()}>
+          {(command) => (
+            <button
+              type="button"
+              class="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-edge/70 px-2 py-1 font-mono text-[0.65rem] text-fg-2 hover:text-fg hover:bg-surface-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              title={`Start with ${command()}`}
+              onClick={() => props.onStart(command())}
+            >
+              <ResumeIcon class="w-3 h-3 shrink-0" />
+              <span class="truncate">{command()}</span>
+            </button>
+          )}
+        </Index>
       </div>
     </div>
   );
@@ -306,7 +434,11 @@ const WorkspaceCard: Component<{
         "--pill-border-radius": "calc(0.5rem + 2px)",
       }}
       onClick={() => props.onSelect()}
-      title={props.entry.info.meta.cwd}
+      title={
+        props.entry.info.meta.intent
+          ? `${props.entry.info.meta.intent} - ${props.entry.info.meta.cwd}`
+          : props.entry.info.meta.cwd
+      }
     >
       <Show when={props.active}>
         <span
@@ -359,6 +491,18 @@ const WorkspaceCard: Component<{
           )}
         </Show>
       </div>
+
+      <Show when={props.entry.info.meta.intent}>
+        {(intent) => (
+          <div
+            data-testid="workspace-switcher-card-intent"
+            class="mt-1 text-[0.74rem] text-fg truncate leading-snug"
+            title={intent()}
+          >
+            {intent()}
+          </div>
+        )}
+      </Show>
 
       {/* Status: glyph color encodes bucket; agent label and tokens sit
        *  on the same line for left-edge scanability. */}

@@ -1,6 +1,10 @@
 /** Command palette registry — declarative list of all app-level actions. */
 
-import type { RecentAgent } from "kolu-common/surface";
+import type {
+  InitialTerminalMetadata,
+  QueuedWorktree,
+  RecentAgent,
+} from "kolu-common/surface";
 import { WorktreeNameSchema } from "kolu-git/schemas";
 import { randomName } from "memorable-names";
 import type { Accessor } from "solid-js";
@@ -25,6 +29,10 @@ function validateWorktreeName(name: string): string | null {
   const result = WorktreeNameSchema.safeParse(name.trim());
   if (result.success) return null;
   return result.error.issues[0]?.message ?? "Invalid worktree name";
+}
+
+function validateIntent(intent: string): string | null {
+  return intent.trim().length > 0 ? null : "Intent is required";
 }
 
 /** PaletteItems listing each recent agent command. Used by the Debug →
@@ -84,8 +92,20 @@ export interface CommandDeps extends ActionContext {
   handleCreateWorktree: (
     repoPath: string,
     name: string,
+    options?: {
+      initialCommand?: string;
+      initial?: InitialTerminalMetadata;
+    },
+  ) => void;
+  queuedWorktrees: Accessor<QueuedWorktree[]>;
+  queueWorktree: (repoPath: string, intent: string) => void;
+  startQueuedWorktree: (
+    id: string,
+    name: string,
     initialCommand?: string,
   ) => void;
+  deleteQueuedWorktree: (id: string) => void;
+  handleSetTerminalIntent: (intent?: string) => void;
   handleClose: () => void;
   // Debug
   simulateAlert: () => void;
@@ -116,7 +136,9 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
               onSubmit: (name, selected) => {
                 const agentCmd =
                   typeof selected.data === "string" ? selected.data : undefined;
-                deps.handleCreateWorktree(r.repoRoot, name.trim(), agentCmd);
+                deps.handleCreateWorktree(r.repoRoot, name.trim(), {
+                  initialCommand: agentCmd,
+                });
               },
               children: (): (PaletteLabel | PaletteHint)[] =>
                 worktreeAgentOptions(recentAgents()),
@@ -133,8 +155,86 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
         ];
       },
     },
+    {
+      kind: "group",
+      name: "Queue worktree",
+      children: (): PaletteItem[] => {
+        const repos = recentRepos();
+        return [
+          ...repos.map(
+            (r): PaletteValueInput => ({
+              kind: "value",
+              name: r.repoName,
+              description: `Queue worktree in ${r.repoRoot}`,
+              prefill: () => "",
+              placeholder: "Intent",
+              validate: validateIntent,
+              onSubmit: (intent) => {
+                deps.queueWorktree(r.repoRoot, intent.trim());
+              },
+              children: [{ kind: "label", name: "Queue" }],
+            }),
+          ),
+          ...(repos.length === 0
+            ? [
+                {
+                  kind: "hint" as const,
+                  text: "Repos you cd into will appear here",
+                },
+              ]
+            : []),
+        ];
+      },
+    },
+    ...(deps.queuedWorktrees().length > 0
+      ? [
+          {
+            kind: "group" as const,
+            name: "Queued worktrees",
+            children: (): PaletteItem[] =>
+              deps.queuedWorktrees().map(
+                (q): PaletteValueInput => ({
+                  kind: "value",
+                  name: q.intent,
+                  description: `Start queued worktree in ${q.repoPath}`,
+                  prefill: () => q.worktreeName ?? randomName(),
+                  placeholder: "Worktree name",
+                  validate: validateWorktreeName,
+                  onSubmit: (name, selected) => {
+                    const agentCmd =
+                      typeof selected.data === "string"
+                        ? selected.data
+                        : undefined;
+                    deps.startQueuedWorktree(q.id, name.trim(), agentCmd);
+                  },
+                  children: (): (PaletteLabel | PaletteHint)[] =>
+                    worktreeAgentOptions(recentAgents()),
+                }),
+              ),
+          },
+        ]
+      : []),
     ...(deps.activeId() !== null
       ? [
+          {
+            kind: "value" as const,
+            name: deps.activeMeta()?.intent
+              ? "Edit terminal intent"
+              : "Set terminal intent",
+            prefill: () => deps.activeMeta()?.intent ?? "",
+            placeholder: "Intent",
+            onSubmit: (intent: string) => deps.handleSetTerminalIntent(intent),
+            children: [{ kind: "label" as const, name: "Save intent" }],
+          },
+          ...(deps.activeMeta()?.intent
+            ? [
+                {
+                  kind: "action" as const,
+                  name: "Clear terminal intent",
+                  onSelect: () => deps.handleSetTerminalIntent(undefined),
+                },
+              ]
+            : []),
           {
             kind: "action" as const,
             name: "Close terminal",

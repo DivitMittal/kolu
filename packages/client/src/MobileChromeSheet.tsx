@@ -113,11 +113,20 @@ const MobileChromeSheet: Component<{
                       >
                         └─
                       </span>
-                      <span
-                        class="flex-1 truncate"
-                        style={{ color: item.info.branchColor }}
-                      >
-                        {item.label}
+                      <span class="flex-1 min-w-0">
+                        <span
+                          class="block truncate"
+                          style={{ color: item.info.branchColor }}
+                        >
+                          {item.label}
+                        </span>
+                        <Show when={item.info.meta.intent}>
+                          {(intent) => (
+                            <span class="block text-xs text-fg-3 truncate">
+                              {intent()}
+                            </span>
+                          )}
+                        </Show>
                       </span>
                       <Show when={unread()}>
                         <span class="w-2 h-2 rounded-full bg-alert" />

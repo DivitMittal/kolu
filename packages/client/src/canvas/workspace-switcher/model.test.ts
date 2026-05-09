@@ -419,4 +419,72 @@ describe("buildWorkspaceSwitcherModel", () => {
       modelFor(entries, { query: "claude sonnet" }).visibleEntries,
     ).toHaveLength(1);
   });
+
+  it("searches terminal intent", () => {
+    const model = modelFor(
+      [
+        source("intent-terminal", {
+          intent: "Review queued worktree handoff",
+        }),
+        source("ordinary-terminal", {
+          git: makeGit({ repoName: "kolu", branch: "ordinary" }),
+        }),
+      ],
+      { query: "handoff" },
+    );
+
+    expect(model.visibleEntries.map((entry) => entry.id)).toEqual([
+      "intent-terminal",
+    ]);
+  });
+
+  it("includes queued worktrees in search and repo facets", () => {
+    const model = modelFor([], {
+      query: "handoff",
+      queuedWorktrees: [
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          repoPath: "/home/user/kolu",
+          intent: "Review queued worktree handoff",
+          createdAt: 1,
+        },
+      ],
+    });
+
+    expect(model.visibleEntries).toEqual([]);
+    expect(model.visibleQueuedWorktrees.map((q) => q.id)).toEqual([
+      "00000000-0000-4000-8000-000000000001",
+    ]);
+    expect(model.repoFacets).toEqual([
+      { repoName: "kolu", count: 1, color: "var(--color-accent)" },
+    ]);
+  });
+
+  it("filters queued worktrees by selected repo", () => {
+    const model = modelFor(
+      [
+        source("live", {
+          git: makeGit({ repoName: "kolu", branch: "main" }),
+        }),
+      ],
+      {
+        repoFilter: "emanote",
+        queuedWorktrees: [
+          {
+            id: "00000000-0000-4000-8000-000000000002",
+            repoPath: "/home/user/emanote",
+            intent: "Draft docs backlog item",
+            worktreeName: "docs-backlog",
+            createdAt: 1,
+          },
+        ],
+      },
+    );
+
+    expect(model.selectedRepo).toBe("emanote");
+    expect(model.visibleEntries).toEqual([]);
+    expect(model.visibleQueuedWorktrees.map((q) => q.intent)).toEqual([
+      "Draft docs backlog item",
+    ]);
+  });
 });

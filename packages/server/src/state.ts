@@ -24,6 +24,8 @@ import {
   DEFAULT_PREFERENCES,
   type Preferences,
   PreferencesSchema,
+  type QueuedWorktrees,
+  QueuedWorktreesSchema,
   SavedSessionSchema,
 } from "kolu-common/surface";
 import { z } from "zod";
@@ -87,6 +89,7 @@ export function migrateLegacyTerminal_1_18_0(
  *  this aggregate. Adding a new domain key requires a migration entry below. */
 const PersistedStateSchema = z.object({
   activityFeed: ActivityFeedSchema,
+  queuedWorktrees: QueuedWorktreesSchema,
   session: SavedSessionSchema.nullable(),
   preferences: PreferencesSchema,
 });
@@ -98,7 +101,7 @@ type PersistedState = z.infer<typeof PersistedStateSchema>;
  * Must be valid semver. `conf` runs all migration handlers
  * whose keys are > the last-seen version and ≤ this value.
  */
-const SCHEMA_VERSION = "1.21.0";
+const SCHEMA_VERSION = "1.22.0";
 
 // Callers must pass an explicit directory via KOLU_STATE_DIR. A bare launch
 // with no env would silently clobber whatever happens to live at conf's
@@ -122,6 +125,7 @@ export const store = new Conf<PersistedState>({
   projectVersion: SCHEMA_VERSION,
   defaults: {
     activityFeed: { recentRepos: [], recentAgents: [] } satisfies ActivityFeed,
+    queuedWorktrees: [] satisfies QueuedWorktrees,
     session: null,
     preferences: DEFAULT_PREFERENCES,
   },
@@ -410,6 +414,13 @@ export const store = new Conf<PersistedState>({
       })) as typeof session.terminals;
       store.set("session", { ...session, terminals });
     },
+    // queuedWorktrees cell added — user-owned backlog items for worktrees
+    // that have not been started as live terminals yet.
+    "1.22.0": (store: Conf<PersistedState>) => {
+      if (!store.has("queuedWorktrees")) {
+        store.set("queuedWorktrees", []);
+      }
+    },
   },
 });
 
@@ -419,6 +430,7 @@ export const store = new Conf<PersistedState>({
 // the validated store thereafter.
 const result = PersistedStateSchema.safeParse({
   activityFeed: store.get("activityFeed"),
+  queuedWorktrees: store.get("queuedWorktrees"),
   session: store.get("session"),
   preferences: store.get("preferences"),
 });

@@ -8,7 +8,8 @@
 import Dialog from "@corvu/dialog";
 import { Meta, Title } from "@solidjs/meta";
 import type { ServerIdentity } from "kolu-common/contract";
-import type { TerminalId } from "kolu-common/surface";
+import type { QueuedWorktree, TerminalId } from "kolu-common/surface";
+import { randomName } from "memorable-names";
 import {
   type Component,
   createEffect,
@@ -44,7 +45,12 @@ import { useRecorder } from "./recorder/useRecorder";
 import WebcamOverlay from "./recorder/WebcamOverlay";
 import RightPanelLayout from "./right-panel/RightPanelLayout";
 import { useRightPanel } from "./right-panel/useRightPanel";
-import { client } from "./wire";
+import {
+  client,
+  queuedWorktrees,
+  recentAgents,
+  setQueuedWorktrees,
+} from "./wire";
 import { serverProcessId, wsStatus } from "./rpc/rpc";
 import TransportOverlay from "./rpc/TransportOverlay";
 import ShortcutsHelp from "./ShortcutsHelp";
@@ -178,6 +184,46 @@ const App: Component = () => {
     if (id) store.activate(id);
   }
 
+  function queueWorktree(repoPath: string, intent: string) {
+    const trimmed = intent.trim();
+    if (!trimmed) return;
+    const item: QueuedWorktree = {
+      id: crypto.randomUUID(),
+      repoPath,
+      intent: trimmed,
+      createdAt: Date.now(),
+    };
+    setQueuedWorktrees([...queuedWorktrees(), item]);
+  }
+
+  function deleteQueuedWorktree(id: string) {
+    setQueuedWorktrees(queuedWorktrees().filter((q) => q.id !== id));
+  }
+
+  async function startQueuedWorktree(
+    id: string,
+    name: string,
+    initialCommand?: string,
+  ) {
+    const item = queuedWorktrees().find((q) => q.id === id);
+    if (!item) return;
+    const terminalId = await worktree.handleCreateWorktree(
+      item.repoPath,
+      name.trim(),
+      {
+        initialCommand,
+        initial: { intent: item.intent },
+      },
+    );
+    if (terminalId) deleteQueuedWorktree(id);
+  }
+
+  function handleSetTerminalIntent(intent?: string) {
+    const id = store.activeId();
+    if (!id) return;
+    crud.setIntent(id, intent);
+  }
+
   const arrange = useCanvasArrange({
     store,
     crud,
@@ -270,8 +316,14 @@ const App: Component = () => {
     handleSetTheme,
     setAboutOpen,
     setDiagnosticInfoOpen,
-    handleCreateWorktree: (repoPath, name, initialCommand) =>
-      void worktree.handleCreateWorktree(repoPath, name, initialCommand),
+    handleCreateWorktree: (repoPath, name, options) =>
+      void worktree.handleCreateWorktree(repoPath, name, options),
+    queuedWorktrees,
+    queueWorktree,
+    startQueuedWorktree: (id, name, initialCommand) =>
+      void startQueuedWorktree(id, name, initialCommand),
+    deleteQueuedWorktree,
+    handleSetTerminalIntent,
     handleClose: () => {
       const id = store.activeId();
       if (id) closeTerminal(id);
@@ -471,10 +523,22 @@ const App: Component = () => {
           workspaceSwitcher={
             <WorkspaceSwitcher
               entries={workspaceEntries()}
+              queuedWorktrees={queuedWorktrees()}
+              recentAgentCommands={recentAgents().map((a) => a.command)}
               activeId={store.activeId()}
               getRecency={recencyOf}
               openRequest={workspaceSwitcherOpenRequest()}
               onSelect={store.activate}
+              onStartQueuedWorktree={(id, initialCommand) => {
+                const item = queuedWorktrees().find((q) => q.id === id);
+                if (!item) return;
+                void startQueuedWorktree(
+                  id,
+                  item.worktreeName ?? randomName(),
+                  initialCommand,
+                );
+              }}
+              onDeleteQueuedWorktree={deleteQueuedWorktree}
               onCreate={() => openPaletteGroup("New terminal")}
             />
           }

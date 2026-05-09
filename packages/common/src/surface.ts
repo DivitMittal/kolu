@@ -130,6 +130,8 @@ export const ServerPersistedTerminalFieldsSchema = z.object({
  */
 export const ClientPersistedTerminalFieldsSchema = z.object({
   themeName: z.string().optional(),
+  /** User-authored note describing what this live terminal is for. */
+  intent: z.string().optional(),
   /** If set, this terminal is a sub-terminal of the given parent. */
   parentId: z.string().optional(),
   /** Canvas tile position/size — client-reported, used for session restore. */
@@ -207,6 +209,7 @@ export const TerminalMetadataSchema = PersistedTerminalFieldsSchema.merge(
  *  `createMetadata` would reset every restored terminal to `0`. */
 export const InitialTerminalMetadataSchema = z.object({
   themeName: z.string().optional(),
+  intent: z.string().optional(),
   canvasLayout: CanvasLayoutSchema.optional(),
   subPanel: SubPanelStateSchema.optional(),
   lastActivityAt: z.number().optional(),
@@ -253,6 +256,20 @@ export const ActivityFeedSchema = z.object({
   recentRepos: z.array(RecentRepoSchema),
   recentAgents: z.array(RecentAgentSchema),
 });
+
+// ── Queued worktrees ──────────────────────────────────────────────────
+
+/** Backlog item for work that is not a live terminal yet. The agent CLI
+ *  is intentionally absent; it is chosen only when the item is started. */
+export const QueuedWorktreeSchema = z.object({
+  id: z.string().uuid(),
+  repoPath: z.string(),
+  worktreeName: z.string().optional(),
+  intent: z.string().min(1),
+  createdAt: z.number(),
+});
+
+export const QueuedWorktreesSchema = z.array(QueuedWorktreeSchema);
 
 // ── Session persistence ───────────────────────────────────────────────
 
@@ -366,6 +383,7 @@ export type ServerPersistedTerminalFields = z.infer<
 >;
 export type RecentRepo = z.infer<typeof RecentRepoSchema>;
 export type RecentAgent = z.infer<typeof RecentAgentSchema>;
+export type QueuedWorktree = z.infer<typeof QueuedWorktreeSchema>;
 export type SavedTerminal = z.infer<typeof SavedTerminalSchema>;
 export type ColorScheme = z.infer<typeof ColorSchemeSchema>;
 export type CodeTabView = z.infer<typeof CodeTabViewSchema>;
@@ -475,6 +493,14 @@ export const surface = defineSurface({
       verbs: ["get", "test__set"],
     },
 
+    /** Queued worktrees — durable backlog items that can later become
+     *  live terminal worktrees. Client-owned; persisted by the server. */
+    queuedWorktrees: {
+      schema: QueuedWorktreesSchema,
+      default: [] as z.infer<typeof QueuedWorktreesSchema>,
+      verbs: ["get", "set", "test__set"],
+    },
+
     /** Live list of terminals — server-driven on create/kill. Mutations
      *  go through dedicated procedures (`terminal.create`/`kill`/`killAll`)
      *  in the raw oRPC namespace, not via cell.set. */
@@ -540,6 +566,7 @@ export type Surface = SurfaceTypes<typeof surface.spec>;
 export type Preferences = Surface["cells"]["preferences"]["Value"];
 export type PreferencesPatch = Surface["cells"]["preferences"]["Patch"];
 export type ActivityFeed = Surface["cells"]["activityFeed"]["Value"];
+export type QueuedWorktrees = Surface["cells"]["queuedWorktrees"]["Value"];
 export type TerminalMetadata =
   Surface["collections"]["terminalMetadata"]["Value"];
 export type TerminalInfo = z.infer<typeof TerminalInfoSchema>;

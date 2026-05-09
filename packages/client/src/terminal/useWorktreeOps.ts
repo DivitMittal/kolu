@@ -1,13 +1,16 @@
 /** Worktree operations — create and remove git worktrees with associated terminals. */
 
-import type { TerminalId } from "kolu-common/surface";
+import type { InitialTerminalMetadata, TerminalId } from "kolu-common/surface";
 import { toast } from "solid-sonner";
 import { client } from "../wire";
 import type { TerminalStore } from "./useTerminalStore";
 
 export function useWorktreeOps(deps: {
   store: TerminalStore;
-  handleCreate: (cwd?: string) => Promise<TerminalId>;
+  handleCreate: (
+    cwd?: string,
+    initial?: InitialTerminalMetadata,
+  ) => Promise<TerminalId>;
   handleKill: (id: TerminalId) => Promise<void>;
 }) {
   const { store } = deps;
@@ -15,13 +18,19 @@ export function useWorktreeOps(deps: {
   async function handleCreateWorktree(
     repoPath: string,
     name: string,
-    initialCommand?: string,
-  ) {
+    options: {
+      initialCommand?: string;
+      initial?: InitialTerminalMetadata;
+    } = {},
+  ): Promise<TerminalId | undefined> {
     const id = toast.loading("Creating worktree…");
     try {
       const result = await client.git.worktreeCreate({ repoPath, name });
       toast.success(`Created worktree at ${result.path}`, { id });
-      const newTerminalId = await deps.handleCreate(result.path);
+      const newTerminalId = await deps.handleCreate(
+        result.path,
+        options.initial,
+      );
       // Recent repos update reactively via trackRecentRepo → publishSystem
 
       // Optional initial command (phase 2 of #452): write the agent command
@@ -35,13 +44,14 @@ export function useWorktreeOps(deps: {
       // server-side createTerminal parameter gated on a shell-ready
       // signal (OSC 133;A prompt mark) — a contract change deliberately
       // deferred out of phase 2 scope.
-      if (initialCommand !== undefined) {
+      if (options.initialCommand !== undefined) {
         await client.terminal
-          .sendInput({ id: newTerminalId, data: `${initialCommand}\r` })
+          .sendInput({ id: newTerminalId, data: `${options.initialCommand}\r` })
           .catch((err: Error) =>
             toast.error(`Failed to start agent: ${err.message}`),
           );
       }
+      return newTerminalId;
     } catch (err) {
       // Toast surfaces the message; don't rethrow — the caller (palette
       // value-mode onSubmit) is fire-and-forget, and a rethrow leaks as
@@ -50,6 +60,7 @@ export function useWorktreeOps(deps: {
       toast.error(`Failed to create worktree: ${(err as Error).message}`, {
         id,
       });
+      return undefined;
     }
   }
 

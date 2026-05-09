@@ -17,7 +17,7 @@
  *  The chrome bar fades in a frosted surface across the whole header
  *  during engagement so the strip and panel read as one floating piece. */
 
-import type { TerminalId } from "kolu-common/surface";
+import type { QueuedWorktree, TerminalId } from "kolu-common/surface";
 import {
   type Component,
   createEffect,
@@ -42,6 +42,8 @@ import {
 /** Controller that owns query/filter state and composes both switcher views. */
 const WorkspaceSwitcher: Component<{
   entries: WorkspaceSwitcherSourceEntry[];
+  queuedWorktrees: QueuedWorktree[];
+  recentAgentCommands: string[];
   /** Active terminal id — kept in the collapsed pill strip even if its
    *  repo's idle cap would otherwise hide it. */
   activeId: TerminalId | null;
@@ -51,6 +53,8 @@ const WorkspaceSwitcher: Component<{
   openRequest: number;
   /** Click handler — caller decides whether to pan, swap active, etc. */
   onSelect: (id: TerminalId) => void;
+  onStartQueuedWorktree: (id: string, agentCommand?: string) => void;
+  onDeleteQueuedWorktree: (id: string) => void;
   /** Open the "new terminal" flow. */
   onCreate: () => void;
 }> = (props) => {
@@ -70,6 +74,7 @@ const WorkspaceSwitcher: Component<{
       activeId: props.activeId,
       getRecency: props.getRecency,
       isStale,
+      queuedWorktrees: props.queuedWorktrees,
     }),
   );
 
@@ -145,6 +150,11 @@ const WorkspaceSwitcher: Component<{
     closePanel();
   };
 
+  const startQueuedAndClose = (id: string, agentCommand?: string) => {
+    props.onStartQueuedWorktree(id, agentCommand);
+    closePanel();
+  };
+
   return (
     <div
       ref={containerRef}
@@ -216,6 +226,9 @@ const WorkspaceSwitcher: Component<{
             onSearchFocused={() => setFocusSearchOnOpen(false)}
             onRepoFilterChange={setRepoFilter}
             onSelect={selectAndClose}
+            recentAgentCommands={props.recentAgentCommands}
+            onStartQueuedWorktree={startQueuedAndClose}
+            onDeleteQueuedWorktree={props.onDeleteQueuedWorktree}
             onClose={closePanel}
           />
         </div>

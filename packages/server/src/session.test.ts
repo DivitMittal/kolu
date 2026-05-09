@@ -103,6 +103,26 @@ describe("session persistence", () => {
     expect(session.terminals[1]?.themeName).toBeUndefined();
   });
 
+  it("preserves intent on round-trip", () => {
+    const terminals: SavedTerminal[] = [
+      {
+        id: "a",
+        cwd: "/a",
+        git: null,
+        intent: "Finish queued worktree implementation",
+        lastActivityAt: 0,
+      },
+      { id: "b", cwd: "/b", git: null, lastActivityAt: 0 },
+    ];
+    saveSession({ terminals, activeTerminalId: null });
+    const session = getSavedSession();
+    assert.ok(session !== null, "session round-trip lost the saved value");
+    expect(session.terminals[0]?.intent).toBe(
+      "Finish queued worktree implementation",
+    );
+    expect(session.terminals[1]?.intent).toBeUndefined();
+  });
+
   it("preserves lastActivityAt on round-trip", () => {
     // Use real, distinct timestamps so a restore that drops the value
     // (resetting to 0) cannot pass by coincidence — fixtures of `0`

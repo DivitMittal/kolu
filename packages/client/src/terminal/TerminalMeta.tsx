@@ -52,11 +52,22 @@ const TerminalMeta: Component<{
             <Show when={info().meta.git?.isWorktree}>
               <WorktreeBadge />
             </Show>
+            <Show when={info().meta.intent}>
+              {(intent) => (
+                <span
+                  data-testid="terminal-meta-intent"
+                  class="text-xs text-fg-2 truncate min-w-0 flex-1"
+                  title={intent()}
+                >
+                  {intent()}
+                </span>
+              )}
+            </Show>
             {/* Foreground process title — OSC 2 string when present.
              *  Replaces what used to be the cwd slot; cwd is now a
              *  tooltip on the repo name. `flex-1` so it fills until
              *  the progress bar (when shown) eats its right edge. */}
-            <Show when={info().meta.foreground}>
+            <Show when={!info().meta.intent && info().meta.foreground}>
               {(fg) => (
                 <span
                   data-testid="process-name"
@@ -174,6 +185,17 @@ export const TerminalMetaCompact: Component<{
                 style={{ color: info().branchColor }}
               >
                 {git().branch}
+              </span>
+            )}
+          </Show>
+          <Show when={info().meta.intent}>
+            {(intent) => (
+              <span
+                data-testid="terminal-meta-intent"
+                class="text-xs text-fg-2 truncate min-w-0"
+                title={intent()}
+              >
+                {intent()}
               </span>
             )}
           </Show>

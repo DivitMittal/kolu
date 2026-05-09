@@ -86,19 +86,21 @@ describe("migrateLegacyTerminal_1_18_0", () => {
     });
   });
 
-  it("preserves themeName, parentId, canvasLayout, lastAgentCommand", () => {
+  it("preserves themeName, parentId, canvasLayout, intent, lastAgentCommand", () => {
     const migrated = migrateLegacyTerminal_1_18_0({
       id: "term-4",
       cwd: "/x",
       repoName: "x",
       branch: "main",
       themeName: "Dracula",
+      intent: "Fix race in restore flow",
       parentId: "term-1",
       canvasLayout: { x: 10, y: 20, w: 300, h: 200 },
       lastAgentCommand: "claude --model sonnet",
     });
     expect(migrated).toMatchObject({
       themeName: "Dracula",
+      intent: "Fix race in restore flow",
       parentId: "term-1",
       canvasLayout: { x: 10, y: 20, w: 300, h: 200 },
       lastAgentCommand: "claude --model sonnet",

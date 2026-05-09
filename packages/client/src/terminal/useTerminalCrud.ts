@@ -47,6 +47,16 @@ export function useTerminalCrud(deps: {
       );
   }
 
+  /** Set or clear a terminal's user-authored intent. */
+  function setIntent(id: TerminalId, intent?: string) {
+    const next = intent?.trim() || undefined;
+    void client.terminal
+      .setIntent({ id, intent: next })
+      .catch((err: Error) =>
+        toast.error(`Failed to save intent: ${err.message}`),
+      );
+  }
+
   /** Persist a terminal's canvas tile position/size on the server. */
   function setCanvasLayout(id: TerminalId, layout: CanvasLayout) {
     void client.terminal
@@ -126,6 +136,7 @@ export function useTerminalCrud(deps: {
       .create({
         cwd,
         themeName: theme,
+        intent: initial?.intent,
         canvasLayout: initial?.canvasLayout,
         subPanel: initial?.subPanel,
         lastActivityAt: initial?.lastActivityAt,
@@ -211,6 +222,7 @@ export function useTerminalCrud(deps: {
 
   return {
     setThemeName,
+    setIntent,
     setCanvasLayout,
     removeAndAutoSwitch,
     handleCreate,

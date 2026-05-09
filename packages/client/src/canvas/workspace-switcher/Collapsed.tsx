@@ -119,7 +119,11 @@ const CollapsedWorkspaceSwitcher: Component<{
                             : {}),
                         }}
                         onClick={() => props.onSelect(item().id)}
-                        title={item().info.meta.cwd}
+                        title={
+                          item().info.meta.intent
+                            ? `${item().info.meta.intent} - ${item().info.meta.cwd}`
+                            : item().info.meta.cwd
+                        }
                       >
                         <Show when={unread()}>
                           <span

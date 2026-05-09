@@ -39,6 +39,19 @@ const MetadataInspector: Component<{
             </div>
           </Section>
 
+          <Show when={meta().intent}>
+            {(intent) => (
+              <Section title="Intent">
+                <div
+                  data-testid="inspector-intent"
+                  class="text-[11px] text-fg leading-relaxed"
+                >
+                  {intent()}
+                </div>
+              </Section>
+            )}
+          </Show>
+
           {/* Git */}
           <Show when={meta().git}>
             {(git) => (

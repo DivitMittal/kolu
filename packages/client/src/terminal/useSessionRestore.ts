@@ -172,6 +172,7 @@ export function useSessionRestore(deps: {
       for (const t of topLevel) {
         const newId = await deps.handleCreate(t.cwd, {
           themeName: t.themeName,
+          intent: t.intent,
           canvasLayout: t.canvasLayout,
           subPanel: t.subPanel,
           lastActivityAt: t.lastActivityAt,

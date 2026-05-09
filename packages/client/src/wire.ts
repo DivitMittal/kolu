@@ -23,6 +23,7 @@ import {
   DEFAULT_PREFERENCES,
   type Preferences,
   type PreferencesPatch,
+  type QueuedWorktree,
   type RecentAgent,
   type RecentRepo,
   type SavedSession,
@@ -85,6 +86,22 @@ export const recentRepos = (): RecentRepo[] =>
   _activityFeed.value()?.recentRepos ?? [];
 export const recentAgents = (): RecentAgent[] =>
   _activityFeed.value()?.recentAgents ?? [];
+
+const _queuedWorktrees = app.cells.queuedWorktrees.use({
+  authority: "local",
+  initial: [],
+  onError: (err) =>
+    toast.error(`Queued worktrees subscription error: ${err.message}`),
+});
+export const queuedWorktrees = (): QueuedWorktree[] =>
+  _queuedWorktrees.value() ?? [];
+export function setQueuedWorktrees(next: QueuedWorktree[]): void {
+  void _queuedWorktrees
+    .set(next)
+    .catch((err: Error) =>
+      toast.error(`Failed to save queued worktrees: ${err.message}`),
+    );
+}
 
 const _savedSession = app.cells.session.use({
   onError: (err) =>
