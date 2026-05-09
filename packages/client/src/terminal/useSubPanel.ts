@@ -1,5 +1,11 @@
 /** Sub-panel UI state — singleton module. Tracks collapsed, size, active tab per parent terminal.
- *  Reported to server for session snapshots; seeded from server on restore. */
+ *  Reported to server for session snapshots; seeded from server on restore.
+ *
+ *  @deprecated Migrates into `useCompanion` in Phase 2 of the canvas-peer
+ *  companion rollout. The intra-tile vertical split this hook drives will
+ *  become a side="s" companion with `CompanionRef = { kind: "terminal", id }`.
+ *  Do not extend; do not add new consumers. New behavior belongs on
+ *  `companions/useCompanion.ts`. */
 
 import type { TerminalId } from "kolu-common/surface";
 import { nonEmpty } from "nonempty";
