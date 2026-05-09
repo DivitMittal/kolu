@@ -60,6 +60,13 @@ export function useCompanion() {
         this.closeCompanion(anchorId, side);
         return;
       }
+      // Solid's `setState(key, produce(fn))` no-ops when the slot is
+      // undefined — produce receives undefined, the body's
+      // `sides[side] = …` has no object to mutate. Seed the anchor
+      // entry first so produce has something to drive on the very
+      // first toggle for a given anchor (subsequent toggles hit the
+      // existing object).
+      if (!state[anchorId]) setState(anchorId, {});
       setState(
         anchorId,
         produce((sides) => {
