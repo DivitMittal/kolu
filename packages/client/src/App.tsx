@@ -68,7 +68,6 @@ const App: Component = () => {
   const {
     committedThemeName,
     setPreviewThemeName,
-    activeThemeName,
     activeTheme,
     getTerminalTheme,
     isPreviewingTheme,
@@ -557,7 +556,6 @@ const App: Component = () => {
                   onAutoArrange={arrange.handleCanvasAutoArrange}
                   onSelect={(id) => store.setActiveId(id)}
                   onClose={(id) => closeTerminal(id)}
-                  themeName={activeThemeName()}
                   onThemeClick={() => openPaletteGroup("Theme")}
                   renderTileTitle={(id) => (
                     <TerminalMeta info={store.getDisplayInfo(id)} />

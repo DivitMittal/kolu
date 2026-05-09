@@ -37,7 +37,9 @@ const CompanionTile: Component<{
   size: number;
   companionRef: CompanionRef;
   meta: TerminalMetadata | null;
-  themeName?: string;
+  /** Imperative palette-open trigger for the inspector's theme name button.
+   *  The state side (active theme name) is read inside MetadataInspector
+   *  via useThemeManager — no themeName drill through this component. */
   onThemeClick?: () => void;
   onClose: () => void;
   onSizeChange: (size: number) => void;
@@ -163,7 +165,6 @@ const CompanionTile: Component<{
           <Match when={props.companionRef.kind === "inspector"}>
             <MetadataInspector
               meta={props.meta}
-              themeName={props.themeName}
               onThemeClick={props.onThemeClick}
             />
           </Match>

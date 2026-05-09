@@ -112,11 +112,10 @@ const TerminalCanvas: Component<{
    *  every focus change — reads happen inside the returned JSX's props
    *  (fine-grained reactivity), not around the render-prop effect. */
   renderTileBody: (id: TerminalId, active: () => boolean) => JSX.Element;
-  /** Theme name surfaced inside the inspector companion (clickable to
-   *  open the theme picker). The canvas owns companion mounting because
-   *  companions live inside the pan/zoom transform — keeping these props
-   *  here means the App doesn't have to know about companions at all. */
-  themeName?: string;
+  /** Imperative palette-open trigger for the inspector companion's
+   *  theme button. The state side (active theme name) is read inside
+   *  MetadataInspector via useThemeManager so neither this canvas nor
+   *  the companion tile threads it as a prop. */
   onThemeClick?: () => void;
 }> = (props) => {
   const viewport = useCanvasViewport();
@@ -439,11 +438,6 @@ const TerminalCanvas: Component<{
                       size={slot.size}
                       companionRef={slot.companionRef}
                       meta={store.getMetadata(anchorId) ?? null}
-                      themeName={
-                        store.activeId() === anchorId
-                          ? props.themeName
-                          : undefined
-                      }
                       onThemeClick={props.onThemeClick}
                       onClose={() =>
                         companion.closeCompanion(
@@ -533,7 +527,6 @@ const TerminalCanvas: Component<{
                               size={slot.size}
                               companionRef={slot.companionRef}
                               meta={store.getMetadata(id) ?? null}
-                              themeName={props.themeName}
                               onThemeClick={props.onThemeClick}
                               onClose={() =>
                                 companion.closeCompanion(

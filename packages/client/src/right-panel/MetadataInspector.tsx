@@ -1,5 +1,9 @@
 /** MetadataInspector — live view of the active terminal's full context.
- *  Pure rendering: receives metadata, renders sections. */
+ *  Renders sections from the supplied `meta`; the active theme name is
+ *  read from `useThemeManager` directly so callers don't have to drill
+ *  it through every host that renders this component. The theme-button
+ *  click stays a prop because it triggers a palette open whose owner
+ *  lives at the App layer (no global palette-controller singleton yet). */
 
 import type { TerminalMetadata } from "kolu-common/surface";
 import { prUnavailableSource, prValue } from "kolu-github/schemas";
@@ -7,16 +11,26 @@ import { type Component, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import ChecksIndicator from "../terminal/ChecksIndicator";
 import { ProviderUnavailableContent } from "../terminal/PrUnavailablePopover";
+import { useTerminalStore } from "../terminal/useTerminalStore";
 import { agentIcons, agentNames, stateLabels } from "../ui/agentDisplay";
 import { PrStateIcon, TerminalIcon, WorktreeIcon } from "../ui/Icons";
 import Row from "../ui/Row";
 import Section from "../ui/Section";
+import { useThemeManager } from "../useThemeManager";
 
 const MetadataInspector: Component<{
   meta: TerminalMetadata | null;
-  themeName?: string;
   onThemeClick?: () => void;
 }> = (props) => {
+  const { activeThemeName } = useThemeManager();
+  const store = useTerminalStore();
+  // Active terminal: the theme manager owns the canonical name (it
+  // tracks committed-vs-preview state). Inactive terminal: fall back to
+  // the persisted name on metadata.
+  const themeName = () =>
+    store.activeId() && props.meta
+      ? activeThemeName()
+      : (props.meta?.themeName ?? undefined);
   return (
     <Show
       when={props.meta}
@@ -196,7 +210,7 @@ const MetadataInspector: Component<{
           </Show>
 
           {/* Theme */}
-          <Show when={props.themeName}>
+          <Show when={themeName()}>
             {(name) => (
               <Section title="Theme">
                 <button
