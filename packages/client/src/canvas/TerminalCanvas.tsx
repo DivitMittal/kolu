@@ -416,11 +416,17 @@ const TerminalCanvas: Component<{
           /** Render every companion currently attached to `anchorId`.
            *  Phase 1 only writes the East side, but the loop is
            *  side-agnostic so Phase 3's side-picker doesn't need to
-           *  re-touch the canvas. The position is computed inside
-           *  `CompanionTile` from the anchor's effective layout. */
+           *  re-touch the canvas. Tiled mode threads the anchor's saved
+           *  layout so CompanionTile can compute absolute coordinates;
+           *  maximized mode has no anchor coordinates (flex parent owns
+           *  width) so we pass a zero-bbox sentinel that
+           *  CompanionTile.positionStyle() never reads on the
+           *  `maximized=true` branch. The maximized branch wraps each
+           *  companion in a flex shrink-0 cell that owns its width — the
+           *  weld-group footprint Hickey Q4 calls out. */
           const renderCompanionsFor = (
             anchorId: TerminalId,
-            anchorLayout: TileLayout,
+            anchorLayout: TileLayout | null,
             maximized: boolean,
           ) => {
             const sides = companion.getCompanions(anchorId);
@@ -430,10 +436,10 @@ const TerminalCanvas: Component<{
               <For each={Object.entries(sides)}>
                 {([side, slot]) => {
                   if (!slot) return null;
-                  return (
+                  const tile = (
                     <CompanionTile
                       anchorId={anchorId}
-                      anchorLayout={anchorLayout}
+                      anchorLayout={anchorLayout ?? { x: 0, y: 0, w: 0, h: 0 }}
                       side={side as "n" | "e" | "s" | "w"}
                       size={slot.size}
                       companionRef={slot.companionRef}
@@ -465,6 +471,16 @@ const TerminalCanvas: Component<{
                       zoom={viewport.zoom}
                       maximized={maximized}
                     />
+                  );
+                  return maximized ? (
+                    <div
+                      class="shrink-0 relative"
+                      style={{ width: `${slot.size}px` }}
+                    >
+                      {tile}
+                    </div>
+                  ) : (
+                    tile
                   );
                 }}
               </For>
@@ -510,54 +526,7 @@ const TerminalCanvas: Component<{
                     <div class="flex-1 min-w-0 relative">
                       {renderTile(id, true)}
                     </div>
-                    <For each={Object.entries(companion.getCompanions(id))}>
-                      {([side, slot]) => {
-                        if (!slot) return null;
-                        const info = store.getDisplayInfo(id);
-                        if (!info) return null;
-                        return (
-                          <div
-                            class="shrink-0 relative"
-                            style={{ width: `${slot.size}px` }}
-                          >
-                            <CompanionTile
-                              anchorId={id}
-                              anchorLayout={{ x: 0, y: 0, w: 0, h: 0 }}
-                              side={side as "n" | "e" | "s" | "w"}
-                              size={slot.size}
-                              companionRef={slot.companionRef}
-                              meta={store.getMetadata(id) ?? null}
-                              onThemeClick={props.onThemeClick}
-                              onClose={() =>
-                                companion.closeCompanion(
-                                  id,
-                                  side as "n" | "e" | "s" | "w",
-                                )
-                              }
-                              onSizeChange={(next) =>
-                                companion.setCompanionSize(
-                                  id,
-                                  side as "n" | "e" | "s" | "w",
-                                  next,
-                                )
-                              }
-                              onCompanionRefChange={(ref) =>
-                                companion.setCompanionRef(
-                                  id,
-                                  side as "n" | "e" | "s" | "w",
-                                  ref,
-                                )
-                              }
-                              theme={tileTheme(id)}
-                              repoColor={info.repoColor}
-                              active={true}
-                              zoom={viewport.zoom}
-                              maximized={true}
-                            />
-                          </div>
-                        );
-                      }}
-                    </For>
+                    {renderCompanionsFor(id, null, true)}
                   </div>
                 )}
               </Show>
