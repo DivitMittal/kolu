@@ -32,6 +32,7 @@ import {
   Show,
 } from "solid-js";
 import CompanionTile from "../companions/CompanionTile";
+import type { CompanionRef, Side } from "../companions/types";
 import { useCompanion } from "../companions/useCompanion";
 import { useStaleCheck } from "../terminal/staleness";
 import { useTerminalStore } from "../terminal/useTerminalStore";
@@ -429,41 +430,37 @@ const TerminalCanvas: Component<{
             anchorLayout: TileLayout | null,
             maximized: boolean,
           ) => {
-            const sides = companion.getCompanions(anchorId);
             const info = store.getDisplayInfo(anchorId);
             if (!info) return null;
+            // Type the iteration once so each Match arm and prop call
+            // sees `Side` instead of `string` — kills the `as Side` cast
+            // repetition the renderCompanionsFor body would otherwise
+            // need at every companion-store call site.
+            const entries = Object.entries(
+              companion.getCompanions(anchorId),
+            ) as [
+              Side,
+              { size: number; companionRef: CompanionRef } | undefined,
+            ][];
             return (
-              <For each={Object.entries(sides)}>
+              <For each={entries}>
                 {([side, slot]) => {
                   if (!slot) return null;
                   const tile = (
                     <CompanionTile
                       anchorId={anchorId}
                       anchorLayout={anchorLayout ?? { x: 0, y: 0, w: 0, h: 0 }}
-                      side={side as "n" | "e" | "s" | "w"}
+                      side={side}
                       size={slot.size}
                       companionRef={slot.companionRef}
                       meta={store.getMetadata(anchorId) ?? null}
                       onThemeClick={props.onThemeClick}
-                      onClose={() =>
-                        companion.closeCompanion(
-                          anchorId,
-                          side as "n" | "e" | "s" | "w",
-                        )
-                      }
+                      onClose={() => companion.closeCompanion(anchorId, side)}
                       onSizeChange={(next) =>
-                        companion.setCompanionSize(
-                          anchorId,
-                          side as "n" | "e" | "s" | "w",
-                          next,
-                        )
+                        companion.setCompanionSize(anchorId, side, next)
                       }
                       onCompanionRefChange={(ref) =>
-                        companion.setCompanionRef(
-                          anchorId,
-                          side as "n" | "e" | "s" | "w",
-                          ref,
-                        )
+                        companion.setCompanionRef(anchorId, side, ref)
                       }
                       theme={tileTheme(anchorId)}
                       repoColor={info.repoColor}
