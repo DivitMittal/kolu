@@ -55,6 +55,8 @@ const WorkspaceSwitcher: Component<{
   onSelect: (id: TerminalId) => void;
   onStartQueuedWorktree: (id: string, agentCommand?: string) => void;
   onDeleteQueuedWorktree: (id: string) => void;
+  onEditQueuedWorktree: (id: string) => void;
+  onEditTerminalIntent: (id: TerminalId) => void;
   /** Open the "new terminal" flow. */
   onCreate: () => void;
 }> = (props) => {
@@ -229,6 +231,8 @@ const WorkspaceSwitcher: Component<{
             recentAgentCommands={props.recentAgentCommands}
             onStartQueuedWorktree={startQueuedAndClose}
             onDeleteQueuedWorktree={props.onDeleteQueuedWorktree}
+            onEditQueuedWorktree={props.onEditQueuedWorktree}
+            onEditTerminalIntent={props.onEditTerminalIntent}
             onClose={closePanel}
           />
         </div>

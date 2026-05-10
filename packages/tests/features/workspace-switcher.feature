@@ -70,18 +70,68 @@ Feature: Workspace switcher
     And I open the command palette
     And I select "Queue worktree" in the palette
     And I select "kolu-queued-wt" in the palette
-    And I type "Review payment retry flow" in the palette
-    And I press Enter
+    Then the intent editor should be visible
+    When I fill the intent editor with:
+      """
+      Review **payment retry flow**
+      - Check idempotency window
+      """
+    And I save the intent editor
     And I click the workspace switcher toggle
     Then the workspace switcher panel should be visible
     And the workspace switcher should show 1 queued worktree
     And a queued worktree should show intent "Review payment retry flow"
+    And a queued worktree should show full intent:
+      """
+      Review payment retry flow
+      Check idempotency window
+      """
+    And a queued worktree intent should render strong text "payment retry flow"
+    When I copy queued worktree 1 intent
+    Then the clipboard should contain "**payment retry flow**"
+    And the clipboard should contain "- Check idempotency window"
+    When I edit queued worktree 1 intent
+    And I fill the intent editor with:
+      """
+      Review **payment retry flow**
+      - Verify idempotency receipts
+      """
+    And I save the intent editor
+    And I open the workspace switcher panel
+    Then a queued worktree should show full intent:
+      """
+      Review payment retry flow
+      Verify idempotency receipts
+      """
     When I search the workspace switcher for "payment retry"
     Then the workspace switcher should show 1 queued worktree
     When I start queued worktree 1 as shell
     Then the workspace switcher should show 0 queued worktrees
     And the workspace switcher should show a worktree indicator
     And the terminal meta should show intent "Review payment retry flow"
+    When I click the workspace switcher toggle
+    Then a workspace switcher card should show intent "Review payment retry flow"
+    And a workspace switcher card should show full intent:
+      """
+      Review payment retry flow
+      Verify idempotency receipts
+      """
+    And a workspace switcher card intent should render strong text "payment retry flow"
+    When I copy a workspace switcher card intent
+    Then the clipboard should contain "- Verify idempotency receipts"
+    When I edit a workspace switcher card intent
+    And I fill the intent editor with:
+      """
+      Review **payment retry flow**
+      - Confirm retry metrics
+      """
+    And I save the intent editor
+    And I open the workspace switcher panel
+    Then a workspace switcher card should show full intent:
+      """
+      Review payment retry flow
+      Confirm retry metrics
+      """
     And there should be no page errors
 
   Scenario: Workspace switcher shortcut opens search

@@ -10,6 +10,39 @@ const CARD_SELECTOR = '[data-testid="workspace-switcher-card"]';
 const REPO_SELECTOR = '[data-testid="workspace-switcher-repo"]';
 const QUEUED_WORKTREE_SELECTOR =
   '[data-testid="workspace-switcher-queued-worktree"]';
+const QUEUED_INTENT_SELECTOR =
+  '[data-testid="workspace-switcher-queued-intent"]';
+const CARD_INTENT_SELECTOR =
+  '[data-testid="workspace-switcher-card-intent-full"]';
+
+function normalizeIntentText(text: string) {
+  return text.trim().replace(/\s+/g, " ");
+}
+
+async function expectSomeElementToContainText(
+  world: KoluWorld,
+  selector: string,
+  expected: string,
+) {
+  const expectedLines = expected
+    .trim()
+    .split(/\r?\n/)
+    .map(normalizeIntentText)
+    .filter(Boolean);
+  await world.page.waitForFunction(
+    ({ selector: cssSelector, expectedLines: lines }) =>
+      Array.from(document.querySelectorAll(cssSelector)).some((element) =>
+        lines.every((line) =>
+          (element.textContent ?? "")
+            .trim()
+            .replace(/\s+/g, " ")
+            .includes(line),
+        ),
+      ),
+    { selector, expectedLines },
+    { timeout: POLL_TIMEOUT },
+  );
+}
 
 Then(
   "the workspace switcher should be visible",
@@ -134,6 +167,16 @@ When("I click the workspace switcher toggle", async function (this: KoluWorld) {
   const toggle = this.page.locator('[data-testid="workspace-switcher-toggle"]');
   await toggle.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
   await toggle.click();
+  await this.waitForFrame();
+});
+
+When("I open the workspace switcher panel", async function (this: KoluWorld) {
+  const panel = this.page.locator(PANEL_SELECTOR);
+  if ((await panel.count()) > 0 && (await panel.first().isVisible())) return;
+  const toggle = this.page.locator('[data-testid="workspace-switcher-toggle"]');
+  await toggle.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  await toggle.click();
+  await panel.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
   await this.waitForFrame();
 });
 
@@ -275,11 +318,135 @@ Then(
 Then(
   "a queued worktree should show intent {string}",
   async function (this: KoluWorld, expected: string) {
+    const intent = this.page.locator(QUEUED_INTENT_SELECTOR, {
+      hasText: expected,
+    });
+    await intent.first().waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  },
+);
+
+Then(
+  "a queued worktree should show full intent:",
+  async function (this: KoluWorld, expected: string) {
+    await expectSomeElementToContainText(
+      this,
+      QUEUED_INTENT_SELECTOR,
+      expected,
+    );
+  },
+);
+
+Then(
+  "a queued worktree intent should render strong text {string}",
+  async function (this: KoluWorld, expected: string) {
+    const strong = this.page.locator(`${QUEUED_INTENT_SELECTOR} strong`, {
+      hasText: expected,
+    });
+    await strong.first().waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  },
+);
+
+Then(
+  "a workspace switcher card should show intent {string}",
+  async function (this: KoluWorld, expected: string) {
     const intent = this.page.locator(
-      '[data-testid="workspace-switcher-queued-intent"]',
+      '[data-testid="workspace-switcher-card-intent"]',
       { hasText: expected },
     );
     await intent.first().waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  },
+);
+
+Then(
+  "a workspace switcher card should show full intent:",
+  async function (this: KoluWorld, expected: string) {
+    await expectSomeElementToContainText(this, CARD_INTENT_SELECTOR, expected);
+  },
+);
+
+Then(
+  "a workspace switcher card intent should render strong text {string}",
+  async function (this: KoluWorld, expected: string) {
+    const strong = this.page.locator(`${CARD_INTENT_SELECTOR} strong`, {
+      hasText: expected,
+    });
+    await strong.first().waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  },
+);
+
+When(
+  "I copy queued worktree {int} intent",
+  async function (this: KoluWorld, position: number) {
+    const queued = this.page
+      .locator(QUEUED_WORKTREE_SELECTOR)
+      .nth(position - 1);
+    await queued.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    await queued
+      .locator('[data-testid="workspace-switcher-queued-intent-copy"]')
+      .click();
+    await this.waitForFrame();
+  },
+);
+
+When(
+  "I edit queued worktree {int} intent",
+  async function (this: KoluWorld, position: number) {
+    const queued = this.page
+      .locator(QUEUED_WORKTREE_SELECTOR)
+      .nth(position - 1);
+    await queued.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    await queued
+      .locator('[data-testid="workspace-switcher-queued-intent-edit"]')
+      .click();
+    await this.waitForFrame();
+  },
+);
+
+When(
+  "I copy workspace switcher card {int} intent",
+  async function (this: KoluWorld, position: number) {
+    const card = this.page.locator(CARD_SELECTOR).nth(position - 1);
+    await card.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    await card
+      .locator('[data-testid="workspace-switcher-card-intent-copy"]')
+      .click();
+    await this.waitForFrame();
+  },
+);
+
+When(
+  "I copy a workspace switcher card intent",
+  async function (this: KoluWorld) {
+    const copy = this.page
+      .locator('[data-testid="workspace-switcher-card-intent-copy"]')
+      .first();
+    await copy.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    await copy.click();
+    await this.waitForFrame();
+  },
+);
+
+When(
+  "I edit workspace switcher card {int} intent",
+  async function (this: KoluWorld, position: number) {
+    const card = this.page.locator(CARD_SELECTOR).nth(position - 1);
+    await card.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    await card
+      .locator('[data-testid="workspace-switcher-card-intent-edit"]')
+      .click();
+    await this.waitForFrame();
+  },
+);
+
+When(
+  "I edit a workspace switcher card intent",
+  async function (this: KoluWorld) {
+    const edit = this.page
+      .locator('[data-testid="workspace-switcher-card-intent-edit"]')
+      .first();
+    await edit.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    await edit.click();
+    await this.waitForFrame();
   },
 );
 

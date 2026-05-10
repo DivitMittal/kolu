@@ -136,6 +136,29 @@ Then(
   },
 );
 
+Then("the intent editor should be visible", async function (this: KoluWorld) {
+  await this.page
+    .locator('[data-testid="intent-editor-textarea"]')
+    .waitFor({ state: "visible" });
+});
+
+When(
+  "I fill the intent editor with:",
+  async function (this: KoluWorld, intent: string) {
+    const editor = this.page.locator('[data-testid="intent-editor-textarea"]');
+    await editor.waitFor({ state: "visible" });
+    await editor.fill(intent.trim().replace(/\r\n/g, "\n"));
+  },
+);
+
+When("I save the intent editor", async function (this: KoluWorld) {
+  await this.page.locator('[data-testid="intent-editor-save"]').click();
+  await this.page
+    .locator('[data-testid="intent-editor-textarea"]')
+    .waitFor({ state: "hidden" });
+  await this.waitForFrame();
+});
+
 Then("there should be no page errors", function (this: KoluWorld) {
   assert.deepStrictEqual(this.errors, []);
 });
@@ -196,7 +219,14 @@ Then(
 When("I click the terminal canvas", async function (this: KoluWorld) {
   // Click the body first to blur any focused element, then click the terminal
   await this.page.locator("body").click({ position: { x: 0, y: 0 } });
-  await this.canvas.click();
+  const activeCanvas = this.page
+    .locator('[data-testid="canvas-tile"][data-active="true"] .xterm-screen')
+    .first();
+  if ((await activeCanvas.count()) > 0 && (await activeCanvas.isVisible())) {
+    await activeCanvas.click();
+  } else {
+    await this.canvas.click();
+  }
 });
 
 When("I click the terminal tile title bar", async function (this: KoluWorld) {

@@ -1,5 +1,6 @@
-/** Terminal metadata for the canvas tile title bar — two rows:
+/** Terminal metadata for the canvas tile title bar — optional intent tab + two rows:
  *
+ *    Intent: attached tab on the tile's top border
  *    Row 1: name [suffix] [worktree] [foreground] [agent progress]
  *    Row 2: branch [PR icon checks #N title]
  *
@@ -12,8 +13,9 @@
 
 import { prUnavailableSource, prValue } from "kolu-github/schemas";
 import { type Component, Show } from "solid-js";
-import { PrStateIcon, WorktreeIcon } from "../ui/Icons";
+import { PencilIcon, PrStateIcon, WorktreeIcon } from "../ui/Icons";
 import Tip from "../ui/Tip";
+import { IntentSummary } from "../intent/IntentSurface";
 import ChecksIndicator from "./ChecksIndicator";
 import { copyTextWithToast } from "./clipboard";
 import { PrUnavailableButton } from "./PrUnavailablePopover";
@@ -21,12 +23,24 @@ import type { TerminalDisplayInfo } from "./terminalDisplay";
 
 const TerminalMeta: Component<{
   info: TerminalDisplayInfo | undefined;
+  onEditIntent?: () => void;
 }> = (props) => {
   const i = () => props.info;
   return (
     <Show when={i()} fallback={<TerminalMetaSkeleton />}>
       {(info) => (
-        <>
+        <div
+          class="relative min-w-0"
+          classList={{ "pt-3": !!info().meta.intent }}
+        >
+          <Show when={info().meta.intent}>
+            {(intent) => (
+              <TerminalIntentPill
+                intent={intent()}
+                onEdit={props.onEditIntent}
+              />
+            )}
+          </Show>
           {/* Name row — `name suffix [worktree-icon] [fg-title] [progress]`.
            *  Sub-count lives on the title-bar split toggle (one source
            *  of truth for "this tile has children"); the agent task
@@ -35,7 +49,8 @@ const TerminalMeta: Component<{
            *  shown by the title bar's agent indicator button — no
            *  separate agent row here. CWD is implicit (tooltip on the
            *  repo name) — visible space is reserved for the OSC 2
-           *  process title. */}
+           *  process title. Intent gets its own attached top tab, so it
+           *  never competes with or suppresses the title/process slot. */}
           <div class="flex items-center gap-1.5 min-h-7 text-sm font-medium min-w-0">
             <NameSpan info={info()} />
             <Show when={info().key.suffix}>
@@ -52,22 +67,14 @@ const TerminalMeta: Component<{
             <Show when={info().meta.git?.isWorktree}>
               <WorktreeBadge />
             </Show>
-            <Show when={info().meta.intent}>
-              {(intent) => (
-                <span
-                  data-testid="terminal-meta-intent"
-                  class="text-xs text-fg-2 truncate min-w-0 flex-1"
-                  title={intent()}
-                >
-                  {intent()}
-                </span>
-              )}
+            <Show when={!info().meta.intent ? props.onEditIntent : undefined}>
+              {(onEdit) => <IntentEditButton onEdit={onEdit()} />}
             </Show>
             {/* Foreground process title — OSC 2 string when present.
              *  Replaces what used to be the cwd slot; cwd is now a
              *  tooltip on the repo name. `flex-1` so it fills until
              *  the progress bar (when shown) eats its right edge. */}
-            <Show when={!info().meta.intent && info().meta.foreground}>
+            <Show when={info().meta.foreground}>
               {(fg) => (
                 <span
                   data-testid="process-name"
@@ -155,7 +162,7 @@ const TerminalMeta: Component<{
               </div>
             )}
           </Show>
-        </>
+        </div>
       )}
     </Show>
   );
@@ -195,7 +202,7 @@ export const TerminalMetaCompact: Component<{
                 class="text-xs text-fg-2 truncate min-w-0"
                 title={intent()}
               >
-                {intent()}
+                <IntentSummary intent={intent()} />
               </span>
             )}
           </Show>
@@ -239,6 +246,7 @@ export const TerminalMetaCompact: Component<{
   );
 };
 
+/** Repo/cwd identity label used by desktop and compact title bars. */
 const NameSpan: Component<{ info: TerminalDisplayInfo }> = (props) => (
   <span
     data-testid="terminal-meta-name"
@@ -250,6 +258,59 @@ const NameSpan: Component<{ info: TerminalDisplayInfo }> = (props) => (
   </span>
 );
 
+/** Attached top-border pill showing the terminal intent's first line. */
+const TerminalIntentPill: Component<{
+  intent: string;
+  onEdit?: () => void;
+}> = (props) => (
+  <button
+    type="button"
+    data-testid="terminal-meta-intent"
+    class="pointer-events-auto absolute left-0 -top-1.5 z-10 max-w-[min(34rem,calc(100%-0.5rem))] truncate rounded-b-md rounded-t-none border-x border-b px-2 py-0.5 text-[0.66rem] leading-none shadow-[0_8px_18px_-14px_rgba(0,0,0,0.9)] transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2"
+    style={{
+      color: "var(--color-fg)",
+      "background-color":
+        "color-mix(in oklch, var(--color-fg) 10%, transparent)",
+      "border-color": "color-mix(in oklch, var(--color-fg) 30%, transparent)",
+      "--tw-ring-color":
+        "color-mix(in oklch, var(--color-fg) 45%, transparent)",
+    }}
+    title={props.intent}
+    onPointerDown={(e) => e.stopPropagation()}
+    onClick={(e) => {
+      e.stopPropagation();
+      props.onEdit?.();
+    }}
+  >
+    <IntentSummary intent={props.intent} />
+  </button>
+);
+
+/** Empty-titlebar affordance for creating the active terminal's intent. */
+const IntentEditButton: Component<{ onEdit: () => void }> = (props) => (
+  <button
+    type="button"
+    data-testid="terminal-meta-intent-edit"
+    class="pointer-events-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-md opacity-65 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2"
+    style={{
+      color: "var(--color-fg)",
+      "background-color":
+        "color-mix(in oklch, var(--color-fg) 0%, transparent)",
+      "--tw-ring-color":
+        "color-mix(in oklch, var(--color-fg) 45%, transparent)",
+    }}
+    title="Set intent"
+    onPointerDown={(e) => e.stopPropagation()}
+    onClick={(e) => {
+      e.stopPropagation();
+      props.onEdit();
+    }}
+  >
+    <PencilIcon class="w-3 h-3" />
+  </button>
+);
+
+/** Small title-bar marker for terminals backed by git worktrees. */
 const WorktreeBadge: Component = () => (
   <span
     data-testid="worktree-indicator"
@@ -260,6 +321,7 @@ const WorktreeBadge: Component = () => (
   </span>
 );
 
+/** Compact completed/total progress indicator for agent task lists. */
 const AgentTaskProgress: Component<{ completed: number; total: number }> = (
   props,
 ) => (
@@ -282,6 +344,7 @@ const AgentTaskProgress: Component<{ completed: number; total: number }> = (
   </div>
 );
 
+/** Placeholder while terminal display metadata is not available yet. */
 const TerminalMetaSkeleton: Component = () => (
   <div class="animate-pulse space-y-1.5">
     <div class="h-3.5 w-24 bg-surface-2 rounded" />

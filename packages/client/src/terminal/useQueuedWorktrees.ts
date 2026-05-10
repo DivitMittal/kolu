@@ -31,6 +31,16 @@ export function useQueuedWorktrees(deps: {
     setQueuedWorktrees(queuedWorktrees().filter((q) => q.id !== id));
   }
 
+  function updateIntent(id: string, intent: string): void {
+    const trimmed = intent.trim();
+    if (!trimmed) return;
+    setQueuedWorktrees(
+      queuedWorktrees().map((q) =>
+        q.id === id ? { ...q, intent: trimmed } : q,
+      ),
+    );
+  }
+
   function rememberWorktreeName(id: string, worktreeName: string): void {
     setQueuedWorktrees(
       queuedWorktrees().map((q) => (q.id === id ? { ...q, worktreeName } : q)),
@@ -61,6 +71,7 @@ export function useQueuedWorktrees(deps: {
     items: queuedWorktrees,
     enqueue,
     remove,
+    updateIntent,
     start,
   };
 }

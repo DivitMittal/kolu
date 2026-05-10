@@ -52,6 +52,8 @@ import { screenshotTerminal } from "./screenshotTerminal";
 import { useColorScheme } from "./settings/useColorScheme";
 import { useTips } from "./settings/useTips";
 import TerminalContent from "./terminal/TerminalContent";
+import IntentEditorDialog from "./intent/IntentEditorDialog";
+import { useIntentEditor } from "./intent/useIntentEditor";
 import TerminalMeta from "./terminal/TerminalMeta";
 import { useQueuedWorktrees } from "./terminal/useQueuedWorktrees";
 import { useSubPanel } from "./terminal/useSubPanel";
@@ -194,6 +196,15 @@ const App: Component = () => {
     handleCreateWorktree: worktree.handleCreateWorktree,
   });
 
+  const intentEditor = useIntentEditor({
+    queuedWorktrees: queuedWorktrees.items,
+    getTerminalIntent: (id) => store.getMetadata(id)?.intent,
+    setTerminalIntent: crud.setIntent,
+    enqueueQueuedWorktree: queuedWorktrees.enqueue,
+    updateQueuedWorktreeIntent: queuedWorktrees.updateIntent,
+    onClose: () => requestAnimationFrame(refocusTerminal),
+  });
+
   // Shared between the keyboard dispatcher and the command palette so a single
   // wiring keeps both surfaces in sync. Palette-only deps (theme management,
   // dialog setters, debug, etc.) are added below in the createCommands call.
@@ -283,13 +294,15 @@ const App: Component = () => {
     handleCreateWorktree: (repoPath, name, options) =>
       void worktree.handleCreateWorktree(repoPath, name, options),
     queuedWorktrees: queuedWorktrees.items,
-    queueWorktree: queuedWorktrees.enqueue,
+    openQueueWorktreeIntent: intentEditor.openNewQueued,
     startQueuedWorktree: (id, name, initialCommand) =>
       void queuedWorktrees.start(id, {
         worktreeName: name,
         agentCommand: initialCommand,
       }),
     deleteQueuedWorktree: queuedWorktrees.remove,
+    openActiveTerminalIntent: () =>
+      intentEditor.openActiveTerminal(store.activeId()),
     handleSetTerminalIntent,
     handleClose: () => {
       const id = store.activeId();
@@ -416,6 +429,15 @@ const App: Component = () => {
         onOpenChange={setDiagnosticInfoOpen}
         activeId={store.activeId()}
       />
+      <IntentEditorDialog
+        open={intentEditor.open()}
+        title={intentEditor.title()}
+        value={intentEditor.value()}
+        allowClear={intentEditor.allowClear()}
+        onOpenChange={intentEditor.onOpenChange}
+        onSave={intentEditor.save}
+        onClear={intentEditor.clear}
+      />
       <ModalDialog
         open={aboutOpen()}
         onOpenChange={withRefocus(setAboutOpen)}
@@ -502,6 +524,8 @@ const App: Component = () => {
                 })
               }
               onDeleteQueuedWorktree={queuedWorktrees.remove}
+              onEditQueuedWorktree={intentEditor.openQueued}
+              onEditTerminalIntent={intentEditor.openTerminal}
               onCreate={() => openPaletteGroup("New terminal")}
             />
           }
@@ -571,7 +595,10 @@ const App: Component = () => {
                     onSelect={store.setActiveSilently}
                     onClose={(id) => closeTerminal(id)}
                     renderTileTitle={(id) => (
-                      <TerminalMeta info={store.getDisplayInfo(id)} />
+                      <TerminalMeta
+                        info={store.getDisplayInfo(id)}
+                        onEditIntent={() => intentEditor.openTerminal(id)}
+                      />
                     )}
                     renderTileTitleActions={(id) => (
                       <TileTitleActions

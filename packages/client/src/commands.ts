@@ -19,6 +19,7 @@ import type {
   PaletteValueInput,
 } from "./CommandPalette";
 import { type ActionContext, actionPaletteCommand } from "./input/actions";
+import { firstIntentLine } from "./intent/text";
 import { client } from "./wire";
 import { recentAgents, recentRepos } from "./wire";
 
@@ -29,10 +30,6 @@ function validateWorktreeName(name: string): string | null {
   const result = WorktreeNameSchema.safeParse(name.trim());
   if (result.success) return null;
   return result.error.issues[0]?.message ?? "Invalid worktree name";
-}
-
-function validateIntent(intent: string): string | null {
-  return intent.trim().length > 0 ? null : "Intent is required";
 }
 
 /** PaletteItems listing each recent agent command. Used by the Debug →
@@ -98,13 +95,14 @@ export interface CommandDeps extends ActionContext {
     },
   ) => void;
   queuedWorktrees: Accessor<QueuedWorktree[]>;
-  queueWorktree: (repoPath: string, intent: string) => void;
+  openQueueWorktreeIntent: (repoPath: string, repoName: string) => void;
   startQueuedWorktree: (
     id: string,
     name: string,
     initialCommand?: string,
   ) => void;
   deleteQueuedWorktree: (id: string) => void;
+  openActiveTerminalIntent: () => void;
   handleSetTerminalIntent: (intent?: string) => void;
   handleClose: () => void;
   // Debug
@@ -162,17 +160,12 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
         const repos = recentRepos();
         return [
           ...repos.map(
-            (r): PaletteValueInput => ({
-              kind: "value",
+            (r): PaletteAction => ({
+              kind: "action",
               name: r.repoName,
               description: `Queue worktree in ${r.repoRoot}`,
-              prefill: () => "",
-              placeholder: "Intent",
-              validate: validateIntent,
-              onSubmit: (intent) => {
-                deps.queueWorktree(r.repoRoot, intent.trim());
-              },
-              children: [{ kind: "label", name: "Queue" }],
+              onSelect: () =>
+                deps.openQueueWorktreeIntent(r.repoRoot, r.repoName),
             }),
           ),
           ...(repos.length === 0
@@ -195,7 +188,7 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
               deps.queuedWorktrees().map(
                 (q): PaletteValueInput => ({
                   kind: "value",
-                  name: q.intent,
+                  name: firstIntentLine(q.intent),
                   description: `Start queued worktree in ${q.repoPath}`,
                   prefill: () => q.worktreeName ?? randomName(),
                   placeholder: "Worktree name",
@@ -217,14 +210,11 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
     ...(deps.activeId() !== null
       ? [
           {
-            kind: "value" as const,
+            kind: "action" as const,
             name: deps.activeMeta()?.intent
               ? "Edit terminal intent"
               : "Set terminal intent",
-            prefill: () => deps.activeMeta()?.intent ?? "",
-            placeholder: "Intent",
-            onSubmit: (intent: string) => deps.handleSetTerminalIntent(intent),
-            children: [{ kind: "label" as const, name: "Save intent" }],
+            onSelect: deps.openActiveTerminalIntent,
           },
           ...(deps.activeMeta()?.intent
             ? [

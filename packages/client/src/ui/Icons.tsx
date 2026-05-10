@@ -140,6 +140,23 @@ export const CloseIcon: Component<{ class?: string }> = (props) => (
   </svg>
 );
 
+/** Copy — overlapping sheets for clipboard-style copy actions. */
+export const CopyIcon: Component<{ class?: string }> = (props) => (
+  <svg
+    class={props.class ?? "w-3.5 h-3.5"}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="5" y="5" width="8" height="8" rx="1.5" />
+    <path d="M3 10.5H2.5A1.5 1.5 0 0 1 1 9V2.5A1.5 1.5 0 0 1 2.5 1H9a1.5 1.5 0 0 1 1.5 1.5V3" />
+  </svg>
+);
+
 export const GitMergeIcon: Component<{ class?: string }> = (props) => (
   <svg
     class={props.class ?? "w-3.5 h-3.5"}
@@ -219,6 +236,23 @@ export const PauseIcon: Component<{ class?: string }> = (props) => (
   >
     <rect x="4" y="3" width="3" height="10" rx="0.5" />
     <rect x="9" y="3" width="3" height="10" rx="0.5" />
+  </svg>
+);
+
+/** Pencil — edit affordance for user-authored metadata. */
+export const PencilIcon: Component<{ class?: string }> = (props) => (
+  <svg
+    class={props.class ?? "w-3.5 h-3.5"}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M9.5 3.5L12.5 6.5" />
+    <path d="M3 13L4 9.5L10.9 2.6a1.8 1.8 0 0 1 2.5 2.5L6.5 12L3 13Z" />
   </svg>
 );
 

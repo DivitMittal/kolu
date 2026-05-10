@@ -1,5 +1,6 @@
 import type { TerminalId } from "kolu-common/surface";
 import { type Component, createEffect, Index, Show } from "solid-js";
+import { IntentAttachedTab, IntentBlock } from "../../intent/IntentSurface";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import { CloseIcon, ResumeIcon, TerminalIcon } from "../../ui/Icons";
 import { useTileTheme } from "../useTileTheme";
@@ -45,6 +46,8 @@ const WorkspaceSearchPanel: Component<{
   recentAgentCommands: string[];
   onStartQueuedWorktree: (id: string, agentCommand?: string) => void;
   onDeleteQueuedWorktree: (id: string) => void;
+  onEditQueuedWorktree: (id: string) => void;
+  onEditTerminalIntent: (id: TerminalId) => void;
   onClose: () => void;
 }> = (props) => {
   const store = useTerminalStore();
@@ -199,6 +202,7 @@ const WorkspaceSearchPanel: Component<{
                           onDelete={() =>
                             props.onDeleteQueuedWorktree(queued().id)
                           }
+                          onEdit={() => props.onEditQueuedWorktree(queued().id)}
                         />
                       )}
                     </Index>
@@ -249,6 +253,9 @@ const WorkspaceSearchPanel: Component<{
                             tileBg={tileTheme(entry().id).bg}
                             tileFg={tileTheme(entry().id).fg}
                             onSelect={() => props.onSelect(entry().id)}
+                            onEditIntent={() =>
+                              props.onEditTerminalIntent(entry().id)
+                            }
                           />
                         )}
                       </Index>
@@ -269,11 +276,13 @@ const WorkspaceSearchPanel: Component<{
   );
 };
 
+/** Queued-worktree card with intent preview and start/delete actions. */
 const QueuedWorktreeCard: Component<{
   queued: WorkspaceSwitcherQueuedWorktree;
   recentAgentCommands: string[];
   onStart: (agentCommand?: string) => void;
   onDelete: () => void;
+  onEdit: () => void;
 }> = (props) => {
   const agentCommands = () => props.recentAgentCommands.slice(0, 3);
   return (
@@ -281,9 +290,13 @@ const QueuedWorktreeCard: Component<{
       data-testid="workspace-switcher-queued-worktree"
       data-queued-worktree-id={props.queued.id}
       data-repo-name={props.queued.repoName}
-      class="relative rounded-lg border border-accent/35 bg-surface-0/55 p-2.5 text-left"
+      class="relative rounded-lg border border-accent/35 bg-surface-0/55 px-2.5 pb-2.5 pt-5 text-left"
       title={props.queued.intent}
     >
+      <IntentAttachedTab
+        intent={props.queued.intent}
+        testId="workspace-switcher-queued-intent-tab"
+      />
       <div class="flex items-center justify-between gap-2 min-w-0">
         <span class="font-mono text-[0.6rem] font-bold uppercase tracking-[0.16em] truncate min-w-0 text-accent">
           {props.queued.repoName}
@@ -298,15 +311,16 @@ const QueuedWorktreeCard: Component<{
           <CloseIcon class="w-3 h-3" />
         </button>
       </div>
-      <div
-        data-testid="workspace-switcher-queued-intent"
-        class="mt-1 text-[0.9rem] font-semibold leading-tight text-fg truncate"
-      >
-        {props.queued.intent}
-      </div>
       <div class="mt-0.5 font-mono text-[0.65rem] text-fg-3 truncate">
         {props.queued.worktreeName ?? "name chosen on start"}
       </div>
+      <IntentBlock
+        intent={props.queued.intent}
+        testId="workspace-switcher-queued-intent"
+        copyTestId="workspace-switcher-queued-intent-copy"
+        editTestId="workspace-switcher-queued-intent-edit"
+        onEdit={props.onEdit}
+      />
       <div class="mt-2 flex flex-wrap gap-1.5">
         <button
           type="button"
@@ -391,16 +405,25 @@ const WorkspaceCard: Component<{
   tileBg: string;
   tileFg: string;
   onSelect: () => void;
+  onEditIntent: () => void;
 }> = (props) => {
   const agent = () => props.entry.info.meta.agent;
   const pr = () => prSummary(props.entry);
   const tokens = () => tokenLine(agent());
   const bucketInfo = () => bucketDescriptor(agentBucket(agent()));
   const lastActive = () => formatTimeAgo(props.entry.info.meta.lastActivityAt);
+  const intent = () => props.entry.info.meta.intent;
+  const selectOnKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    props.onSelect();
+  };
 
   return (
-    <button
-      type="button"
+    // biome-ignore lint/a11y/useSemanticElements: the selectable card contains copy/edit buttons, so a native button would nest interactive controls.
+    <div
+      role="button"
+      tabIndex={0}
       data-testid="workspace-switcher-card"
       data-terminal-id={props.entry.id}
       data-repo-name={props.entry.repoName}
@@ -411,7 +434,7 @@ const WorkspaceCard: Component<{
       // agent-state border; the focused card gets a branch-colored rail.
       // Stale also drops the agent-state border so a parked awaiting
       // terminal doesn't keep breathing for attention.
-      class={`relative rounded-lg border p-2.5 text-left cursor-pointer transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${props.active || props.stale ? "" : bucketInfo().borderClass}`}
+      class={`relative rounded-lg border px-2.5 pb-2.5 text-left cursor-pointer transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${intent() ? "pt-5" : "pt-2.5"} ${props.active || props.stale ? "" : bucketInfo().borderClass}`}
       classList={{
         "border-edge-bright/70 bg-surface-0/60 shadow-[0_0_0_1px_color-mix(in_oklch,var(--card-color)_22%,transparent)]":
           props.active,
@@ -429,12 +452,22 @@ const WorkspaceCard: Component<{
         "--pill-border-radius": "calc(0.5rem + 2px)",
       }}
       onClick={() => props.onSelect()}
+      onKeyDown={selectOnKeyDown}
       title={
         props.entry.info.meta.intent
           ? `${props.entry.info.meta.intent} - ${props.entry.info.meta.cwd}`
           : props.entry.info.meta.cwd
       }
     >
+      <Show when={intent()}>
+        {(value) => (
+          <IntentAttachedTab
+            intent={value()}
+            theme={{ bg: props.tileBg, fg: props.tileFg }}
+            testId="workspace-switcher-card-intent"
+          />
+        )}
+      </Show>
       <Show when={props.active}>
         <span
           aria-hidden="true"
@@ -487,15 +520,16 @@ const WorkspaceCard: Component<{
         </Show>
       </div>
 
-      <Show when={props.entry.info.meta.intent}>
-        {(intent) => (
-          <div
-            data-testid="workspace-switcher-card-intent"
-            class="mt-1 text-[0.74rem] text-fg truncate leading-snug"
-            title={intent()}
-          >
-            {intent()}
-          </div>
+      <Show when={intent()}>
+        {(value) => (
+          <IntentBlock
+            intent={value()}
+            theme={{ bg: props.tileBg, fg: props.tileFg }}
+            testId="workspace-switcher-card-intent-full"
+            copyTestId="workspace-switcher-card-intent-copy"
+            editTestId="workspace-switcher-card-intent-edit"
+            onEdit={props.onEditIntent}
+          />
         )}
       </Show>
 
@@ -553,7 +587,7 @@ const WorkspaceCard: Component<{
           </div>
         )}
       </Show>
-    </button>
+    </div>
   );
 };
 
