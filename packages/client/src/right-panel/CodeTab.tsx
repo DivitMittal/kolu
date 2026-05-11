@@ -40,7 +40,7 @@ import {
   pierreIconConfig,
   pierreTreesStyle,
 } from "../ui/pierreTheme";
-import { resolveLineRefPath } from "../ui/lineRef";
+import { type LineRef, resolveLineRefPath } from "../ui/lineRef";
 import BrowseFileView from "./BrowseFileView";
 import {
   clearCodeReferenceRequest,
@@ -80,15 +80,33 @@ type SelectedFile = {
   selectedLines?: SelectedLineRange | null;
 };
 
+type PendingCodeRef = {
+  id: number;
+  ref: LineRef;
+};
+
+type CodeBrowseTarget = {
+  repoRoot: string;
+  cwd: string | undefined;
+  selectedPath: string | null;
+  selectedLines?: SelectedLineRange | null;
+  pendingRef?: PendingCodeRef | null;
+};
+
 const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   const { themeTypeLiteral: diffTheme } = useColorScheme();
   const rightPanel = useRightPanel();
-  const [selectedFile, setSelectedFile] = createSignal<SelectedFile | null>(
+  const [diffSelectedFile, setDiffSelectedFile] =
+    createSignal<SelectedFile | null>(null);
+  const [browseTarget, setBrowseTarget] = createSignal<CodeBrowseTarget | null>(
     null,
   );
-  const [browseRepoPath, setBrowseRepoPath] = createSignal<string | null>(null);
-  const selectedPath = () => selectedFile()?.path ?? null;
-  const selectedLines = () => selectedFile()?.selectedLines ?? null;
+  const selectedPath = () =>
+    isDiffView()
+      ? (diffSelectedFile()?.path ?? null)
+      : (browseTarget()?.selectedPath ?? null);
+  const selectedLines = () =>
+    isDiffView() ? null : (browseTarget()?.selectedLines ?? null);
 
   // Read `codeMode` directly rather than projecting it from `activeTab`.
   // CodeTab now stays mounted across the Inspector tab toggle (#818); a
@@ -103,7 +121,7 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   const activeRepoPath = () => props.meta?.git?.repoRoot ?? null;
   const repoPath = () =>
     view() === "browse"
-      ? (browseRepoPath() ?? activeRepoPath())
+      ? (browseTarget()?.repoRoot ?? activeRepoPath())
       : activeRepoPath();
   const isDiffView = () => view() !== "browse";
   const diffMode = (): GitDiffMode | undefined =>
@@ -113,7 +131,7 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
     on(
       activeRepoPath,
       () => {
-        if (!codeReferenceRequest()) setBrowseRepoPath(null);
+        if (!codeReferenceRequest()) setBrowseTarget(null);
       },
       { defer: true },
     ),
@@ -200,15 +218,17 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   //
   // `::` is collision-safe as the separator: `view()` is a typed enum
   // (`"browse" | "local" | "branch"`) so it can't contain `::`, and
-  // `repoPath()` is `props.meta?.git?.repoRoot ?? null` — a real
+  // `activeRepoPath()` is `props.meta?.git?.repoRoot ?? null` — a real
   // absolute path or `null`, never the empty string that would alias
-  // null.
-  const resetKey = createMemo(() => `${repoPath() ?? ""}::${view()}`);
+  // null. Browse-target repo switches are excluded from this reset key:
+  // they are explicit navigation commands and carry their own selection.
+  const resetKey = createMemo(() => `${activeRepoPath() ?? ""}::${view()}`);
   createEffect(
     on(
       resetKey,
       () => {
-        setSelectedFile(null);
+        setDiffSelectedFile(null);
+        if (!codeReferenceRequest()) setBrowseTarget(null);
         setSearchQuery("");
       },
       { defer: true },
@@ -243,7 +263,17 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
         return [s, !s || isPending || paths.includes(s)] as const;
       },
       ([path, pathExists]) => {
-        if (path && !pathExists) setSelectedFile(null);
+        if (path && !pathExists) {
+          if (isDiffView()) {
+            setDiffSelectedFile(null);
+          } else {
+            setBrowseTarget((current) =>
+              current
+                ? { ...current, selectedPath: null, selectedLines: null }
+                : current,
+            );
+          }
+        }
       },
       { defer: true },
     ),
@@ -262,47 +292,79 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
     // ignore null and only honor explicit non-null selections. Keeping
     // the previous signal value through Pierre's internal churn lets the
     // selected file survive right-panel tab toggles (#818).
-    if (path !== null) setSelectedFile({ path });
+    if (path === null) return;
+    if (isDiffView()) {
+      setDiffSelectedFile({ path });
+      return;
+    }
+    const repo = repoPath();
+    if (!repo) return;
+    setBrowseTarget((current) => ({
+      repoRoot: current?.repoRoot ?? repo,
+      cwd: current?.cwd ?? props.meta?.cwd,
+      selectedPath: path,
+      selectedLines: null,
+      pendingRef: null,
+    }));
   };
 
   createEffect(
     on(
       () => {
         const request = codeReferenceRequest();
+        const target = browseTarget();
         return {
           request,
+          target,
           view: view(),
           repoPath: repoPath(),
           paths: treePaths(),
           pending: allPaths.pending(),
         };
       },
-      ({ request, view, repoPath, paths, pending }) => {
-        if (!request || view !== "browse") return;
-        if (browseRepoPath() !== request.repoRoot) {
-          setBrowseRepoPath(request.repoRoot);
+      ({ request, target, view, repoPath, paths, pending }) => {
+        if (
+          request &&
+          (target?.pendingRef?.id !== request.id ||
+            target.repoRoot !== request.repoRoot)
+        ) {
+          setSearchQuery("");
+          setBrowseTarget({
+            repoRoot: request.repoRoot,
+            cwd: request.cwd,
+            selectedPath: null,
+            selectedLines: null,
+            pendingRef: { id: request.id, ref: request.ref },
+          });
           return;
         }
-        if (repoPath !== request.repoRoot || pending) return;
+        const pendingRef = target?.pendingRef;
+        if (!target || !pendingRef || view !== "browse") return;
+        if (repoPath !== target.repoRoot || pending) return;
 
         const path = resolveLineRefPath({
-          rawPath: request.ref.path,
-          repoRoot: request.repoRoot,
-          cwd: request.cwd,
+          rawPath: pendingRef.ref.path,
+          repoRoot: target.repoRoot,
+          cwd: target.cwd,
           repoPaths: paths,
         });
         if (!path) {
-          toast.error(`File reference not found: ${request.ref.path}`);
-          clearCodeReferenceRequest(request.id);
+          toast.error(`File reference not found: ${pendingRef.ref.path}`);
+          setBrowseTarget({ ...target, pendingRef: null });
+          clearCodeReferenceRequest(pendingRef.id);
           return;
         }
 
-        setSearchQuery("");
-        setSelectedFile({
-          path,
-          selectedLines: { start: request.ref.start, end: request.ref.end },
+        setBrowseTarget({
+          ...target,
+          selectedPath: path,
+          selectedLines: {
+            start: pendingRef.ref.start,
+            end: pendingRef.ref.end,
+          },
+          pendingRef: null,
         });
-        clearCodeReferenceRequest(request.id);
+        clearCodeReferenceRequest(pendingRef.id);
       },
       { defer: true },
     ),
@@ -543,8 +605,8 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
                         theme={diffTheme()}
                         selectedLines={selectedLines()}
                         onLineSelected={(range) =>
-                          setSelectedFile((current) =>
-                            current?.path === path
+                          setBrowseTarget((current) =>
+                            current?.selectedPath === path
                               ? { ...current, selectedLines: range }
                               : current,
                           )
