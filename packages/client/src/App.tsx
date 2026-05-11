@@ -183,7 +183,7 @@ const App: Component = () => {
   function handleOpenCodeReference(terminalId: TerminalId, ref: LineRef) {
     const meta = store.getMetadata(terminalId);
     if (!meta) return;
-    if (openCodeReference({ terminalId, metadata: meta, ref })) {
+    if (openCodeReference({ metadata: meta, ref })) {
       store.setActiveSilently(meta.parentId ?? terminalId);
     }
   }

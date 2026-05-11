@@ -1,4 +1,4 @@
-import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
+import type { TerminalMetadata } from "kolu-common/surface";
 import { createSignal } from "solid-js";
 import type { LineRef } from "../ui/lineRef";
 import { useRightPanel } from "./useRightPanel";
@@ -6,7 +6,6 @@ import { useRightPanel } from "./useRightPanel";
 /** Pending cross-component request to open a terminal file reference. */
 export type CodeReferenceRequest = {
   id: number;
-  terminalId: TerminalId;
   repoRoot: string;
   cwd: string | undefined;
   ref: LineRef;
@@ -20,7 +19,6 @@ export const codeReferenceRequest = request;
 
 /** Open the Code tab in browse mode and publish a file-reference request. */
 export function openCodeReference(input: {
-  terminalId: TerminalId;
   metadata: TerminalMetadata;
   ref: LineRef;
 }): boolean {
@@ -30,7 +28,6 @@ export function openCodeReference(input: {
   useRightPanel().showCodeExpanded("browse");
   setRequest({
     id: ++nextRequestId,
-    terminalId: input.terminalId,
     repoRoot,
     cwd: input.metadata.cwd,
     ref: input.ref,
