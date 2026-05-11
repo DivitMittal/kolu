@@ -36,17 +36,6 @@ export function formatLineRef(
   return start === end ? `${path}:${start}` : `${path}:${start}-${end}`;
 }
 
-/** Parse a string that should contain exactly one complete line reference. */
-export function parseLineRef(text: string): LineRef | null {
-  const matches = findLineRefs(text.trim());
-  if (matches.length !== 1) return null;
-  const match = matches[0];
-  if (!match) return null;
-  return match.text === text.trim()
-    ? { path: match.path, start: match.start, end: match.end }
-    : null;
-}
-
 /** Find file line references embedded in terminal output. */
 export function findLineRefs(text: string): LineRefMatch[] {
   const refs: LineRefMatch[] = [];

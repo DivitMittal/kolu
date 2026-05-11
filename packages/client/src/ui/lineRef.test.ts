@@ -1,18 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { findLineRefs, parseLineRef, resolveLineRefPath } from "./lineRef";
+import { findLineRefs, resolveLineRefPath } from "./lineRef";
 
 describe("line refs", () => {
   it("parses single-line and range references", () => {
-    expect(parseLineRef("packages/a/src/Main.hs:109")).toEqual({
-      path: "packages/a/src/Main.hs",
-      start: 109,
-      end: 109,
-    });
-    expect(parseLineRef("./src/app.ts:4-8")).toEqual({
-      path: "./src/app.ts",
-      start: 4,
-      end: 8,
-    });
+    expect(findLineRefs("packages/a/src/Main.hs:109")).toMatchObject([
+      { path: "packages/a/src/Main.hs", start: 109, end: 109 },
+    ]);
+    expect(findLineRefs("./src/app.ts:4-8")).toMatchObject([
+      { path: "./src/app.ts", start: 4, end: 8 },
+    ]);
   });
 
   it("finds references inside terminal text without trailing punctuation", () => {
