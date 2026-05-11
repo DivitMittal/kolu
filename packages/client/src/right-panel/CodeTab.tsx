@@ -603,14 +603,7 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
                         repoPath={repo}
                         filePath={path}
                         theme={diffTheme()}
-                        selectedLines={selectedLines()}
-                        onLineSelected={(range) =>
-                          setBrowseTarget((current) =>
-                            current?.selectedPath === path
-                              ? { ...current, selectedLines: range }
-                              : current,
-                          )
-                        }
+                        initialSelectedLines={selectedLines()}
                       />
                     );
                   })()}

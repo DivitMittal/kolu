@@ -27,8 +27,7 @@ export type LineSelection = {
 };
 
 export type LineSelectionOptions = {
-  range?: Accessor<SelectedLineRange | null | undefined>;
-  onRangeChange?: (range: SelectedLineRange | null) => void;
+  initialRange?: Accessor<SelectedLineRange | null | undefined>;
 };
 
 export function useLineSelection(
@@ -36,27 +35,25 @@ export function useLineSelection(
   options: LineSelectionOptions = {},
 ): LineSelection {
   const [range, setRange] = createSignal<SelectedLineRange | null>(null);
-  const currentRange = () => options.range?.() ?? range();
+  const currentRange = () => range();
 
   // A new file replaces the old selection scope — drop it so a stale
   // "Copy path:N" menu entry from the previous file can't surface.
   createEffect(
+    on(path, () => setRange(options.initialRange?.() ?? null), { defer: true }),
+  );
+
+  createEffect(
     on(
-      path,
-      () => {
-        setRange(null);
-        options.onRangeChange?.(null);
-      },
+      () => options.initialRange?.() ?? null,
+      (initial) => setRange(initial),
       { defer: true },
     ),
   );
 
   return {
     range: currentRange,
-    handleSelect: (r) => {
-      setRange(r);
-      options.onRangeChange?.(r);
-    },
+    handleSelect: (r) => setRange(r),
     buildItems: () => {
       const items: CodeContextMenuItem[] = [
         { label: "Copy path", textToCopy: path() },

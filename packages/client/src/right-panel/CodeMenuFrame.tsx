@@ -21,15 +21,13 @@ export type CodeMenuFrameProps = {
   /** Render the inner Pierre viewer. Pass `selection.handleSelect` to its
    *  `onLineSelected` prop so range updates reach the menu. */
   children: (selection: LineSelection) => JSX.Element;
-  selectedLines?: SelectedLineRange | null;
-  onLineSelected?: (range: SelectedLineRange | null) => void;
+  initialSelectedLines?: SelectedLineRange | null;
 };
 
 export const CodeMenuFrame: Component<CodeMenuFrameProps> = (props) => {
   let menuCtrl: CodeContextMenuController | undefined;
   const selection = useLineSelection(() => props.path, {
-    range: () => props.selectedLines,
-    onRangeChange: props.onLineSelected,
+    initialRange: () => props.initialSelectedLines,
   });
   return (
     <div

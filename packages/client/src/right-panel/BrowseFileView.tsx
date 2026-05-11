@@ -17,8 +17,7 @@ export type BrowseFileViewProps = {
   repoPath: string;
   filePath: string;
   theme: "light" | "dark";
-  selectedLines?: SelectedLineRange | null;
-  onLineSelected?: (range: SelectedLineRange | null) => void;
+  initialSelectedLines?: SelectedLineRange | null;
 };
 
 const BrowseFileView: Component<BrowseFileViewProps> = (props) => {
@@ -46,8 +45,7 @@ const BrowseFileView: Component<BrowseFileViewProps> = (props) => {
             </Show>
             <CodeMenuFrame
               path={props.filePath}
-              selectedLines={props.selectedLines}
-              onLineSelected={props.onLineSelected}
+              initialSelectedLines={props.initialSelectedLines}
             >
               {(selection) => (
                 // `<Virtualizer>` upgrades `<FileView>` to Pierre's
@@ -64,7 +62,7 @@ const BrowseFileView: Component<BrowseFileViewProps> = (props) => {
                     theme={props.theme}
                     overflow="wrap"
                     enableLineSelection
-                    selectedLines={props.selectedLines}
+                    selectedLines={selection.range()}
                     onLineSelected={selection.handleSelect}
                     onError={(err) =>
                       toast.error(`File render failed: ${err.message}`)
