@@ -34,7 +34,9 @@ export function useLineSelection(
   path: Accessor<string>,
   options: LineSelectionOptions = {},
 ): LineSelection {
-  const [range, setRange] = createSignal<SelectedLineRange | null>(null);
+  const [range, setRange] = createSignal<SelectedLineRange | null>(
+    options.initialRange?.() ?? null,
+  );
   const currentRange = () => range();
 
   // A new file replaces the old selection scope — drop it so a stale
