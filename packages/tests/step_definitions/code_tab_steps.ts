@@ -164,11 +164,6 @@ async function findTerminalRefPoint(
             getLine(index: number): BufferLine | undefined;
           };
         };
-        _core?: {
-          _renderService?: {
-            dimensions?: { css?: { cell?: { width: number; height: number } } };
-          };
-        };
       };
       const container = document.querySelector(sel) as
         | (HTMLElement & { __xterm?: XtermForClick })
@@ -185,9 +180,8 @@ async function findTerminalRefPoint(
         if (col < 0) continue;
 
         const rect = screen.getBoundingClientRect();
-        const cell = term._core?._renderService?.dimensions?.css?.cell;
-        const cellWidth = cell?.width ?? rect.width / term.cols;
-        const cellHeight = cell?.height ?? rect.height / term.rows;
+        const cellWidth = rect.width / term.cols;
+        const cellHeight = rect.height / term.rows;
         return {
           x: rect.left + (col + 0.5) * cellWidth,
           y: rect.top + (row - viewportTop + 0.5) * cellHeight,
