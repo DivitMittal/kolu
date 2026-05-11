@@ -31,6 +31,7 @@ describe("line refs", () => {
   it("ignores urls and non-path labels", () => {
     expect(findLineRefs("http://example.com/src/app.ts:12")).toEqual([]);
     expect(findLineRefs("error:12")).toEqual([]);
+    expect(findLineRefs("~/src/app.ts:12")).toEqual([]);
   });
 });
 

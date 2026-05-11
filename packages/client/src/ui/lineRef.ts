@@ -21,9 +21,9 @@ export type LineRefPathResolutionInput = {
 };
 
 const LINE_REF_RE =
-  /((?:~\/|\.\.?\/|\/)?[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*):([1-9]\d*)(?:-([1-9]\d*))?/g;
+  /((?:\.\.?\/|\/)?[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*):([1-9]\d*)(?:-([1-9]\d*))?/g;
 
-const PATH_CHAR_RE = /[A-Za-z0-9._@+/-]/;
+const PATH_CHAR_RE = /[A-Za-z0-9._@+~/-]/;
 
 export function formatLineRef(
   path: string,
@@ -95,7 +95,6 @@ function looksLikeFilePath(path: string): boolean {
   return (
     path.includes("/") ||
     path.includes(".") ||
-    path.startsWith("~/") ||
     path.startsWith("./") ||
     path.startsWith("../")
   );
