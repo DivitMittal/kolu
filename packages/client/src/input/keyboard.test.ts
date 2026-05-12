@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./platform", () => ({ isMac: false }));
 
 import { matchesAnyShortcut } from "./actions";
-import { formatKeybind, type Keybind, matchesKeybind } from "./keyboard";
+import {
+  formatKeybind,
+  isCopySelectionChord,
+  type Keybind,
+  matchesKeybind,
+} from "./keyboard";
 
 function makeEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
   return {
@@ -159,5 +164,39 @@ describe("matchesAnyShortcut", () => {
 
   it("does not match random key", () => {
     expect(matchesAnyShortcut(makeEvent({ key: "z" }))).toBe(false);
+  });
+});
+
+describe("isCopySelectionChord (non-mac)", () => {
+  it("matches Ctrl+Shift+C", () => {
+    expect(
+      isCopySelectionChord(
+        makeEvent({ key: "C", code: "KeyC", ctrlKey: true, shiftKey: true }),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects Ctrl+C (no shift)", () => {
+    expect(
+      isCopySelectionChord(
+        makeEvent({ key: "c", code: "KeyC", ctrlKey: true }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects Shift+C (no ctrl)", () => {
+    expect(
+      isCopySelectionChord(
+        makeEvent({ key: "C", code: "KeyC", shiftKey: true }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects Ctrl+Shift+V", () => {
+    expect(
+      isCopySelectionChord(
+        makeEvent({ key: "V", code: "KeyV", ctrlKey: true, shiftKey: true }),
+      ),
+    ).toBe(false);
   });
 });
