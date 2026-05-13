@@ -88,12 +88,6 @@ function bucket(repoRoot: string): Bucket {
   return b;
 }
 
-let counter = 0;
-function mintId(): string {
-  counter += 1;
-  return `c${Date.now().toString(36)}-${counter.toString(36)}`;
-}
-
 export type CommentInput = {
   path: string;
   startLine: number;
@@ -150,7 +144,7 @@ export function useComments(repoRoot: Accessor<string | null>): CommentsApi {
       const b = bucket(r);
       b.setComments((prev) => [
         ...prev,
-        { id: mintId(), createdAt: Date.now(), ...input },
+        { id: crypto.randomUUID(), createdAt: Date.now(), ...input },
       ]);
     },
     removeComment: (id) => {
