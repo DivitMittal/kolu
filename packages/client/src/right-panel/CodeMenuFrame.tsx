@@ -6,7 +6,7 @@
  *  selection range stays in sync with what the menu offers. */
 
 import type { SelectedLineRange } from "@kolu/solid-pierre";
-import { type Component, createEffect, type JSX, on } from "solid-js";
+import type { Component, JSX } from "solid-js";
 import {
   CodeContextMenu,
   type CodeContextMenuController,
@@ -32,16 +32,15 @@ export type CodeMenuFrameProps = {
 
 export const CodeMenuFrame: Component<CodeMenuFrameProps> = (props) => {
   let menuCtrl: CodeContextMenuController | undefined;
+  // Forwarding goes through `useLineSelection.onChange` — synchronous,
+  // fires inside the same call that mutates the internal range. A
+  // deferred `createEffect` forwarder would let one frame's worth of
+  // stale range survive a keyed file switch and let a fast Ctrl+Enter
+  // submit a comment anchored to the wrong file.
   const selection = useLineSelection(() => props.path, {
     initialRange: () => props.initialSelectedLines,
+    onChange: (range) => props.onSelectionChange?.(range),
   });
-  // Forwarding effect lives on the frame, not the renderer, so both Pierre
-  // call sites (diff + browse) inherit it without per-callsite wiring.
-  createEffect(
-    on(selection.range, (range) => props.onSelectionChange?.(range), {
-      defer: true,
-    }),
-  );
   return (
     <div
       // Attach contextmenu via addEventListener so the host div doesn't

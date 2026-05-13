@@ -34,6 +34,12 @@ export interface LineSelectionOptions {
    *  effect below pushes it into the controller's range, which means
    *  the right-click menu and the Pierre highlight stay in sync. */
   initialRange?: Accessor<SelectedLineRange | null | undefined>;
+  /** Synchronous outbound callback fired on every range change — user
+   *  drags, programmatic seeds via `initialRange`, file-switch resets
+   *  to null. Synchronous on purpose: a deferred forwarder would let
+   *  one frame's worth of stale range survive a file switch and let a
+   *  fast Ctrl+Enter submit a comment anchored to the wrong file. */
+  onChange?: (range: SelectedLineRange | null) => void;
 }
 
 export function useLineSelection(
@@ -44,22 +50,28 @@ export function useLineSelection(
     options.initialRange?.() ?? null,
   );
 
+  const setAndForward = (r: SelectedLineRange | null) => {
+    setRange(r);
+    options.onChange?.(r);
+  };
+
   // Reseed the controller on either trigger — a new file replaces the
   // selection scope (a stale "Copy path:N" entry must not survive),
   // and an external request ticks `initialRange` with the new target.
   // Both seed from the same source, so one effect with a combined
-  // dep tuple suffices.
+  // dep tuple suffices. Goes through `setAndForward` so external
+  // observers see file-switch resets without a separate forwarder.
   createEffect(
     on(
       () => [path(), options.initialRange?.() ?? null] as const,
-      ([, initial]) => setRange(initial),
+      ([, initial]) => setAndForward(initial),
       { defer: true },
     ),
   );
 
   return {
     range,
-    handleSelect: (r) => setRange(r),
+    handleSelect: setAndForward,
     buildItems: () => {
       const items: CodeContextMenuItem[] = [
         { label: "Copy path", textToCopy: path() },
