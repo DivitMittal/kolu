@@ -43,6 +43,7 @@ import MobileTileView from "./MobileTileView";
 import { useRecorder } from "./recorder/useRecorder";
 import WebcamOverlay from "./recorder/WebcamOverlay";
 import RightPanelLayout from "./right-panel/RightPanelLayout";
+import { toggleCommentMode } from "./right-panel/useCommentMode";
 import { useRightPanel } from "./right-panel/useRightPanel";
 import { client } from "./wire";
 import { serverProcessId, wsStatus } from "./rpc/rpc";
@@ -214,6 +215,14 @@ const App: Component = () => {
     handleScreenshotTerminal: () => handleScreenshotTerminal(),
     toggleRightPanel: rightPanel.togglePanel,
     toggleRecordingPause: () => useRecorder().togglePause(),
+    // Opening the right panel + Code tab + ensuring the tray appears even
+    // when comments is empty puts the user one click from the composer —
+    // the keybind/palette flow doesn't make sense if mode toggles on but
+    // the tray is hidden behind the inspector panel.
+    toggleCommentMode: () => {
+      rightPanel.openCodeBrowser();
+      toggleCommentMode();
+    },
   };
 
   useShortcuts(actionContext);

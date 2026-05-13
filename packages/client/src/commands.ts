@@ -178,6 +178,10 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
         ]
       : []),
     actionPaletteCommand("toggleRightPanel", deps),
+    actionPaletteCommand("toggleCommentMode", deps, {
+      description:
+        "Open the Code tab and toggle annotation mode for clipboard-flush feedback",
+    }),
     ...(!deps.isMobile()
       ? [
           actionPaletteCommand("openWorkspaceSwitcher", deps),

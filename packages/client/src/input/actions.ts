@@ -42,6 +42,7 @@ export interface ActionContext {
   handleScreenshotTerminal: () => void;
   toggleRightPanel: () => void;
   toggleRecordingPause: () => void;
+  toggleCommentMode: () => void;
 }
 
 interface AppActionBase {
@@ -238,6 +239,14 @@ const _ACTIONS = {
     label: "Pause / resume recording",
     keybind: { key: ".", code: "Period", mod: true, shift: true },
     handler: (ctx) => ctx.toggleRecordingPause(),
+  },
+  toggleCommentMode: {
+    label: "Toggle comment mode",
+    // Mod+Shift+/ — slash is the universal "?" key, and Shift+? reads
+    // as "query / note?" which is the right mnemonic for "annotate."
+    // Avoids the Mod+/ chord that ShortcutsHelp owns.
+    keybind: { key: "?", code: "Slash", mod: true, shift: true },
+    handler: (ctx) => ctx.toggleCommentMode(),
   },
 } satisfies Record<string, AppAction>;
 

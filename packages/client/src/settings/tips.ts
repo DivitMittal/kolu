@@ -99,4 +99,8 @@ export const AMBIENT_TIPS: readonly Tip[] = [
     id: "amb-minimap-window",
     text: "Click the `All` chip in the minimap's zoom bar to pick an activity window (4h/12h/24h/48h) — older tiles collapse to small ghost markers so attention stays on what's still in play",
   },
+  {
+    id: "amb-comment-mode",
+    text: `${formatKeybind(ACTIONS.toggleCommentMode.keybind)} opens the Code tab in comment mode — click a line, attach a note, flush the whole queue to your clipboard with one button`,
+  },
 ];
