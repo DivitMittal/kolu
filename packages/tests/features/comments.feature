@@ -37,7 +37,7 @@ Feature: Comment mode (inline composer + tray roll-up)
     And I press Enter to submit the inline comment
     Then the comments tray should list 1 comment
     When I click the Copy-to-clipboard button
-    Then the clipboard text should contain "`a.ts:L1`"
+    Then the clipboard text should contain "`a.ts:1`"
     And the clipboard text should contain "tighten this"
     And the comments tray should list 0 comments
 

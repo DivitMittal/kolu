@@ -12,17 +12,17 @@ const sample = (overrides: Partial<Comment> = {}): Comment => ({
 });
 
 describe("serializeComments", () => {
-  it("renders a Markdown bullet per comment with a code-spanned path:Lrange ref", () => {
+  it("renders a Markdown bullet per comment with a code-spanned path:range ref (agent-native, no L prefix)", () => {
     expect(
       serializeComments([
         sample({ startLine: 12, endLine: 18, text: "shorten" }),
       ]),
-    ).toBe("- `src/foo.ts:L12-18` — shorten\n");
+    ).toBe("- `src/foo.ts:12-18` — shorten\n");
   });
 
-  it("emits single-line refs as Lstart (no -end suffix)", () => {
+  it("emits single-line refs as bare start (no -end suffix)", () => {
     expect(serializeComments([sample({ startLine: 42, endLine: 42 })])).toBe(
-      "- `src/foo.ts:L42` — tighten this\n",
+      "- `src/foo.ts:42` — tighten this\n",
     );
   });
 
@@ -51,7 +51,7 @@ describe("serializeComments", () => {
       }),
     ]);
     expect(out).toBe(
-      "- `src/aaa.ts:L7` — A\n- `src/aaa.ts:L100` — C\n- `src/zzz.ts:L5` — B\n",
+      "- `src/aaa.ts:7` — A\n- `src/aaa.ts:100` — C\n- `src/zzz.ts:5` — B\n",
     );
   });
 

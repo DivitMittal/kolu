@@ -1,9 +1,15 @@
-/** Clipboard payload — a Markdown bullet list (`- \`path:Lrange\` — text`)
+/** Clipboard payload — a Markdown bullet list (`- \`path:N-M\` — text`)
  *  sorted by (path, startLine) so the paste reads as a repo walk, not
  *  click order. Plain Markdown by design: the user (or an agent prompt
- *  template) decides what prefix or framing wraps the list. */
+ *  template) decides what prefix or framing wraps the list.
+ *
+ *  Line refs use `path:N` (not `path:LN`) because that's the agent-CLI
+ *  lingua franca — what `grep -n`, ripgrep, stack traces, VS Code, and
+ *  vim all emit, and what `claude` / `codex` / `opencode` parse natively
+ *  for their `Read` tools. The `LN` GitHub-permalink flavor is a URL
+ *  thing and gains nothing in a paste-to-terminal flow. */
 
-import { formatLPathRef } from "../ui/lineRef";
+import { formatLineRef } from "../ui/lineRef";
 
 export type Comment = {
   id: string;
@@ -23,7 +29,7 @@ export function serializeComments(comments: readonly Comment[]): string {
   return `${sorted
     .map(
       (c) =>
-        `- \`${formatLPathRef(c.path, c.startLine, c.endLine)}\` — ${c.text}`,
+        `- \`${formatLineRef(c.path, c.startLine, c.endLine)}\` — ${c.text}`,
     )
     .join("\n")}\n`;
 }

@@ -14,7 +14,7 @@ import { type Component, createMemo, For, Show } from "solid-js";
 import { toast } from "solid-sonner";
 import { writeTextToClipboard } from "../terminal/clipboard";
 import { CloseIcon } from "../ui/Icons";
-import { formatLPathRef } from "../ui/lineRef";
+import { formatLineRef } from "../ui/lineRef";
 import type { Comment } from "./commentSerialize";
 import { serializeComments } from "./commentSerialize";
 import type { CommentsApi } from "./useComments";
@@ -151,7 +151,7 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
                       title="Jump to this line"
                       data-testid={commentsTestIds.jump}
                     >
-                      {formatLPathRef(c.path, c.startLine, c.endLine)}
+                      {formatLineRef(c.path, c.startLine, c.endLine)}
                     </button>
                     <button
                       type="button"

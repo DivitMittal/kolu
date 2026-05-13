@@ -5,7 +5,7 @@
  *  for the "New terminal" global keybind so we don't want to collide. */
 
 import { type Component, createSignal, onMount } from "solid-js";
-import { formatLPathRef } from "../ui/lineRef";
+import { formatLineRef } from "../ui/lineRef";
 
 export const composerTestIds = {
   root: "comment-composer",
@@ -64,7 +64,7 @@ const CommentComposer: Component<CommentComposerProps> = (props) => {
       data-testid={composerTestIds.root}
     >
       <div class="font-mono text-[10px] text-fg-3 truncate">
-        {formatLPathRef(props.path, props.startLine, props.endLine)}
+        {formatLineRef(props.path, props.startLine, props.endLine)}
       </div>
       <textarea
         ref={textarea}
