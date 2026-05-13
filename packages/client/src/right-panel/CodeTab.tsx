@@ -34,7 +34,12 @@ import {
 import { toast } from "solid-sonner";
 import { useColorScheme } from "../settings/useColorScheme";
 import { app } from "../wire";
-import { FileBrowseIcon, FileDiffIcon, GitBranchIcon } from "../ui/Icons";
+import {
+  CommentIcon,
+  FileBrowseIcon,
+  FileDiffIcon,
+  GitBranchIcon,
+} from "../ui/Icons";
 import {
   renderTreeContextMenu,
   toGitStatusEntries,
@@ -458,17 +463,15 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
           <FileSearchInput value={searchQuery()} onChange={setSearchQuery} />
           <button
             type="button"
-            class={`px-1.5 h-5 rounded text-[10px] border ${
-              commentModeEnabled()
-                ? "border-accent text-accent bg-accent/10"
-                : "border-edge text-fg-3/70 hover:text-fg-2 hover:bg-surface-1"
-            }`}
+            class="flex items-center gap-1.5 px-2 h-5 rounded text-[10px] font-mono cursor-pointer transition-colors bg-surface-2/40 hover:bg-surface-2/80 text-fg-2 hover:text-fg data-[active=true]:bg-surface-0 data-[active=true]:text-fg data-[active=true]:shadow-sm"
+            data-active={commentModeEnabled()}
             onClick={toggleCommentMode}
             aria-pressed={commentModeEnabled()}
             data-testid="comment-mode-toggle"
             title="Toggle comment mode (annotate lines, copy to clipboard)"
           >
-            💬 {commentModeEnabled() ? "On" : "Off"}
+            <CommentIcon class="w-3 h-3" />
+            Comment
           </button>
         </div>
 

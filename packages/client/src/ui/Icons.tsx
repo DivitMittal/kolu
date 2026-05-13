@@ -126,6 +126,22 @@ export const DiffBranchIcon: Component<{ class?: string }> = (props) => (
   </svg>
 );
 
+/** Speech-bubble outline — used by the Code-tab comment-mode toggle. */
+export const CommentIcon: Component<{ class?: string }> = (props) => (
+  <svg
+    class={props.class ?? "w-3.5 h-3.5"}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M2 3.5h12v8H6l-3 2.5v-2.5H2v-8z" />
+  </svg>
+);
+
 export const CloseIcon: Component<{ class?: string }> = (props) => (
   <svg
     class={props.class ?? "w-3.5 h-3.5"}
