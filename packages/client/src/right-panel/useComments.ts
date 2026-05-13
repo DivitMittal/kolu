@@ -13,7 +13,13 @@
  *  a session-wide UI preference, not per-worktree content. */
 
 import { makePersisted } from "@solid-primitives/storage";
-import { type Accessor, createSignal, type Setter } from "solid-js";
+import {
+  type Accessor,
+  createEffect,
+  createSignal,
+  onCleanup,
+  type Setter,
+} from "solid-js";
 import type { Comment } from "./commentSerialize";
 
 type Bucket = {
@@ -66,9 +72,35 @@ export type CommentsApi = {
   clear: () => void;
 };
 
+/** Sweep the in-memory bucket for `repoRoot` if (a) it carries no
+ *  queued comments and (b) it differs from the currently-active one.
+ *  The persisted localStorage entry stays put — a future visit to the
+ *  same repoRoot will rehydrate from there. We're only freeing the
+ *  process-resident `Map` entry so a long-running session that touches
+ *  many distinct worktrees doesn't grow unbounded. */
+function sweepIfEmpty(repoRoot: string, current: string | null): void {
+  if (repoRoot === current) return;
+  const b = buckets.get(repoRoot);
+  if (b && b.comments().length === 0) buckets.delete(repoRoot);
+}
+
 export function useComments(repoRoot: Accessor<string | null>): CommentsApi {
   // Reactive bucket selection — when the active terminal moves to a
-  // different worktree, the accessors below transparently switch.
+  // different worktree, the accessors below transparently switch. We
+  // additionally sweep the previous bucket's in-memory entry if empty,
+  // so a session that walks N worktrees doesn't leave N entries behind
+  // in the singleton Map.
+  let prev: string | null = null;
+  createEffect(() => {
+    const r = repoRoot();
+    if (prev !== null && prev !== r) sweepIfEmpty(prev, r);
+    prev = r;
+  });
+  onCleanup(() => {
+    if (prev !== null) sweepIfEmpty(prev, null);
+    prev = null;
+  });
+
   const empty: readonly Comment[] = [];
   const list: Accessor<readonly Comment[]> = () => {
     const r = repoRoot();
