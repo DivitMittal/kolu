@@ -477,6 +477,7 @@ const App: Component = () => {
         <ChromeBar
           status={wsStatus()}
           onOpenPalette={() => openPalette()}
+          activeRepoRoot={() => store.activeMeta()?.git?.repoRoot ?? null}
           workspaceSwitcher={
             <WorkspaceSwitcher
               entries={workspaceEntries()}

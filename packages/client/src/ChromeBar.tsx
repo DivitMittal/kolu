@@ -24,6 +24,7 @@ import { useViewPosture } from "./canvas/useViewPosture";
 import { ACTIONS } from "./input/actions";
 import { formatKeybind } from "./input/keyboard";
 import RecordButton from "./recorder/RecordButton";
+import CommentCountBadge from "./right-panel/CommentCountBadge";
 import { useRightPanel } from "./right-panel/useRightPanel";
 import type { WsStatus } from "./rpc/rpc";
 import SettingsPopover from "./settings/SettingsPopover";
@@ -44,6 +45,10 @@ const ChromeBar: Component<{
    *  ChromeBar is a layout host (logo + switcher + controls); it doesn't need
    *  to know the switcher's prop shape, just where to drop it. */
   workspaceSwitcher: JSX.Element;
+  /** Active terminal's repo root, used to scope the comments-count badge
+   *  to that worktree. Accessor so the badge re-reads when the user
+   *  switches terminals across worktrees. */
+  activeRepoRoot: () => string | null;
 }> = (props) => {
   const rightPanel = useRightPanel();
   const posture = useViewPosture();
@@ -122,6 +127,7 @@ const ChromeBar: Component<{
        *  area covered when the cluster overlaps the right panel pass
        *  clicks through; each button re-enables pointer-events-auto. */}
       <div class="flex items-center gap-2 shrink-0">
+        <CommentCountBadge activeRepoRoot={props.activeRepoRoot} />
         <RecordButton />
         <Tip
           label={`Toggle inspector (${formatKeybind(ACTIONS.toggleRightPanel.keybind)})`}
