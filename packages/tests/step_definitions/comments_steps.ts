@@ -91,23 +91,6 @@ Then(
 );
 
 Then(
-  "the clipboard text should match the kolu-comments-v1 envelope",
-  async function (this: KoluWorld) {
-    // Poll: the clipboard write is async, and on slower runners the
-    // read can outrun it. waitForFunction retries until the condition
-    // holds or POLL_TIMEOUT expires.
-    await this.page.waitForFunction(
-      () =>
-        navigator.clipboard
-          .readText()
-          .then((t) => t.startsWith("[kolu comments v1]\n")),
-      undefined,
-      { timeout: POLL_TIMEOUT },
-    );
-  },
-);
-
-Then(
   "the clipboard text should contain {string}",
   async function (this: KoluWorld, needle: string) {
     await this.page.waitForFunction(

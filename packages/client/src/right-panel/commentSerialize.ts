@@ -1,9 +1,7 @@
-/** Clipboard payload — `[kolu comments v1]` envelope is the stable
- *  contract; agents parse the version to dispatch. Body is a Markdown
- *  bullet list (`- \`path:Lrange\` — text`) so the same payload renders
- *  cleanly in GitHub / Slack / chat surfaces while staying mechanical
- *  enough for an agent to regex out. Sorted by (path, startLine) so the
- *  paste reads as a repo walk. */
+/** Clipboard payload — a Markdown bullet list (`- \`path:Lrange\` — text`)
+ *  sorted by (path, startLine) so the paste reads as a repo walk, not
+ *  click order. Plain Markdown by design: the user (or an agent prompt
+ *  template) decides what prefix or framing wraps the list. */
 
 import { formatLPathRef } from "../ui/lineRef";
 
@@ -16,18 +14,16 @@ export type Comment = {
   createdAt: number;
 };
 
-const HEADER = "[kolu comments v1]";
-
 export function serializeComments(comments: readonly Comment[]): string {
+  if (comments.length === 0) return "";
   const sorted = [...comments].sort((a, b) => {
     if (a.path !== b.path) return a.path.localeCompare(b.path);
     return a.startLine - b.startLine;
   });
-  const body = sorted
+  return `${sorted
     .map(
       (c) =>
         `- \`${formatLPathRef(c.path, c.startLine, c.endLine)}\` — ${c.text}`,
     )
-    .join("\n");
-  return `${HEADER}\n\n${body}\n`;
+    .join("\n")}\n`;
 }

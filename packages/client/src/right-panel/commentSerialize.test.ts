@@ -12,22 +12,17 @@ const sample = (overrides: Partial<Comment> = {}): Comment => ({
 });
 
 describe("serializeComments", () => {
-  it("wraps with the versioned header so agents can detect the payload shape", () => {
-    const out = serializeComments([sample()]);
-    expect(out.startsWith("[kolu comments v1]\n\n")).toBe(true);
-  });
-
   it("renders a Markdown bullet per comment with a code-spanned path:Lrange ref", () => {
     expect(
       serializeComments([
         sample({ startLine: 12, endLine: 18, text: "shorten" }),
       ]),
-    ).toBe("[kolu comments v1]\n\n- `src/foo.ts:L12-18` — shorten\n");
+    ).toBe("- `src/foo.ts:L12-18` — shorten\n");
   });
 
   it("emits single-line refs as Lstart (no -end suffix)", () => {
     expect(serializeComments([sample({ startLine: 42, endLine: 42 })])).toBe(
-      "[kolu comments v1]\n\n- `src/foo.ts:L42` — tighten this\n",
+      "- `src/foo.ts:L42` — tighten this\n",
     );
   });
 
@@ -56,11 +51,11 @@ describe("serializeComments", () => {
       }),
     ]);
     expect(out).toBe(
-      "[kolu comments v1]\n\n- `src/aaa.ts:L7` — A\n- `src/aaa.ts:L100` — C\n- `src/zzz.ts:L5` — B\n",
+      "- `src/aaa.ts:L7` — A\n- `src/aaa.ts:L100` — C\n- `src/zzz.ts:L5` — B\n",
     );
   });
 
-  it("emits the header even when the list is empty (consumers can detect a no-op flush)", () => {
-    expect(serializeComments([])).toBe("[kolu comments v1]\n\n\n");
+  it("returns the empty string when the list is empty (defensive — Copy button is disabled in that case)", () => {
+    expect(serializeComments([])).toBe("");
   });
 });
