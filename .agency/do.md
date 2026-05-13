@@ -24,6 +24,7 @@ Keep these docs in sync:
 
 - **`README.md`** (top-level) — user-facing changes, architecture prose, transport-resilience description.
 - **`packages/surface/README.md`** — the `@kolu/surface` framework reference. The "How Kolu uses this framework" section is a concrete inventory of every cell, collection, and stream descriptor plus the raw-oRPC procedures that stay outside the framework. Update it whenever a new descriptor lands or whenever a contract entry's classification changes (added mutation, retired stream, …).
+- **`website/src/pages/index.astro`** — the kolu.dev landing page. Its hand-maintained `features` array (and the `NN features` count chip) must mirror the top-level `README.md`'s feature sections: when you add a `### NewThing` section to the README's Features region, add a corresponding tile to `features` and bump the chip count. The website is deployed independently (its own flake under `website/`), but treating the README and the landing page as one set keeps the public face from drifting behind the project's own description.
 
 ## PR evidence
 
