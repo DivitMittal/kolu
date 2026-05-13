@@ -41,11 +41,21 @@ reliably deliver the same `Cmd+Shift+[` input to the app.
 
 | Cycle | Platform | Target | Classification | Change | Re-measure |
 | ----- | -------- | ------ | -------------- | ------ | ---------- |
-| 1 | macOS primary, Linux regression guard | `nextTerminal` / `prevTerminal` shortcut registration and e2e step | Browser-reserved platform chord: `Cmd+Shift+[` / `Cmd+Shift+]` overlaps macOS Chrome tab navigation, so it is not reliable app input | Move next/previous terminal to physical `Ctrl+Shift+[` / `Ctrl+Shift+]` in the action registry and make the e2e step press that same physical chord | pending |
+| 1 | macOS primary, Linux regression guard | `nextTerminal` / `prevTerminal` shortcut registration and e2e step | Browser-reserved platform chord: `Cmd+Shift+[` / `Cmd+Shift+]` overlaps macOS Chrome tab navigation, so it is not reliable app input | Move next/previous terminal to physical `Ctrl+Shift+[` / `Ctrl+Shift+]` in the action registry and make the e2e step press that same physical chord | post1: Linux 295/295, macOS 295/295; post2: Linux 295/295, macOS 295/295 |
 
 ## Final Measurement
 
-Pending.
+Post-fix HEAD: `2f69016`
+
+| Run | Platform | Result | CI status description |
+| --- | -------- | ------ | --------------------- |
+| post1 | `x86_64-linux` | 295 / 295 passed | `86s; .logs/2f69016/e2e@x86_64-linux.log` |
+| post1 | `aarch64-darwin` (`sincereintent`) | 295 / 295 passed | `120s; .logs/2f69016/e2e@aarch64-darwin.log` |
+| post2 | `x86_64-linux` | 295 / 295 passed | `83s; .logs/2f69016/e2e@x86_64-linux.log` |
+| post2 | `aarch64-darwin` (`sincereintent`) | 295 / 295 passed | `118s; .logs/2f69016/e2e@aarch64-darwin.log` |
+
+The original macOS failure class did not recur in either post-fix paired run.
+Linux stayed green before and after the shortcut change.
 
 ## Findings
 
@@ -54,7 +64,12 @@ Pending.
 - The first observed failure is not a generic timing problem. It is a shortcut
   ownership problem: app-level terminal cycling used the platform modifier, but
   macOS Chrome already owns `Cmd+Shift+[` / `Cmd+Shift+]` for tab navigation.
+- The action registry already distinguishes platform `mod` from physical
+  `ctrl`; using that existing type-level distinction keeps the fix local to the
+  shortcut declaration and lets the help/palette formatting update
+  automatically.
 
 ## Dead Ends
 
-Pending.
+- No additional failure classes surfaced in the two paired post-fix runs, so no
+  second mutation cycle was started.
