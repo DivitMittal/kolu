@@ -11,7 +11,7 @@
  *  the count and provides feedback if `navigator.clipboard` rejects.  */
 
 import type { SelectedLineRange } from "@kolu/solid-pierre";
-import { type Component, createSignal, For, Show } from "solid-js";
+import { type Component, createMemo, createSignal, For, Show } from "solid-js";
 import { toast } from "solid-sonner";
 import { writeTextToClipboard } from "../terminal/clipboard";
 import { CloseIcon } from "../ui/Icons";
@@ -56,6 +56,9 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
   // is acceptable: at that point the user has neither selection nor
   // any committed comments, and the close gesture is itself a discard.
   const [draft, setDraft] = createSignal("");
+  // Memoize so each render and child binding shares one tracked read,
+  // not six fresh subscriptions through the bucket Map.
+  const comments = createMemo(() => props.api.comments());
 
   const canAdd = () =>
     props.currentPath() !== null &&
@@ -84,7 +87,7 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
   };
 
   const copyAndClear = async () => {
-    const list = props.api.comments();
+    const list = comments();
     if (list.length === 0) return;
     const payload = serializeComments(list);
     try {
@@ -109,13 +112,13 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
     >
       <div class="flex items-center h-7 px-2 border-b border-edge shrink-0 gap-2">
         <span class="font-medium text-fg-2">
-          Comments ({props.api.comments().length})
+          Comments ({comments().length})
         </span>
         <div class="flex-1" />
         <button
           type="button"
           class={TRAY_PRIMARY_BUTTON_CLASS}
-          disabled={props.api.comments().length === 0}
+          disabled={comments().length === 0}
           onClick={copyAndClear}
           data-testid={commentsTestIds.copy}
         >
@@ -129,11 +132,11 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
           // second arm keeps the tray open) — the click would silently
           // do nothing. Disable the button instead, so the user clears
           // or copy-and-clears first.
-          disabled={props.api.comments().length > 0}
+          disabled={comments().length > 0}
           onClick={props.onClose}
           aria-label="Close comments tray"
           title={
-            props.api.comments().length > 0
+            comments().length > 0
               ? "Clear or copy comments before closing the tray"
               : "Close comments tray"
           }
@@ -196,7 +199,7 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
         data-testid={commentsTestIds.list}
       >
         <Show
-          when={props.api.comments().length > 0}
+          when={comments().length > 0}
           fallback={
             <div class="px-2 py-3 text-fg-3/40 text-center text-[10px]">
               No comments yet.
@@ -204,7 +207,7 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
           }
         >
           <ul class="flex flex-col">
-            <For each={props.api.comments()}>
+            <For each={comments()}>
               {(c) => (
                 <li
                   class="flex flex-col gap-0.5 px-2 py-1.5 border-b border-edge/40 last:border-b-0"
