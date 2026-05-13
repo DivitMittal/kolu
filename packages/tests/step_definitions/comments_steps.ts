@@ -59,27 +59,29 @@ Then("the comments tray should be hidden", async function (this: KoluWorld) {
   await tray.waitFor({ state: "detached", timeout: POLL_TIMEOUT });
 });
 
+async function assertCommentCount(world: KoluWorld, expected: number) {
+  await world.page.waitForFunction(
+    (n) =>
+      document.querySelectorAll('[data-testid="comments-item"]').length === n,
+    expected,
+    { timeout: POLL_TIMEOUT },
+  );
+}
+
+// One step handler for both singular and plural so the feature reads
+// naturally ("0 comments", "1 comment", "3 comments") without two
+// byte-identical Then bodies drifting from each other.
 Then(
   "the comments tray should list {int} comment",
-  async function (this: KoluWorld, expected: number) {
-    await this.page.waitForFunction(
-      (n) =>
-        document.querySelectorAll('[data-testid="comments-item"]').length === n,
-      expected,
-      { timeout: POLL_TIMEOUT },
-    );
+  async function (this: KoluWorld, n: number) {
+    await assertCommentCount(this, n);
   },
 );
 
 Then(
   "the comments tray should list {int} comments",
-  async function (this: KoluWorld, expected: number) {
-    await this.page.waitForFunction(
-      (n) =>
-        document.querySelectorAll('[data-testid="comments-item"]').length === n,
-      expected,
-      { timeout: POLL_TIMEOUT },
-    );
+  async function (this: KoluWorld, n: number) {
+    await assertCommentCount(this, n);
   },
 );
 
