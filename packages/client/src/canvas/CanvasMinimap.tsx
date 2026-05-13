@@ -40,6 +40,18 @@ const MAP_PAD = 100;
  *  user has hidden them. Big enough to click/drag without being visually
  *  loud. */
 const GHOST_PX = 6;
+/** Duration + easing for the morph between full rect and ghost. Shared by
+ *  the tile and the bucket badge so the geometry change and the badge fade
+ *  always run on the same clock. */
+const MORPH_TRANSITION = "duration-300 ease-out";
+/** Focused transition property list for the morphing tile. `transition-all`
+ *  would force the browser to watch every animatable property — including
+ *  hover-induced ring/shadow shifts and inherited color cascades — across
+ *  every minimap tile on every reactive tick (pan, zoom, staleness check).
+ *  Naming the four properties we actually animate lets the compositor
+ *  short-circuit the rest. */
+const TILE_TRANSITION_PROPS =
+  "transition-[left,top,width,height,background-color,border-color,border-radius]";
 
 /** Build the hover tooltip for a minimap tile. Closes #870: the previous
  *  `title={id}` showed the opaque terminal id; now it shows the same
@@ -320,10 +332,6 @@ const CanvasMinimap: Component<{
               const i = info();
               return i ? tileTooltip(i, state().parked) : id;
             };
-            // Demoted to a ghost marker whenever the tile falls outside the
-            // user's activity window. With `windowSel() === "all"`, threshold
-            // is null → `isStale` returns false → nothing is ever ghosted.
-            const ghosted = () => state().parked;
             const handleTileClick = (e: MouseEvent) => {
               // Don't let this also trigger the background pan-to-point.
               e.stopPropagation();
@@ -349,76 +357,86 @@ const CanvasMinimap: Component<{
                 },
               });
             };
+            // One morphing element covers both the full rect and the 6 px
+            // parked-ghost; CSS interpolates between them so the tile glides
+            // when `parked()` flips instead of popping.
+            const parked = () => state().parked;
+            const isActive = () => store.activeId() === id;
+            const hasAgent = () => state().bucket !== "none";
+            const badgeVisible = () => hasAgent() && !parked();
+            // Parked-bg comes from the `bg-fg-3/40` class (see classList) so a
+            // theme or Tailwind-color-space change flows through. Inline bg
+            // is for non-parked only — `theme().bg` is a dynamic per-repo
+            // color that can't be a static Tailwind token.
+            const tileStyle = (t: {
+              x: number;
+              y: number;
+              w: number;
+              h: number;
+              repoColor: string;
+            }): JSX.CSSProperties => {
+              if (parked()) {
+                return {
+                  left: `${t.x + t.w / 2 - GHOST_PX / 2}px`,
+                  top: `${t.y + t.h / 2 - GHOST_PX / 2}px`,
+                  width: `${GHOST_PX}px`,
+                  height: `${GHOST_PX}px`,
+                  border: "1px solid transparent",
+                };
+              }
+              return {
+                left: `${t.x}px`,
+                top: `${t.y}px`,
+                width: `${t.w}px`,
+                height: `${t.h}px`,
+                "background-color": theme().bg,
+                border: `1px solid ${t.repoColor}`,
+              };
+            };
             return (
               <Show when={tile()}>
                 {(t) => (
-                  <Show
-                    when={!ghosted()}
-                    fallback={
-                      <div
-                        data-testid="minimap-parked-ghost"
-                        data-tile-id={id}
-                        class="absolute rounded-full bg-fg-3/40 hover:bg-fg-3/80 transition-colors cursor-pointer"
+                  <div
+                    // Identity stable across the morph; parked-ness queried
+                    // via `data-parked`, not by swapping the testid.
+                    data-testid="minimap-tile-rect"
+                    data-tile-id={id}
+                    data-bucket={state().bucket}
+                    data-parked={parked() ? "" : undefined}
+                    class={`absolute cursor-pointer ${TILE_TRANSITION_PROPS} ${MORPH_TRANSITION} hover:ring-1 hover:ring-accent/40`}
+                    classList={{
+                      "rounded-full bg-fg-3/40": parked(),
+                      "rounded-sm hover:opacity-100": !parked(),
+                      "ring-1 ring-accent/60": isActive(),
+                      // Active needs solid chrome behind its ring; parked is
+                      // already dim from bg-color so don't double-dim. Other
+                      // inactive tiles fade to 70 % so the badge + active
+                      // tile dominate.
+                      "opacity-100": isActive() || parked(),
+                      "opacity-70": !isActive() && !parked(),
+                    }}
+                    style={tileStyle(t())}
+                    title={tooltip()}
+                    onPointerDown={handleTilePointerDown}
+                    onClick={handleTileClick}
+                  >
+                    {/* Mount-gate stays open while parked so a bucket→none
+                        flip mid-park doesn't cut the opacity fade short. */}
+                    <Show when={hasAgent() || parked()}>
+                      <span
+                        data-testid={`minimap-${state().bucket}-dot`}
+                        class={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full pointer-events-none transition-opacity ${MORPH_TRANSITION}`}
                         classList={{
-                          "ring-1 ring-accent/60": store.activeId() === id,
+                          "opacity-0": !badgeVisible(),
+                          "opacity-100": badgeVisible(),
                         }}
                         style={{
-                          left: `${t().x + t().w / 2 - GHOST_PX / 2}px`,
-                          top: `${t().y + t().h / 2 - GHOST_PX / 2}px`,
-                          width: `${GHOST_PX}px`,
-                          height: `${GHOST_PX}px`,
+                          "background-color": bucketDescriptor(state().bucket)
+                            .accentVar,
                         }}
-                        title={tooltip()}
-                        onPointerDown={handleTilePointerDown}
-                        onClick={handleTileClick}
                       />
-                    }
-                  >
-                    <div
-                      data-testid="minimap-tile-rect"
-                      data-tile-id={id}
-                      data-bucket={state().bucket}
-                      data-parked={state().parked ? "" : undefined}
-                      class="absolute rounded-sm transition-opacity cursor-pointer hover:opacity-100 hover:ring-1 hover:ring-accent/40"
-                      classList={{
-                        "opacity-100 ring-1 ring-accent/60":
-                          store.activeId() === id,
-                        "opacity-70":
-                          store.activeId() !== id && !state().parked,
-                        // Parked-but-shown: fades into the background so
-                        // non-parked tiles still own the visual weight even
-                        // in show-all mode.
-                        "opacity-30": store.activeId() !== id && state().parked,
-                      }}
-                      style={{
-                        left: `${t().x}px`,
-                        top: `${t().y}px`,
-                        width: `${t().w}px`,
-                        height: `${t().h}px`,
-                        "background-color": theme().bg,
-                        border: `1px solid ${t().repoColor}`,
-                      }}
-                      title={tooltip()}
-                      onPointerDown={handleTilePointerDown}
-                      onClick={handleTileClick}
-                    >
-                      {/* Bucket badge — color sourced from the bucket
-                          descriptor in workspace-switcher/model so adding or
-                          recoloring a bucket is a one-file edit. Parked tiles
-                          never paint a badge: attention can't outlive the
-                          attention it earned. */}
-                      <Show when={!state().parked && state().bucket !== "none"}>
-                        <span
-                          data-testid={`minimap-${state().bucket}-dot`}
-                          class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full pointer-events-none"
-                          style={{
-                            "background-color": bucketDescriptor(state().bucket)
-                              .accentVar,
-                          }}
-                        />
-                      </Show>
-                    </div>
-                  </Show>
+                    </Show>
+                  </div>
                 )}
               </Show>
             );
