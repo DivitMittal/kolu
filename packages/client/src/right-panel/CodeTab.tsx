@@ -97,7 +97,6 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   const commentsApi = useComments(() => props.meta?.git?.repoRoot ?? null);
   const [currentRange, setCurrentRange] =
     createSignal<SelectedLineRange | null>(null);
-  const [draft, setDraft] = createSignal("");
   // Tray is visible whenever the user is in comment mode OR they have
   // queued comments from a previous session. The second arm prevents
   // a reload from hiding the tray while preserving the data.
@@ -650,8 +649,6 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
             api={commentsApi}
             currentPath={selectedPath}
             currentRange={currentRange}
-            draft={draft}
-            setDraft={setDraft}
             onClose={disableCommentMode}
           />
         </Show>

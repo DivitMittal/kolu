@@ -11,7 +11,7 @@
  *  the count and provides feedback if `navigator.clipboard` rejects.  */
 
 import type { SelectedLineRange } from "@kolu/solid-pierre";
-import { type Component, For, Show } from "solid-js";
+import { type Component, createSignal, For, Show } from "solid-js";
 import { toast } from "solid-sonner";
 import { CloseIcon } from "../ui/Icons";
 import { formatLineRange, serializeComments } from "./commentSerialize";
@@ -26,19 +26,21 @@ export type CommentsTrayProps = {
    *  nothing is selected. Drives the composer's target chip + the
    *  "Add" button enablement. */
   currentRange: () => SelectedLineRange | null;
-  /** Composer text, lifted to CodeTab so it survives tray remounts. */
-  draft: () => string;
-  setDraft: (value: string) => void;
   /** Toggle comment mode off — closes the tray when there are no queued
    *  comments. */
   onClose: () => void;
 };
 
 const CommentsTray: Component<CommentsTrayProps> = (props) => {
+  // Draft text is internal to the tray. Losing it on close-with-no-queue
+  // is acceptable: at that point the user has neither selection nor
+  // any committed comments, and the close gesture is itself a discard.
+  const [draft, setDraft] = createSignal("");
+
   const canAdd = () =>
     props.currentPath() !== null &&
     props.currentRange() !== null &&
-    props.draft().trim().length > 0;
+    draft().trim().length > 0;
 
   const targetLabel = () => {
     const p = props.currentPath();
@@ -56,9 +58,9 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
       path: p,
       startLine: r.start,
       endLine: r.end,
-      text: props.draft().trim(),
+      text: draft().trim(),
     });
-    props.setDraft("");
+    setDraft("");
   };
 
   const copyAndClear = async () => {
@@ -139,8 +141,8 @@ const CommentsTray: Component<CommentsTrayProps> = (props) => {
               <textarea
                 class="w-full min-h-[40px] max-h-[120px] resize-y rounded border border-edge bg-bg-0 px-2 py-1 text-fg-2 placeholder:text-fg-3/40 focus:outline-none focus:border-accent"
                 placeholder="Note for the agent…"
-                value={props.draft()}
-                onInput={(e) => props.setDraft(e.currentTarget.value)}
+                value={draft()}
+                onInput={(e) => setDraft(e.currentTarget.value)}
                 onKeyDown={(e) => {
                   // Cmd/Ctrl+Enter submits — newline by default so multi-line
                   // notes stay easy to write.
