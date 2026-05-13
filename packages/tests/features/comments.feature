@@ -27,11 +27,13 @@ Feature: Comment mode (inline composer + tray roll-up)
   # the click on line 1 must happen AFTER comment mode is on, otherwise
   # the resulting selection commit doesn't trigger popover open.
 
-  Scenario: add a code comment via the inline popover, copy, tray clears
+  Scenario: add a code comment via the bubble + inline popover, copy, tray clears
     Given a Code tab in "browse" mode showing file "a.ts" with content "alpha\nbeta\ngamma\n"
     When I open file "a.ts" in the Code tab
     And I enable comment mode
     And I click the line number 1 in the file content
+    Then the inline add-comment bubble should be visible
+    When I click the inline add-comment bubble
     Then the inline comment popover should be visible
     When I type "tighten this" into the inline comment composer
     And I press Enter to submit the inline comment
@@ -48,6 +50,8 @@ Feature: Comment mode (inline composer + tray roll-up)
     When I open file "a.ts" in the Code tab
     And I enable comment mode
     And I click the line number 1 in the file content
+    Then the inline add-comment bubble should be visible
+    When I click the inline add-comment bubble
     Then the inline comment popover should be visible
     When I type "first pass" into the inline comment composer
     And I press Enter to submit the inline comment
@@ -72,6 +76,8 @@ Feature: Comment mode (inline composer + tray roll-up)
     When I open file "a.ts" in the Code tab
     And I enable comment mode
     And I click the line number 1 in the file content
+    Then the inline add-comment bubble should be visible
+    When I click the inline add-comment bubble
     Then the inline comment popover should be visible
     When I type "persisted note" into the inline comment composer
     And I press Enter to submit the inline comment

@@ -14,6 +14,7 @@ const ITEM = '[data-testid="comments-item"]';
 const EDIT_BTN = '[data-testid="comments-edit"]';
 const POPOVER = '[data-testid="inline-comment-popover"]';
 const POPOVER_TEXTAREA = '[data-testid="comment-composer-textarea"]';
+const ADD_BUBBLE = '[data-testid="inline-add-bubble"]';
 
 // ── Actions ──
 
@@ -95,6 +96,21 @@ Then(
     await pop.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
   },
 );
+
+Then(
+  "the inline add-comment bubble should be visible",
+  async function (this: KoluWorld) {
+    const bubble = this.page.locator(ADD_BUBBLE);
+    await bubble.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  },
+);
+
+When("I click the inline add-comment bubble", async function (this: KoluWorld) {
+  const bubble = this.page.locator(ADD_BUBBLE);
+  await bubble.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  await bubble.click();
+  await this.waitForFrame();
+});
 
 async function assertCommentCount(world: KoluWorld, expected: number) {
   await world.page.waitForFunction(

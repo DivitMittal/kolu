@@ -26,6 +26,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  For,
   Match,
   on,
   Show,
@@ -60,6 +61,7 @@ import FileSearchInput from "./FileSearchInput";
 import InlineCommentPopover, {
   type InlineEditTarget,
 } from "./InlineCommentPopover";
+import LineCommentMarker, { deepQuerySelector } from "./LineCommentMarker";
 import ModeChipPicker, { type ModeOption } from "./ModeChipPicker";
 import { useRightPanel } from "./useRightPanel";
 import {
@@ -98,29 +100,46 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   const [selectedPath, setSelectedPath] = createSignal<string | null>(null);
 
   // Comment state — `repoRoot` keys the persisted bucket so two
-  // worktrees don't share a tray. The inline popover (`editTarget`) is
-  // the only compose surface; the tray is a read-only roll-up. Three
-  // entry points feed `editTarget`:
-  //   1. Selection-commit in comment mode (user clicks a line) → "new"
-  //   2. Right-click "Add comment on path:Lrange" → "new"
-  //   3. Tray pencil → "edit" (also drives a file/selection push so
-  //      Pierre highlights the comment's line, which is what the
-  //      popover anchors to via `[data-selected-line]`).
+  // worktrees don't share a tray. UI surfaces:
+  //   • `currentRange` — Pierre's latest line selection; drives the
+  //     "+" bubble next to the selected line.
+  //   • `editTarget` — the open composer popover. Set when the user
+  //     clicks the "+" bubble (new), a "💬" bubble (edit existing),
+  //     the right-click "Add comment" menu item, or the tray pencil.
+  //   • Existing comments render as "💬" bubbles at their lines
+  //     (filtered to the currently-shown file, since other files'
+  //     line DOM doesn't exist).
   const commentsApi = useComments(() => props.meta?.git?.repoRoot ?? null);
   const [editTarget, setEditTarget] = createSignal<InlineEditTarget | null>(
     null,
   );
-  // Viewer-root ref — scoped target for the popover's
-  // `querySelector("[data-selected-line]")` so a future second viewer
-  // in the same DOM doesn't poach the lookup.
+  const [currentRange, setCurrentRange] = createSignal<{
+    start: number;
+    end: number;
+  } | null>(null);
+  // Tray/bubble-driven navigation seed — declared early so the bubble
+  // and tray handlers can write to it without TDZ headaches. Pushed
+  // through `selectedRange` below into `initialSelectedLines` so Pierre
+  // commits a fresh selection at the target line. Path-scoped so a
+  // stale seed from file A doesn't re-apply when the user opens file
+  // B (CodeMenuFrame remounts and re-reads the initial range).
+  const [pendingEditSeed, setPendingEditSeed] = createSignal<{
+    path: string;
+    start: number;
+    end: number;
+  } | null>(null);
+  // Viewer-root ref — scoped target for `querySelector` lookups so a
+  // future second viewer in the same DOM doesn't poach the search.
   let viewerEl: HTMLDivElement | undefined;
   // The OR's second arm keeps the tray visible on reload when the user has
   // queued comments but never toggled mode back on.
   const trayVisible = () =>
     commentModeEnabled() || commentsApi.comments().length > 0;
 
-  // Right-click "Add comment on path:Lrange" → ensure mode is on +
-  // open the popover anchored at the (already-selected) line.
+  // Right-click "Add comment on path:Lrange" → bypass the bubble,
+  // open the composer directly. The user already made an explicit
+  // choice through the menu, so requiring a second click would be
+  // theater.
   const handleAddComment = (range: SelectedLineRange) => {
     const path = selectedPath();
     if (!path) return;
@@ -133,28 +152,43 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
     });
   };
 
-  // Selection-commit handler. In comment mode every non-null commit
-  // opens the inline popover in "new" mode; nulls (file switches,
-  // tear-down) close any open new-mode popover. We never override an
-  // active "edit" target — that lets the tray's edit-from-pencil flow
-  // push Pierre's selection without the resulting onChange seed flipping
-  // us back to "new".
+  // Selection-commit handler. Tracks the latest range for the
+  // selected-line bubble; doesn't open the composer (user clicks the
+  // bubble to commit, the bubble is the discoverable affordance).
+  // Null commits (file switch, tear-down) clear both signals so a
+  // stale "+" doesn't float over the new file.
   const handleSelectionChange = (range: SelectedLineRange | null) => {
-    if (!commentModeEnabled()) return;
-    const current = editTarget();
     if (range === null) {
-      if (current?.kind === "new") setEditTarget(null);
+      setCurrentRange(null);
+      if (editTarget()?.kind === "new") setEditTarget(null);
       return;
     }
-    if (current?.kind === "edit") return;
+    setCurrentRange({ start: range.start, end: range.end });
+  };
+
+  const handleBubbleAddNew = () => {
     const path = selectedPath();
-    if (!path) return;
+    const range = currentRange();
+    if (!path || !range) return;
     setEditTarget({
       kind: "new",
       path,
       startLine: range.start,
       endLine: range.end,
     });
+  };
+
+  const handleBubbleEdit = (comment: Comment) => {
+    setEditTarget({ kind: "edit", comment });
+    // Push Pierre's selection to the comment's range so the popover
+    // anchor lands on the right line. Falls into the existing
+    // pendingEditSeed pipeline below.
+    setPendingEditSeed({
+      path: comment.path,
+      start: comment.startLine,
+      end: comment.endLine,
+    });
+    if (!commentModeEnabled()) toggleCommentMode();
   };
 
   const handlePopoverSubmit = (text: string) => {
@@ -175,18 +209,9 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   const handlePopoverClose = () => setEditTarget(null);
 
   // Tray pencil/jump dispatch — both push the comment's file + range
-  // through the same pipeline the terminal `path:line` click uses
-  // (`pendingEditSeed` below). The pencil additionally opens the
-  // popover in edit mode; jump just navigates and selects.
-  // Path-scoped so a stale seed from file A doesn't re-apply when the
-  // user later opens file B (CodeMenuFrame remounts and re-reads the
-  // initial range — if the seed weren't scoped, it would highlight
-  // line N of the WRONG file).
-  const [pendingEditSeed, setPendingEditSeed] = createSignal<{
-    path: string;
-    start: number;
-    end: number;
-  } | null>(null);
+  // through the same pipeline the terminal `path:line` click uses.
+  // The pencil additionally opens the popover in edit mode; jump
+  // just navigates and selects.
   const handleTrayJumpTo = (c: Comment) => {
     setSelectedPath(c.path);
     if (view() === "branch" || view() === "local") setView("browse");
@@ -215,6 +240,26 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
   // explicitly disables it.
   createEffect(() => {
     if (!commentModeEnabled()) setEditTarget(null);
+  });
+
+  // Orphan guards. CodeTab stays mounted across right-panel tab
+  // toggles and panel collapse (#818), and the popover lives in a
+  // Portal mounted to `<body>`. Without these guards, the composer
+  // (or the bubbles) would float over the canvas after the user
+  // switches to the Inspector tab or to a different worktree
+  // terminal. Both effects clear UI state on transition; the actual
+  // queued comments survive (per-repoRoot in `useComments`).
+  createEffect(() => {
+    if (rightPanel.activeTab().kind !== "code") {
+      setEditTarget(null);
+      setCurrentRange(null);
+    }
+  });
+  createEffect(() => {
+    void props.meta?.git?.repoRoot;
+    setEditTarget(null);
+    setCurrentRange(null);
+    setPendingEditSeed(null);
   });
 
   // Set of paths that carry comments, for file-tree decoration. Wrap
@@ -797,6 +842,57 @@ const CodeTab: Component<{ meta: TerminalMetadata | null }> = (props) => {
           onSubmit={handlePopoverSubmit}
           onClose={handlePopoverClose}
         />
+        {/* "+" bubble at the selected line — comment-mode discoverable
+            affordance, replaces the old auto-popover-on-click. Visible
+            only while comment-mode is on, the user has a line
+            selected, and no composer is already open. */}
+        <LineCommentMarker
+          viewerEl={() => viewerEl ?? null}
+          key={() => {
+            if (!commentModeEnabled()) return null;
+            if (editTarget() !== null) return null;
+            const r = currentRange();
+            const p = selectedPath();
+            if (!r || !p) return null;
+            return `new:${p}:${r.start}-${r.end}`;
+          }}
+          resolveLine={() => {
+            if (!viewerEl) return null;
+            return deepQuerySelector(viewerEl, "[data-selected-line]");
+          }}
+          label="+"
+          title="Add comment on this line"
+          testid="inline-add-bubble"
+          onClick={handleBubbleAddNew}
+        />
+        {/* "💬" bubbles for each comment in the currently-shown file.
+            Visible regardless of comment mode so the user always sees
+            "this line has notes". Pierre virtualizes lines off-screen,
+            so the resolver may return null for scrolled-out comments;
+            the marker hides itself in that case. */}
+        <For
+          each={commentsApi.comments().filter((c) => c.path === selectedPath())}
+        >
+          {(c) => (
+            <LineCommentMarker
+              viewerEl={() => viewerEl ?? null}
+              key={() => `cmt:${c.id}:${c.startLine}`}
+              resolveLine={() => {
+                if (!viewerEl) return null;
+                // Pierre's per-line attribute uses 0-based index;
+                // our `startLine` is 1-based.
+                return deepQuerySelector(
+                  viewerEl,
+                  `[data-line][data-line-index="${c.startLine - 1}"]`,
+                );
+              }}
+              label="💬"
+              title={`Edit comment: ${c.text}`}
+              testid="inline-comment-bubble"
+              onClick={() => handleBubbleEdit(c)}
+            />
+          )}
+        </For>
       </div>
     </Show>
   );
