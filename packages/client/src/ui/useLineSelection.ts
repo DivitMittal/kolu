@@ -46,26 +46,26 @@ export function useLineSelection(
   path: Accessor<string>,
   options: LineSelectionOptions = {},
 ): LineSelection {
-  const [range, setRange] = createSignal<SelectedLineRange | null>(
-    options.initialRange?.() ?? null,
-  );
+  const [range, setRange] = createSignal<SelectedLineRange | null>(null);
 
   const setAndForward = (r: SelectedLineRange | null) => {
     setRange(r);
     options.onChange?.(r);
   };
 
-  // Reseed the controller on either trigger — a new file replaces the
-  // selection scope (a stale "Copy path:N" entry must not survive),
-  // and an external request ticks `initialRange` with the new target.
-  // Both seed from the same source, so one effect with a combined
-  // dep tuple suffices. Goes through `setAndForward` so external
-  // observers see file-switch resets without a separate forwarder.
+  // Seed the controller on mount AND reseed on every (path, initialRange)
+  // change — both through `setAndForward` so external observers see the
+  // file-switch reset in the same frame the file changes. The earlier
+  // version split these into `createSignal(initialRange())` + a
+  // `{ defer: true }` effect, which meant the initial value never flowed
+  // through `onChange`: after `<Show keyed>` remounted CodeMenuFrame on
+  // file switch, the parent's observer signal retained the previous
+  // file's range, and a fast Ctrl+Enter on the composer would file a
+  // comment anchored to lines in the wrong file.
   createEffect(
     on(
       () => [path(), options.initialRange?.() ?? null] as const,
       ([, initial]) => setAndForward(initial),
-      { defer: true },
     ),
   );
 
