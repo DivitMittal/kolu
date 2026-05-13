@@ -7,32 +7,14 @@
  *  Module-singleton cache mirrors `useRightPanel` shape — first call per
  *  repoRoot creates the persisted signal; later calls reuse it. Without
  *  the cache, each consumer would mint a fresh signal with the same
- *  localStorage key and their writes would race. */
+ *  localStorage key and their writes would race.
+ *
+ *  The global comment-mode toggle lives in `./useCommentMode.ts` — that's
+ *  a session-wide UI preference, not per-worktree content. */
 
 import { makePersisted } from "@solid-primitives/storage";
 import { type Accessor, createSignal, type Setter } from "solid-js";
 import type { Comment } from "./commentSerialize";
-
-// Comment-mode toggle — module-level singleton so it survives CodeTab
-// remounts (right-panel collapse → expand). Persisted across reloads so a
-// user who reloads mid-review doesn't have to re-toggle just to keep
-// adding to their existing tray.
-const [commentMode, setCommentMode] = makePersisted(createSignal(false), {
-  name: "kolu-comment-mode",
-  serialize: (v) => (v ? "1" : "0"),
-  deserialize: (raw) => raw === "1",
-});
-
-export const commentModeEnabled: Accessor<boolean> = commentMode;
-/** Symmetric with `toggleCommentMode` — there is no `enable` because the only
- *  way to enable today is the toolbar toggle, and there is no `setMode(bool)`
- *  because no caller needs to drive the raw value. */
-export function disableCommentMode(): void {
-  setCommentMode(false);
-}
-export function toggleCommentMode(): void {
-  setCommentMode((v) => !v);
-}
 
 type Bucket = {
   comments: Accessor<readonly Comment[]>;

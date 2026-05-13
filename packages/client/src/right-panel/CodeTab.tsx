@@ -57,8 +57,8 @@ import {
   commentModeEnabled,
   disableCommentMode,
   toggleCommentMode,
-  useComments,
-} from "./useComments";
+} from "./useCommentMode";
+import { useComments } from "./useComments";
 
 const EMPTY_STATE: Record<GitDiffMode, string> = {
   local: "No local changes",
