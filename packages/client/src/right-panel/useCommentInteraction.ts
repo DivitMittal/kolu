@@ -12,6 +12,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
 } from "solid-js";
 import type { Comment } from "./commentSerialize";
 import type { InlineEditTarget } from "./InlineCommentPopover";
@@ -193,29 +194,57 @@ export function useCommentInteraction(
   // the canvas after the user switches to the Inspector tab or to a
   // different worktree terminal.
   //
+  // Each guard memoizes its trigger before subscribing so the effect
+  // only fires when the user-visible *value* changes. Without that,
+  // every push from upstream signals (e.g. `TerminalMetadata` ticks
+  // from the server's git-status stream — same repoRoot string but a
+  // fresh object reference) wipes `intent` mid-popover-open, which
+  // shows up as "I have to click the tray pencil twice".
+  const commentModeOn = createMemo(() => commentModeEnabled());
+  const isCodeTab = createMemo(() => args.activeTabKind() === "code");
+  const repoRoot = createMemo(() => args.repoRoot());
+
   // Mode toggle off → close any open composer (intent was annotation;
   // explicit disable contradicts that). Tray-pencil re-enables mode, so
   // this only fires on explicit disable.
-  createEffect(() => {
-    if (!commentModeEnabled()) setIntent(null);
-  });
+  createEffect(
+    on(
+      commentModeOn,
+      (on_) => {
+        if (!on_) setIntent(null);
+      },
+      { defer: true },
+    ),
+  );
 
   // Tab switch → close any open composer (user changed context). Does
   // NOT clear `currentRange` — that lets the "+" bubble reappear at the
   // same line when the user returns to the Code tab without re-clicking.
   // Bubble visibility itself gates on `activeTabKind === "code"`.
-  createEffect(() => {
-    if (args.activeTabKind() !== "code") setIntent(null);
-  });
+  createEffect(
+    on(
+      isCodeTab,
+      (active) => {
+        if (!active) setIntent(null);
+      },
+      { defer: true },
+    ),
+  );
 
   // Terminal switch (`repoRoot` change) is a harder reset: file tree,
   // selection, and any in-flight compose state belong to the old
-  // worktree.
-  createEffect(() => {
-    void args.repoRoot();
-    setIntent(null);
-    setCurrentRange(null);
-  });
+  // worktree. `defer: true` skips the initial run (signals are already
+  // null at construction) so we only fire on real transitions.
+  createEffect(
+    on(
+      repoRoot,
+      () => {
+        setIntent(null);
+        setCurrentRange(null);
+      },
+      { defer: true },
+    ),
+  );
 
   return {
     api,
