@@ -9,7 +9,6 @@ export function useWorktreeOps(deps: {
   store: TerminalStore;
   handleCreate: (
     cwd?: string,
-    initial?: undefined,
     options?: { background?: boolean },
   ) => Promise<TerminalId>;
   handleKill: (id: TerminalId) => Promise<void>;
@@ -26,11 +25,7 @@ export function useWorktreeOps(deps: {
     try {
       const result = await client.git.worktreeCreate({ repoPath, name });
       toast.success(`Created worktree at ${result.path}`, { id });
-      const newTerminalId = await deps.handleCreate(
-        result.path,
-        undefined,
-        options,
-      );
+      const newTerminalId = await deps.handleCreate(result.path, options);
       // Recent repos update reactively via trackRecentRepo → publishSystem
 
       // Optional initial command (phase 2 of #452): write the agent command

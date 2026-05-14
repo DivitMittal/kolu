@@ -28,11 +28,7 @@ export interface ActionContext {
   /** Terminal IDs in most-recently-used order; used for Alt+Tab / Ctrl+Tab cycling. */
   mruOrder: Accessor<TerminalId[]>;
   activeMeta: Accessor<TerminalMetadata | null>;
-  handleCreate: (
-    cwd?: string,
-    initial?: undefined,
-    options?: { background?: boolean },
-  ) => void;
+  handleCreate: (cwd?: string, options?: { background?: boolean }) => void;
   handleCreateSubTerminal: (parentId: TerminalId, cwd?: string) => void;
   openNewTerminalMenu: () => void;
   openWorkspaceSwitcher: () => void;

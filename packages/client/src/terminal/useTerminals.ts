@@ -86,7 +86,11 @@ export function useTerminals() {
 
   const worktree = useWorktreeOps({
     store,
-    handleCreate: crud.handleCreate,
+    // Worktree creation never carries client-owned `initial` metadata —
+    // the session-restore path is the only caller that does, and it
+    // calls `crud.handleCreate` directly. Strip the phantom middle slot
+    // so the deps contract matches what the call site actually uses.
+    handleCreate: (cwd, options) => crud.handleCreate(cwd, undefined, options),
     handleKill: crud.handleKill,
   });
 

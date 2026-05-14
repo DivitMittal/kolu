@@ -94,8 +94,7 @@ function newTerminalChildren(
       name: options.background
         ? "In current directory (no focus)"
         : "In current directory",
-      onSelect: () =>
-        deps.handleCreate(deps.activeMeta()?.cwd, undefined, options),
+      onSelect: () => deps.handleCreate(deps.activeMeta()?.cwd, options),
     },
     ...repos.map(
       (r): PaletteValueInput => ({
