@@ -10,7 +10,7 @@
  */
 
 import fs from "node:fs";
-import { type AgentSnippet, agentInfoEqual } from "anyagent";
+import { type AgentSnippet, agentInfoEqual, snippetEqual } from "anyagent";
 import { match } from "ts-pattern";
 import {
   deriveLatestSnippet,
@@ -37,17 +37,6 @@ import type { ClaudeCodeInfo } from "./schemas.ts";
  *  and firing an async SDK summary fetch. 150 ms coalesces bursts into
  *  one handler run while keeping the user-perceptible lag imperceptible. */
 const TRANSCRIPT_DEBOUNCE_MS = 150;
-
-/** Structural equality on the snippet shape. Pure — module-scope rather
- *  than nested inside the watcher closure because it captures nothing
- *  and the colocation was only easiness, not simplicity. Mirror of
- *  `agentInfoEqual` in `anyagent`: same shape comparison contract, one
- *  per axis of state. */
-function snippetEqual(a: AgentSnippet | null, b: AgentSnippet | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return a.kind === b.kind && a.text === b.text && a.ts === b.ts;
-}
 
 /** Chunk size for `scanTasksIncremental`. The previous one-shot
  *  `Buffer.alloc(size - offset)` could allocate hundreds of MB transiently

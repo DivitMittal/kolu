@@ -16,6 +16,7 @@ export {
   type AgentWatcher,
   agentInfoEqual,
   matchesAgent,
+  snippetEqual,
 } from "./agent-provider.ts";
 export {
   type AgentSnippet,

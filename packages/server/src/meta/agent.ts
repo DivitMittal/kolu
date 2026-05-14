@@ -11,12 +11,14 @@
  */
 
 import path from "node:path";
-import type {
-  AgentInfoShape,
-  AgentProvider,
-  AgentSnippet,
-  AgentTerminalState,
-  AgentWatcher,
+import {
+  type AgentInfoShape,
+  agentInfoEqual,
+  type AgentProvider,
+  type AgentSnippet,
+  type AgentTerminalState,
+  type AgentWatcher,
+  snippetEqual,
 } from "anyagent";
 import type { Logger } from "kolu-shared";
 import type { AgentInfo } from "kolu-common/surface";
@@ -288,14 +290,21 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
           // at the sole metadata-write site for agent info, so widening
           // is confined to this one line rather than smeared across
           // every provider.
-          setAgentState(entry, terminalId, info as unknown as AgentInfo);
-          // Default snippet to null at the single orchestrator site so
-          // providers without snippet derivation (codex, opencode) can
-          // call `onChange(info)` directly without wrapping. Without
-          // this default, every such adapter would carry the `null`
-          // contract independently — convention enforcement instead of
-          // structural.
-          setAgentSnippet(entry, terminalId, snippet ?? null);
+          const nextAgent = info as unknown as AgentInfo;
+          const nextSnippet = snippet ?? null;
+          // Per-axis gate. The session-watcher only fires `onChange`
+          // when at least *one* axis changed, but on most transcript
+          // ticks during streaming only the snippet moves — the
+          // session state has already settled into `tool_use`. Skip
+          // the slot whose value is byte-identical to what's already
+          // in `entry.meta` so we don't double-publish + double-log
+          // on every 150 ms tick.
+          if (!agentInfoEqual(entry.meta.agent, nextAgent)) {
+            setAgentState(entry, terminalId, nextAgent);
+          }
+          if (!snippetEqual(entry.meta.agentSnippet, nextSnippet)) {
+            setAgentSnippet(entry, terminalId, nextSnippet);
+          }
         },
         plog,
       ),

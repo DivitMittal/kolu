@@ -183,6 +183,19 @@ export function agentInfoEqual<A extends AgentInfoShape>(
   return taskProgressEqual(a.taskProgress, b.taskProgress);
 }
 
+/** Structural equality on the peek-snippet shape. Sibling to
+ *  `agentInfoEqual` — one comparator per axis of state so each can
+ *  gate its own write site at the orchestrator without smearing
+ *  the two equality contracts into one function. */
+export function snippetEqual(
+  a: AgentSnippet | null,
+  b: AgentSnippet | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.kind === b.kind && a.text === b.text && a.ts === b.ts;
+}
+
 function taskProgressEqual(
   a: TaskProgress | null,
   b: TaskProgress | null,
