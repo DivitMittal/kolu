@@ -94,14 +94,21 @@ export interface AgentProvider<Session, Info extends AgentInfoShape> {
    *  derived `Info` changes — or whenever the `snippet` changes, which
    *  bypasses `agentInfoEqual` on purpose: snippet text streams at ~150ms
    *  cadence while info fields update on session-state transitions, so
-   *  they share the wire but not the equality gate. Providers without
-   *  snippet derivation pass `null`; the orchestrator writes both fields
-   *  on every call. The returned handle's `destroy()` must tear down
-   *  every resource the watcher owns (fs.watch handles, DB connections,
-   *  debounce timers, in-flight async work). */
+   *  they share the wire but not the equality gate.
+   *
+   *  Snippet is optional in the callback signature: providers that
+   *  don't derive a peek snippet can call `onChange(info)` with no
+   *  second arg, and the orchestrator defaults the snippet to `null`.
+   *  This keeps the "no snippet" contract at the single orchestrator
+   *  call site rather than forcing every adapter to wrap with
+   *  `(info) => onChange(info, null)` (where forgetting the wrap
+   *  would silently leak stale snippets from a prior provider). The
+   *  returned handle's `destroy()` must tear down every resource the
+   *  watcher owns (fs.watch handles, DB connections, debounce timers,
+   *  in-flight async work). */
   createWatcher(
     session: Session,
-    onChange: (info: Info, snippet: AgentSnippet | null) => void,
+    onChange: (info: Info, snippet?: AgentSnippet | null) => void,
     log: Logger,
   ): AgentWatcher;
 

@@ -289,7 +289,13 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
           // is confined to this one line rather than smeared across
           // every provider.
           setAgentState(entry, terminalId, info as unknown as AgentInfo);
-          setAgentSnippet(entry, terminalId, snippet);
+          // Default snippet to null at the single orchestrator site so
+          // providers without snippet derivation (codex, opencode) can
+          // call `onChange(info)` directly without wrapping. Without
+          // this default, every such adapter would carry the `null`
+          // contract independently — convention enforcement instead of
+          // structural.
+          setAgentSnippet(entry, terminalId, snippet ?? null);
         },
         plog,
       ),
