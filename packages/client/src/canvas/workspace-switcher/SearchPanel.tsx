@@ -551,9 +551,28 @@ const AwaitingReplyInput: Component<{ terminalId: TerminalId }> = (props) => {
     if (text.length === 0 || sending()) return;
     setSending(true);
     try {
+      // Send the text and the trailing carriage return as **two
+      // separate PTY writes** with a short gap. Combining them into a
+      // single `${text}\r` works for Claude Code's Ink-based input (it
+      // splits the chunk into key events itself), but Codex's
+      // Ratatui-backed input reads the whole chunk in one `read()` and
+      // treats the trailing CR as a literal newline inside the text
+      // rather than as the Enter key — so the text lands in the prompt
+      // but the turn never submits. Splitting the writes mimics a fast
+      // typer; every TUI we tested treats a CR that arrives in its
+      // own read as the Enter keypress.
       await client.terminal.sendInput({
         id: props.terminalId,
-        data: `${text}\r`,
+        data: text,
+      });
+      // 50 ms is enough for the TUI's input event loop to process the
+      // pasted characters before the CR arrives. Lower values (10-20)
+      // intermittently raced on a busy event loop in dogfooding; higher
+      // values feel laggy on the human side.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await client.terminal.sendInput({
+        id: props.terminalId,
+        data: "\r",
       });
       setValue("");
     } catch (err) {
