@@ -100,6 +100,7 @@ biome:
 # Validate the import graph against .dependency-cruiser.mjs. Fails CI on
 # `error`-severity rule violations (cross-layer imports, etc.). Warnings
 # show in the log but don't fail the step — see the file for the ratchet
-# plan. `pnpm install --frozen-lockfile` so the dep-cruiser CLI is on disk.
+# plan. Delegates to `just depcruise`, which carries `: install`, so the
+# binary path + flags live in exactly one place (the top-level recipe).
 depcruise:
-    just ci::_run depcruise "sh -c 'pnpm install --frozen-lockfile && ./node_modules/.bin/depcruise --validate .dependency-cruiser.mjs --no-progress packages'"
+    just ci::_run depcruise just depcruise
