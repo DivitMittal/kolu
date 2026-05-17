@@ -7,8 +7,8 @@ import type { TileLayout } from "./TileLayout";
 import {
   agentBucket,
   buildDockModel,
-  sortDockEntriesByRecency,
   type DockSourceEntry,
+  sortDockEntriesByRecency,
 } from "./dockModel";
 
 function makeGit(overrides: Partial<GitInfo> = {}): GitInfo {

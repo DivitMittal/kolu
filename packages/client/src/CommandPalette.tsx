@@ -62,6 +62,22 @@ export interface PaletteGroup extends PaletteBase {
   children: PaletteItem[] | (() => PaletteItem[]);
 }
 
+/** A drill-in group that renders a custom body component instead of a
+ *  filtered list. Body groups are leaves — they cannot host nested
+ *  groups, and the engine never resolves children for them. The palette
+ *  still owns the search input (the body reads `query` as a prop) and
+ *  the breadcrumb / bottom action bar; the body decides how to paint
+ *  its rows. Use this for grids that don't fit a single column of
+ *  items (e.g. agent-state columns + facet sidebar). */
+export interface PaletteBodyGroup extends PaletteBase {
+  kind: "body-group";
+  body: Component<{ query: string; closePalette: () => void }>;
+  /** Hint string shown in the bottom action bar when drilled in —
+   *  describes what clicking inside the body does (e.g. "Pick a
+   *  workspace to switch"). */
+  bodyHint?: string;
+}
+
 /** A group whose drill-in switches the input from a filter to a free-text
  *  value field — pre-filled with `prefill()` and auto-selected on focus.
  *  Children are passive label rows: their own `onSelect` (if any) is
@@ -102,21 +118,42 @@ export interface PaletteHint {
   text: string;
 }
 
-/** Top-level commands — action, group, or value-input. Labels are not
- *  permitted at the top level; they appear only as `PaletteValueInput`
- *  children. */
-export type PaletteCommand = PaletteAction | PaletteGroup | PaletteValueInput;
+/** Top-level commands — action, group, body-group, or value-input.
+ *  Labels are not permitted at the top level; they appear only as
+ *  `PaletteValueInput` children. */
+export type PaletteCommand =
+  | PaletteAction
+  | PaletteGroup
+  | PaletteBodyGroup
+  | PaletteValueInput;
 
 /** Anything renderable at a palette level. */
 export type PaletteItem = PaletteCommand | PaletteLabel | PaletteHint;
 
-function isGroup(item: PaletteItem): item is PaletteGroup | PaletteValueInput {
-  return item.kind === "group" || item.kind === "value";
+/** Any drillable kind — group with children, body group, or value input. */
+type DrillableKind = PaletteGroup | PaletteValueInput | PaletteBodyGroup;
+
+/** Discriminated UI mode driven by the deepest path segment. Filter
+ *  mode: input narrows the children list. Value mode: input is a
+ *  free-text field; children render as passive labels. Body mode:
+ *  the body component renders its own custom JSX in place of the
+ *  list (the input still drives a query the body reads). Exported so
+ *  child components (e.g. ActionBar) reference the same union the
+ *  engine dispatches on — a future arm forces both ends to update. */
+export type PaletteMode =
+  | { kind: "filter" }
+  | { kind: "value"; leaf: PaletteValueInput }
+  | { kind: "body"; leaf: PaletteBodyGroup };
+
+function isDrillable(item: PaletteItem): item is DrillableKind {
+  return (
+    item.kind === "group" || item.kind === "value" || item.kind === "body-group"
+  );
 }
 
-/** Resolve children, handling both static arrays and accessors.
- *  `PaletteValueChild` is a subset of `PaletteItem`, so a value-group's
- *  children fit the wider return type. */
+/** Resolve children, handling both static arrays and accessors. Body
+ *  groups have no children, so they are excluded from the input type —
+ *  callers narrow first. */
 function resolveChildren(cmd: PaletteGroup | PaletteValueInput): PaletteItem[] {
   return typeof cmd.children === "function" ? cmd.children() : cmd.children;
 }
@@ -143,9 +180,7 @@ const CommandPalette: Component<{
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   // Ignore mouseEnter until a real mouse move after opening (prevents cursor-under-palette hijack).
   const [mouseActive, setMouseActive] = createSignal(false);
-  const [path, setPath] = createSignal<(PaletteGroup | PaletteValueInput)[]>(
-    [],
-  );
+  const [path, setPath] = createSignal<DrillableKind[]>([]);
 
   /** Items at the current navigation level (may include hints).
    *
@@ -166,11 +201,14 @@ const CommandPalette: Component<{
     const p = path();
     const last = p.at(-1);
     if (last === undefined) return props.commands();
+    // Body groups are leaves — the body owns rendering, no children.
+    if (last.kind === "body-group") return [];
     let level: PaletteItem[] = props.commands();
     for (const segment of p) {
       const match = level.find(
         (item): item is PaletteGroup | PaletteValueInput =>
-          isGroup(item) && item.name === segment.name,
+          (item.kind === "group" || item.kind === "value") &&
+          item.name === segment.name,
       );
       if (!match) return resolveChildren(last);
       level = resolveChildren(match);
@@ -192,19 +230,20 @@ const CommandPalette: Component<{
     return { interactive, hints };
   });
 
-  /** Discriminated UI mode driven by the deepest path segment.
-   *  Filter mode: input narrows the children list. Value mode: input is
-   *  a free-text field; children render as passive labels. The five
-   *  behavior swaps (filter bypass, validation, placeholder,
-   *  selection-reset suppression, submit dispatch) all switch on this. */
-  type Mode = { kind: "filter" } | { kind: "value"; leaf: PaletteValueInput };
-
-  const mode = createMemo<Mode>(() => {
+  const mode = createMemo<PaletteMode>(() => {
     const last = path().at(-1);
-    return last?.kind === "value"
-      ? { kind: "value", leaf: last }
-      : { kind: "filter" };
+    if (last?.kind === "value") return { kind: "value", leaf: last };
+    if (last?.kind === "body-group") return { kind: "body", leaf: last };
+    return { kind: "filter" };
   });
+
+  /** Narrow `mode()` to the body leaf for the `<Show>` render branch.
+   *  Plain function — the only consumer is the JSX below, so a memo
+   *  would just add a signal node for one read site. */
+  function bodyLeaf(): PaletteBodyGroup | undefined {
+    const m = mode();
+    return m.kind === "body" ? m.leaf : undefined;
+  }
 
   /** Validation error for the current value-input query. `null` outside
    *  value mode or when the value passes. */
@@ -222,16 +261,25 @@ const CommandPalette: Component<{
     return "Type a command...";
   }
 
-  /** Interactive rows at the current level (filter is bypassed in value
-   *  mode). Filter mode produces `PaletteCommand[]`; value mode produces
-   *  `PaletteLabel[]` — the union covers both without dynamic typing. */
+  /** Interactive rows at the current level (filter is bypassed in
+   *  value and body modes). Filter mode produces `PaletteCommand[]`;
+   *  value mode produces `PaletteLabel[]`; body mode skips the list
+   *  entirely. The union covers all three without dynamic typing.
+   *
+   *  Substring semantics (case-insensitive) against the row's `name`
+   *  or `description`. Substring was chosen over AND-token because the
+   *  palette also hosts close-name action pairs like "Toggle terminal
+   *  split" vs "Split terminal" — token permutation matches both and
+   *  clicks the wrong one. Workspace search inside the column body
+   *  runs its own AND-token filter on the 20-field corpus
+   *  (`buildDockModel`), which is the right semantics there. */
   const filtered = createMemo((): (PaletteCommand | PaletteLabel)[] => {
     const items = partitioned().interactive;
-    if (mode().kind === "value") return items;
+    if (mode().kind !== "filter") return items;
     const q = query().toLowerCase();
+    if (!q) return items;
     return items.filter(
       (cmd) =>
-        !q ||
         cmd.name.toLowerCase().includes(q) ||
         cmd.description?.toLowerCase().includes(q),
     );
@@ -245,7 +293,7 @@ const CommandPalette: Component<{
     partitioned().interactive.some((cmd) => cmd.icon),
   );
 
-  function drillInto(cmd: PaletteGroup | PaletteValueInput) {
+  function drillInto(cmd: DrillableKind) {
     setPath((p) => [...p, cmd]);
     if (cmd.kind === "value") {
       setQuery(cmd.prefill());
@@ -296,7 +344,12 @@ const CommandPalette: Component<{
     // .exhaustive() forces a compile error if a future kind is added
     // without an arm here.
     match(cmd)
-      .with({ kind: "group" }, { kind: "value" }, (group) => drillInto(group))
+      .with(
+        { kind: "group" },
+        { kind: "value" },
+        { kind: "body-group" },
+        (group) => drillInto(group),
+      )
       .with({ kind: "action" }, (action) => {
         // Close first so the highlight effect stops tracking filtered(),
         // preventing onSelect's state changes from re-triggering a preview.
@@ -309,6 +362,12 @@ const CommandPalette: Component<{
 
   function handleKeyDown(e: KeyboardEvent) {
     if (!props.open) return;
+    // Body mode (custom group renderer): the body owns its own
+    // selection/activation. The engine still handles Backspace for
+    // drilling out (so the input being empty still pops the path)
+    // and lets Escape fall through to Corvu Dialog. Arrow/Tab/Enter
+    // pass to the body's own listener.
+    if (mode().kind === "body" && e.key !== "Backspace") return;
     const items = filtered();
     const isCtrl = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
     const key = (isCtrl && CTRL_KEY_MAP[e.key]) || e.key;
@@ -354,49 +413,41 @@ const CommandPalette: Component<{
   // Capture phase: intercept before terminal's keydown handler
   makeEventListener(window, "keydown", handleKeyDown, { capture: true });
 
-  // Open: reset transient state. Close: fire onCancel for the drilled-in
-  // path unless the close was selection-initiated.
-  createEffect(
-    on(
-      () => props.open,
-      (isOpen) => {
-        if (isOpen) {
-          setQuery("");
-          setSelectedIndex(0);
-          setAmbientTip(randomAmbientTip());
-          setMouseActive(false);
-          setClosingForSelection(false);
-          // forceMount keeps the dialog in the DOM, so Corvu's initialFocusEl
-          // only fires on first mount. Re-focus explicitly on every open.
-          requestAnimationFrame(() =>
-            requestAnimationFrame(() => inputRef.focus()),
-          );
-        } else {
-          if (!closingForSelection()) {
-            for (const g of path()) g.onCancel?.();
-          }
-          setClosingForSelection(false);
-        }
-      },
-    ),
-  );
-
-  // Track initialGroup reactively: a caller changing the prop (or opening
-  // with a new value) re-targets the drilled level. Closing clears the path.
-  // Routes through `drillInto` rather than `setPath` directly so the
-  // value-input branch (prefill + auto-select) fires when initialGroup
-  // names a value-input leaf.
+  // Open/close lifecycle — one effect so the read of `path()` for
+  // `onCancel` propagation is ordered explicitly before the path
+  // reset. Splitting open-vs-initialGroup into two `on()` effects
+  // raced when both depended on `props.open` (the path-reset effect
+  // could fire first, clearing the segments the close branch was
+  // about to walk for cancellation).
   createEffect(
     on([() => props.open, () => props.initialGroup], ([isOpen, initial]) => {
-      setPath([]);
-      if (!isOpen || !initial) return;
-      const group = props
-        .commands()
-        .find(
-          (c): c is PaletteGroup | PaletteValueInput =>
-            isGroup(c) && c.name === initial,
+      if (isOpen) {
+        setQuery("");
+        setSelectedIndex(0);
+        setAmbientTip(randomAmbientTip());
+        setMouseActive(false);
+        setClosingForSelection(false);
+        setPath([]);
+        if (initial) {
+          const group = props
+            .commands()
+            .find(
+              (c): c is DrillableKind => isDrillable(c) && c.name === initial,
+            );
+          if (group) drillInto(group);
+        }
+        // forceMount keeps the dialog in the DOM, so Corvu's initialFocusEl
+        // only fires on first mount. Re-focus explicitly on every open.
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => inputRef.focus()),
         );
-      if (group) drillInto(group);
+      } else {
+        if (!closingForSelection()) {
+          for (const g of path()) g.onCancel?.();
+        }
+        setClosingForSelection(false);
+        setPath([]);
+      }
     }),
   );
 
@@ -444,25 +495,31 @@ const CommandPalette: Component<{
       onOpenChange={props.onOpenChange}
       transparentOverlay={props.transparentOverlay}
       initialFocusEl={inputRef}
+      size="lg"
     >
       <Dialog.Content
         forceMount
         data-testid="command-palette"
-        class="bg-surface-1 border border-edge rounded-2xl shadow-2xl shadow-black/50 overflow-hidden flex flex-col"
+        class="w-full bg-surface-1 border border-edge rounded-2xl shadow-2xl shadow-black/50 overflow-hidden flex flex-col"
         style={{
-          height: "24rem",
+          // Cap at 80vh so the dialog adapts to the workspace grid's
+          // four-column body without forcing scroll for small dialogs;
+          // 40rem keeps the chrome compact on tall monitors.
+          height: "min(80vh, 40rem)",
           // Firefox workaround: bg-surface-1 utility intermittently fails
           // to apply to Corvu-portalled dialog content, leaving it
           // transparent. Inline style guarantees the background paints.
           "background-color": "var(--color-surface-1)",
         }}
       >
-        {/* Breadcrumb — visible when drilled into a group */}
+        {/* Breadcrumb — visible when drilled into a group. Renders as
+            Raycast-style chips: "Commands › Theme" feels like a path you
+            can click any segment of to pop back. */}
         <Show when={path().length > 0}>
-          <nav class="flex items-center gap-1 px-4 pt-2 text-xs text-fg-3">
+          <nav class="flex items-center gap-1.5 px-4 pt-3 text-xs text-fg-3">
             <button
               type="button"
-              class="hover:text-fg transition-colors"
+              class="px-1.5 py-0.5 rounded hover:text-fg hover:bg-surface-2 transition-colors"
               onClick={() => navigateTo(0)}
             >
               Commands
@@ -470,10 +527,13 @@ const CommandPalette: Component<{
             <For each={path()}>
               {(segment, i) => (
                 <>
-                  <span class="text-fg-3">›</span>
+                  <span class="text-fg-3/60">›</span>
                   <button
                     type="button"
-                    class="hover:text-fg transition-colors"
+                    class="px-1.5 py-0.5 rounded hover:text-fg hover:bg-surface-2 transition-colors"
+                    classList={{
+                      "text-fg font-medium": i() === path().length - 1,
+                    }}
                     onClick={() => navigateTo(i() + 1)}
                   >
                     {segment.name}
@@ -483,20 +543,27 @@ const CommandPalette: Component<{
             </For>
           </nav>
         </Show>
-        <input
-          ref={inputRef}
-          type="text"
-          data-value-input={mode().kind === "value" ? "" : undefined}
-          data-value-invalid={valueError() ? "" : undefined}
-          placeholder={placeholder()}
-          class="w-full px-4 py-3 bg-surface-1 text-fg text-sm border-b outline-none placeholder-fg-3"
-          classList={{
-            "border-edge": !valueError(),
-            "border-danger": !!valueError(),
-          }}
-          value={query()}
-          onInput={(e) => setQuery(e.currentTarget.value)}
-        />
+        <div class="flex items-center gap-2 px-4 py-3 border-b border-edge">
+          <span
+            aria-hidden="true"
+            class="font-mono text-[0.85rem] leading-none text-accent select-none"
+          >
+            ⏵
+          </span>
+          <input
+            ref={inputRef}
+            type="text"
+            data-value-input={mode().kind === "value" ? "" : undefined}
+            data-value-invalid={valueError() ? "" : undefined}
+            placeholder={placeholder()}
+            class="flex-1 min-w-0 bg-transparent text-fg text-sm outline-none placeholder-fg-3"
+            classList={{
+              "text-danger": !!valueError(),
+            }}
+            value={query()}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+          />
+        </div>
         <Show when={valueError()}>
           {(msg) => (
             <div
@@ -507,101 +574,119 @@ const CommandPalette: Component<{
             </div>
           )}
         </Show>
-        <div
-          ref={(el) => {
-            listEl = el;
-            // mousemove is incidental UI state, not a real interactive event
-            // on this scroll container — attach via addEventListener so the
-            // div stays a plain layout element (Biome's
-            // noStaticElementInteractions would flag a JSX onMouseMove).
-            el.addEventListener("mousemove", () => setMouseActive(true), {
-              passive: true,
-            });
-          }}
-          class="flex-1 min-h-0 overflow-y-auto"
-        >
-          <Show
-            when={filtered().length > 0}
-            fallback={
-              <div class="px-4 py-3 text-sm text-fg-2">
-                No matching commands
-              </div>
-            }
-          >
-            <div class="py-1" role="listbox">
-              <For each={filtered()}>
-                {(cmd, i) => (
-                  <div
-                    role="option"
-                    tabIndex={-1}
-                    aria-selected={selectedIndex() === i()}
-                    class="flex items-center px-4 py-2 text-sm cursor-pointer transition-colors duration-150 border-l-2"
-                    classList={{
-                      "bg-surface-3 text-fg border-accent":
-                        selectedIndex() === i(),
-                      "text-fg-2 hover:bg-surface-2 border-transparent":
-                        selectedIndex() !== i(),
-                    }}
-                    data-selected={selectedIndex() === i() || undefined}
-                    onMouseEnter={() => mouseActive() && setSelectedIndex(i())}
-                    onClick={() => execute(cmd)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        execute(cmd);
-                      }
-                    }}
-                  >
-                    <Show when={hasAnyIcon()}>
-                      <span class="shrink-0 mr-2 w-3 inline-flex items-center justify-center">
-                        <Dynamic component={cmd.icon} class="w-3 h-3" />
-                      </span>
-                    </Show>
-                    <span class="truncate">
-                      {cmd.name}
-                      <Show when={cmd.description}>
-                        <span class="ml-2 text-fg-3 text-xs">
-                          {cmd.description}
-                        </span>
-                      </Show>
-                    </span>
-                    <Show when={isGroup(cmd)}>
-                      <span class="ml-auto shrink-0 pl-4 text-xs text-fg-3">
-                        →
-                      </span>
-                    </Show>
-                    <Show when={cmd.kind === "action" && cmd.keybind}>
-                      {(keybind) => {
-                        const kb = keybind();
-                        return (
-                          <span class="ml-auto shrink-0 pl-4 flex items-center gap-1.5">
-                            <For each={Array.isArray(kb) ? kb : [kb]}>
-                              {(k) => <Kbd>{formatKeybind(k)}</Kbd>}
-                            </For>
-                          </span>
-                        );
-                      }}
-                    </Show>
+        <Show
+          when={bodyLeaf()}
+          fallback={
+            <div
+              ref={(el) => {
+                listEl = el;
+                // mousemove is incidental UI state, not a real interactive event
+                // on this scroll container — attach via addEventListener so the
+                // div stays a plain layout element (Biome's
+                // noStaticElementInteractions would flag a JSX onMouseMove).
+                el.addEventListener("mousemove", () => setMouseActive(true), {
+                  passive: true,
+                });
+              }}
+              class="flex-1 min-h-0 overflow-y-auto"
+            >
+              <Show
+                when={filtered().length > 0}
+                fallback={
+                  <div class="px-4 py-3 text-sm text-fg-2">
+                    No matching commands
                   </div>
-                )}
-              </For>
+                }
+              >
+                <div class="py-1" role="listbox">
+                  <For each={filtered()}>
+                    {(cmd, i) => (
+                      <div
+                        role="option"
+                        tabIndex={-1}
+                        aria-selected={selectedIndex() === i()}
+                        class="flex items-center gap-3 px-4 py-2 text-sm cursor-pointer transition-colors duration-150 border-l-2"
+                        classList={{
+                          "bg-surface-3 text-fg border-accent":
+                            selectedIndex() === i(),
+                          "text-fg-2 hover:bg-surface-2 border-transparent":
+                            selectedIndex() !== i(),
+                        }}
+                        data-selected={selectedIndex() === i() || undefined}
+                        onMouseEnter={() =>
+                          mouseActive() && setSelectedIndex(i())
+                        }
+                        onClick={() => execute(cmd)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            execute(cmd);
+                          }
+                        }}
+                      >
+                        <Show when={hasAnyIcon()}>
+                          <span class="shrink-0 w-3 inline-flex items-center justify-center">
+                            <Dynamic component={cmd.icon} class="w-3 h-3" />
+                          </span>
+                        </Show>
+                        <div class="flex-1 min-w-0 flex items-baseline gap-2">
+                          <span class="truncate">{cmd.name}</span>
+                          <Show when={cmd.description}>
+                            <span class="text-fg-3 text-xs truncate min-w-0">
+                              {cmd.description}
+                            </span>
+                          </Show>
+                        </div>
+                        <Show when={cmd.keybind}>
+                          {(keybind) => {
+                            const kb = keybind();
+                            return (
+                              <span class="shrink-0 flex items-center gap-1.5">
+                                <For each={Array.isArray(kb) ? kb : [kb]}>
+                                  {(k) => <Kbd>{formatKeybind(k)}</Kbd>}
+                                </For>
+                              </span>
+                            );
+                          }}
+                        </Show>
+                        <Show when={isDrillable(cmd)}>
+                          <span class="shrink-0 text-xs text-fg-3">→</span>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+              <Show when={partitioned().hints.length > 0}>
+                <ul class="py-1">
+                  <For each={partitioned().hints}>
+                    {(hint) => (
+                      <li
+                        data-testid="palette-hint"
+                        class="px-4 py-2 text-xs text-fg-3 italic"
+                      >
+                        {hint.text}
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
             </div>
-          </Show>
-          <Show when={partitioned().hints.length > 0}>
-            <ul class="py-1">
-              <For each={partitioned().hints}>
-                {(hint) => (
-                  <li
-                    data-testid="palette-hint"
-                    class="px-4 py-2 text-xs text-fg-3 italic"
-                  >
-                    {hint.text}
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        </div>
+          }
+        >
+          {(group) => (
+            <Dynamic
+              component={group().body}
+              query={query()}
+              closePalette={closeForSelection}
+            />
+          )}
+        </Show>
+        <ActionBar
+          mode={mode()}
+          drilled={path().length > 0}
+          highlighted={filtered()[selectedIndex()]}
+        />
         <Show when={ambientTip()}>
           <div
             data-testid="palette-tip"
@@ -612,6 +697,50 @@ const CommandPalette: Component<{
         </Show>
       </Dialog.Content>
     </ModalDialog>
+  );
+};
+
+/** Bottom action bar — Raycast-style hint strip showing what `⏎` will
+ *  do for the currently highlighted row (or what clicking inside the
+ *  body does, in body mode), plus an `esc Back` affordance when the
+ *  path is drilled. Border-top separates it from the scrollable list
+ *  above; the ambient tip (when present) renders below this bar. */
+const ActionBar: Component<{
+  mode: PaletteMode;
+  drilled: boolean;
+  highlighted: PaletteCommand | PaletteLabel | undefined;
+}> = (props) => {
+  function primaryLabel(): string {
+    return match(props.mode)
+      .with({ kind: "body" }, (m) => m.leaf.bodyHint ?? "Pick an item")
+      .with({ kind: "value" }, () => "Submit")
+      .with({ kind: "filter" }, () => {
+        const h = props.highlighted;
+        if (!h) return "";
+        return isDrillable(h) ? "Open" : "Run";
+      })
+      .exhaustive();
+  }
+  return (
+    <div
+      data-testid="palette-action-bar"
+      class="flex items-center justify-between gap-3 px-4 py-1.5 border-t border-edge text-[0.7rem] text-fg-3"
+    >
+      <Show when={primaryLabel()}>
+        {(label) => (
+          <span class="flex items-center gap-1.5">
+            <Kbd>⏎</Kbd>
+            <span>{label()}</span>
+          </span>
+        )}
+      </Show>
+      <Show when={props.drilled}>
+        <span class="flex items-center gap-1.5 ml-auto">
+          <Kbd>esc</Kbd>
+          <span>Back</span>
+        </span>
+      </Show>
+    </div>
   );
 };
 

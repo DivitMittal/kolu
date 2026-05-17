@@ -1,11 +1,13 @@
 /** Command palette registry — declarative list of all app-level actions. */
 
-import type { RecentAgent } from "kolu-common/surface";
+import type { RecentAgent, TerminalId } from "kolu-common/surface";
 import { WorktreeNameSchema } from "kolu-git/schemas";
 import { randomName } from "memorable-names";
-import type { Accessor } from "solid-js";
+import type { Accessor, Component } from "solid-js";
 import { batch, createMemo } from "solid-js";
 import { availableThemes } from "terminal-themes";
+import type { DockSourceEntry } from "./canvas/dockModel";
+import WorkspaceGrid from "./canvas/dock/WorkspaceGrid";
 import type {
   PaletteAction,
   PaletteCommand,
@@ -14,11 +16,37 @@ import type {
   PaletteLabel,
   PaletteValueInput,
 } from "./CommandPalette";
-import { type ActionContext, actionPaletteCommand } from "./input/actions";
+import {
+  ACTIONS,
+  type ActionContext,
+  actionPaletteCommand,
+} from "./input/actions";
 import { iconForCommand } from "./ui/agentDisplay";
 import { TerminalIcon } from "./ui/Icons";
-import { client } from "./wire";
 import { recentAgents, recentRepos } from "./wire";
+
+/** Body component factory for the "Search workspaces" group. Captures
+ *  the entries accessor + recency lookup in a closure so the palette
+ *  engine only sees a `Component<{ query; closePalette }>` that the
+ *  group's `body` slot accepts — no palette awareness of dock model
+ *  internals. */
+function workspaceGridBody(
+  workspaceEntries: Accessor<DockSourceEntry[]>,
+  getRecency: (id: TerminalId) => number,
+  activate: (id: TerminalId) => void,
+): Component<{ query: string; closePalette: () => void }> {
+  return (props) => (
+    <WorkspaceGrid
+      entries={workspaceEntries()}
+      getRecency={getRecency}
+      query={props.query}
+      onSelect={(id) => {
+        activate(id);
+        props.closePalette();
+      }}
+    />
+  );
+}
 
 /** Live worktree-name validator — reuses the server schema so the rule
  *  has one source of truth. Returns the first issue's message, or null
@@ -98,12 +126,29 @@ export interface CommandDeps extends ActionContext {
     initialCommand?: string,
   ) => void;
   handleClose: () => void;
+  // Workspace search — the live-terminal source list and recency
+  // accessor the "Search workspaces" group walks to populate its rows.
+  workspaceEntries: Accessor<DockSourceEntry[]>;
+  recencyOf: (id: TerminalId) => number;
   // Debug
   simulateAlert: () => void;
   handleCloseAll: () => void;
+  handleTriggerServerError: () => void;
+  handleClearLocalStorage: () => void;
 }
 
 export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
+  // Stable component reference — created once per `createCommands` call so
+  // the `body` slot identity doesn't change on every reactive re-run of the
+  // memo below. A changing `body` reference would cause SolidJS's `<Dynamic>`
+  // to unmount/remount `WorkspaceGrid` on every terminal update, losing its
+  // `repoFilter` signal and scroll position.
+  const workspacesBody = workspaceGridBody(
+    deps.workspaceEntries,
+    deps.recencyOf,
+    deps.activate,
+  );
+
   return createMemo((): PaletteCommand[] => [
     {
       kind: "group",
@@ -180,7 +225,6 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
     actionPaletteCommand("toggleRightPanel", deps),
     ...(!deps.isMobile()
       ? [
-          actionPaletteCommand("openWorkspaceSwitcher", deps),
           {
             kind: "action" as const,
             name: "Center on active tile",
@@ -203,26 +247,12 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
     ...(deps.terminalIds().length > 0
       ? [
           {
-            kind: "group" as const,
-            name: "Switch terminal",
-            children: () =>
-              deps.terminalIds().map(
-                (id, i): PaletteAction =>
-                  i < 9
-                    ? {
-                        ...actionPaletteCommand(
-                          `switchTo${(i + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`,
-                          deps,
-                          { name: `Switch to terminal ${i + 1}` },
-                        ),
-                        onSelect: () => deps.activate(id),
-                      }
-                    : {
-                        kind: "action",
-                        name: `Switch to terminal ${i + 1}`,
-                        onSelect: () => deps.activate(id),
-                      },
-              ),
+            kind: "body-group" as const,
+            name: "Search workspaces",
+            description: "Switch to a live terminal",
+            keybind: ACTIONS.openWorkspaceSwitcher.keybind,
+            body: workspacesBody,
+            bodyHint: "Pick a workspace to switch",
           },
         ]
       : []),
@@ -294,12 +324,7 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
         {
           kind: "action",
           name: "Trigger server error",
-          onSelect: () =>
-            void client.terminal.resize({
-              id: "00000000-0000-0000-0000-000000000000",
-              cols: 1,
-              rows: 1,
-            }),
+          onSelect: () => deps.handleTriggerServerError(),
         },
         {
           kind: "action",
@@ -309,10 +334,7 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
         {
           kind: "action",
           name: "Clear localStorage",
-          onSelect: () => {
-            localStorage.clear();
-            location.reload();
-          },
+          onSelect: () => deps.handleClearLocalStorage(),
         },
       ],
     },
