@@ -1,4 +1,8 @@
-import type { AgentInfo, TerminalId } from "kolu-common/surface";
+import type {
+  AgentInfo,
+  TerminalId,
+  TerminalMetadata,
+} from "kolu-common/surface";
 import { match } from "ts-pattern";
 import {
   type IdleBucket,
@@ -7,6 +11,17 @@ import {
 } from "../terminal/activityWindow";
 import type { TerminalDisplayInfo } from "../terminal/terminalDisplay";
 import type { TileLayout } from "./TileLayout";
+import { matchesAllTokens, tokenize } from "../search";
+
+type ResolvedPr = (TerminalMetadata["pr"] & { kind: "ok" })["value"];
+
+/** Narrow the PR carrier to its resolved value, or null for the
+ *  unresolved kinds (`absent`/`pending`/`unavailable`). The single
+ *  definition of "PR is resolved" — every surface reads through this
+ *  so a future kind added to the union forces one edit, not three. */
+export function resolvedPr(pr: TerminalMetadata["pr"]): ResolvedPr | null {
+  return pr.kind === "ok" ? pr.value : null;
+}
 
 /** Live-terminal source row before a presentation-specific order is applied. */
 export interface DockSourceEntry {
@@ -300,12 +315,8 @@ function searchTextFor(entry: {
   return values.join(" ").toLowerCase();
 }
 
-function queryTokens(query: string): string[] {
-  return query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-}
-
 function matchesQuery(entry: DockEntry, tokens: string[]): boolean {
-  return tokens.every((token) => entry.searchText.includes(token));
+  return matchesAllTokens(entry.searchText, tokens);
 }
 
 /** Derive the dock mega-level projections (search, facets, bucket
@@ -414,7 +425,7 @@ function searchResults(
   selectedRepo: string | null;
   visibleEntries: DockEntry[];
 } {
-  const tokens = queryTokens(query);
+  const tokens = tokenize(query);
   const queryMatches =
     tokens.length === 0
       ? entries
