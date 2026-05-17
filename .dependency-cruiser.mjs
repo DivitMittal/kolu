@@ -48,6 +48,20 @@ export default {
       },
     },
     {
+      name: "common-no-integration-runtime",
+      severity: "warn",
+      comment:
+        "kolu-common is bundled into the client too, so the same browser-bundle constraint applies: re-exports from integrations must come through `/schemas` subpaths (pure Zod) or `anyagent`. Without this rule, a single non-schema import in kolu-common silently pulls integration runtime into the browser bundle.",
+      from: { path: "^packages/common/" },
+      to: {
+        path: "^packages/integrations/[^/]+/src/",
+        pathNot: [
+          "^packages/integrations/[^/]+/src/schemas(\\.ts$|/)",
+          "^packages/integrations/anyagent/",
+        ],
+      },
+    },
+    {
       name: "integrations-no-siblings",
       severity: "warn",
       comment:
