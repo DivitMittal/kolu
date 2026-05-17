@@ -14,6 +14,20 @@
 // keep on. Two pre-existing circulars exist as of this commit (see
 // `just depcruise`); fixing them is a follow-up.
 
+// Single source of truth for "integration files that are NOT safe to
+// pull into a browser bundle." Both `client-no-integration-runtime`
+// and `common-no-integration-runtime` use this — the `from` axis
+// (which package is being guarded) is independent and stays per-rule,
+// but the `to` axis (which integration subpaths are browser-safe) is
+// one decision and should move atomically.
+const INTEGRATION_RUNTIME_TO = {
+  path: "^packages/integrations/[^/]+/src/",
+  pathNot: [
+    "^packages/integrations/[^/]+/src/schemas(\\.ts$|/)",
+    "^packages/integrations/anyagent/",
+  ],
+};
+
 /** @type {import('dependency-cruiser').IConfiguration} */
 export default {
   forbidden: [
@@ -37,29 +51,17 @@ export default {
       name: "client-no-integration-runtime",
       severity: "warn",
       comment:
-        "The browser bundle must not pull in integration runtime modules (sqlite, fs.watch, gh CLI wrappers). Allowed: `/schemas` subpaths (pure Zod) and the `anyagent` contract package (pure types + agent-cli parser).",
+        "The browser bundle must not pull in integration runtime modules (sqlite, fs.watch, gh CLI wrappers). Allowed subpaths are listed in INTEGRATION_RUNTIME_TO above.",
       from: { path: "^packages/client/" },
-      to: {
-        path: "^packages/integrations/[^/]+/src/",
-        pathNot: [
-          "^packages/integrations/[^/]+/src/schemas(\\.ts$|/)",
-          "^packages/integrations/anyagent/",
-        ],
-      },
+      to: INTEGRATION_RUNTIME_TO,
     },
     {
       name: "common-no-integration-runtime",
       severity: "warn",
       comment:
-        "kolu-common is bundled into the client too, so the same browser-bundle constraint applies: re-exports from integrations must come through `/schemas` subpaths (pure Zod) or `anyagent`. Without this rule, a single non-schema import in kolu-common silently pulls integration runtime into the browser bundle.",
+        "kolu-common is bundled into the client too, so the same browser-bundle constraint applies. Allowed subpaths are listed in INTEGRATION_RUNTIME_TO above — a single source of truth shared with client-no-integration-runtime.",
       from: { path: "^packages/common/" },
-      to: {
-        path: "^packages/integrations/[^/]+/src/",
-        pathNot: [
-          "^packages/integrations/[^/]+/src/schemas(\\.ts$|/)",
-          "^packages/integrations/anyagent/",
-        ],
-      },
+      to: INTEGRATION_RUNTIME_TO,
     },
     {
       name: "integrations-no-siblings",
