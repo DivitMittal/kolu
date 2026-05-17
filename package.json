@@ -25,5 +25,9 @@
       "@xterm/xterm": "github:juspay/xterm.js#fix/kolu-xterm-fixes-built",
       "@xterm/addon-webgl": "github:juspay/xterm.js#fix/kolu-xterm-fixes-built&path:/addons/addon-webgl"
     }
+  },
+  "devDependencies": {
+    "dependency-cruiser": "^17.4.0",
+    "typescript": "^5.9.3"
   }
 }

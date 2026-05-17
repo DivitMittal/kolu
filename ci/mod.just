@@ -26,7 +26,7 @@ _run-all: _local _linux _darwin
 # their own GitHub status — _summary reads those statuses to decide
 # the final pass/fail.
 _local:
-    CI_SYSTEM=x86_64-linux just ci::fmt ci::typecheck ci::biome ci::unit ci::surface-example-build || true
+    CI_SYSTEM=x86_64-linux just ci::fmt ci::typecheck ci::biome ci::unit ci::surface-example-build ci::depcruise || true
 
 _linux:
     CI_SYSTEM=x86_64-linux just ci::pnpm-hash-fresh ci::nix ci::_linux-fanout || true
@@ -96,3 +96,10 @@ fmt:
 # off in biome.jsonc. Each disabled rule has a follow-up PR slot (#710).
 biome:
     just ci::_run biome "biome lint ."
+
+# Validate the import graph against .dependency-cruiser.mjs. Fails CI on
+# `error`-severity rule violations (cross-layer imports, etc.). Warnings
+# show in the log but don't fail the step — see the file for the ratchet
+# plan. `pnpm install --frozen-lockfile` so the dep-cruiser CLI is on disk.
+depcruise:
+    just ci::_run depcruise "sh -c 'pnpm install --frozen-lockfile && ./node_modules/.bin/depcruise --validate .dependency-cruiser.mjs --no-progress packages'"
