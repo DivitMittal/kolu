@@ -298,6 +298,56 @@ Feature: Code tab (review + browse)
     Then the file content should contain "prefix-"
     And the file content should wrap long lines
 
+  # ── Browse mode: iframe preview for .html / .svg / .pdf ──
+  # Files whose extension matches `isIframePreviewable` (see
+  # `kolu-git/schemas`) render in `BrowsePreviewView` (an `<iframe>` pointed
+  # at the per-terminal file route) instead of Pierre's syntax-highlighted
+  # `FileView`. The discriminator lives on the wire (`FsReadFileOutput.kind`)
+  # so the client never sees the extension list.
+
+  Scenario: HTML file renders in an iframe instead of as code
+    When I run "rm -rf /tmp/kolu-iframe-html && git init /tmp/kolu-iframe-html && cd /tmp/kolu-iframe-html"
+    And I run "printf '<!doctype html><h1>preview</h1>\n' > page.html"
+    And I run "git add . && git commit -m init"
+    And I click the Code tab
+    And I click the Code tab mode "browse"
+    When I click the file "page.html" in the file browser
+    Then the file preview iframe should be visible
+
+  Scenario: SVG file renders in the iframe preview
+    When I run "rm -rf /tmp/kolu-iframe-svg && git init /tmp/kolu-iframe-svg && cd /tmp/kolu-iframe-svg"
+    And I run "printf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/>\n' > logo.svg"
+    And I run "git add . && git commit -m init"
+    And I click the Code tab
+    And I click the Code tab mode "browse"
+    When I click the file "logo.svg" in the file browser
+    Then the file preview iframe should be visible
+
+  Scenario: Plain text file still renders as syntax-highlighted code (no iframe)
+    When I run "rm -rf /tmp/kolu-iframe-text && git init /tmp/kolu-iframe-text && cd /tmp/kolu-iframe-text"
+    And I run "printf 'hello\n' > note.txt"
+    And I run "git add . && git commit -m init"
+    And I click the Code tab
+    And I click the Code tab mode "browse"
+    When I click the file "note.txt" in the file browser
+    Then the file content should contain "hello"
+    And the file preview iframe should not be visible
+
+  # ── Tree/content vertical split is draggable ──
+  # The tree pane used to be a fixed `h-[35%]`; it's now a Corvu Resizable
+  # panel keyed off `preferences.rightPanel.codeTabTreeSize`. The handle
+  # presence is the wiring proof — persistence rides on the same
+  # `updatePreferences` infra the horizontal split already covers in
+  # `right-panel.feature`.
+
+  Scenario: Tree/content split has a draggable handle
+    When I run "rm -rf /tmp/kolu-tree-resize && git init /tmp/kolu-tree-resize && cd /tmp/kolu-tree-resize"
+    And I run "printf 'hello\n' > note.txt"
+    And I run "git add . && git commit -m init"
+    And I click the Code tab
+    And I click the Code tab mode "browse"
+    Then the Code tab tree pane split handle should be visible
+
   Scenario: File browser expands directories lazily
     When I run "git init /tmp/kolu-browse-expand && cd /tmp/kolu-browse-expand"
     And I run "mkdir -p lib && printf 'x\n' > lib/util.ts"

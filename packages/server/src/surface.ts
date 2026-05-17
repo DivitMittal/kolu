@@ -41,6 +41,7 @@ import { TerminalNotFoundError } from "kolu-common/errors";
 import { surface } from "kolu-common/surface";
 import {
   fsListAllOutputEqual,
+  type FsReadFileOutput,
   fsReadFileOutputEqual,
   type GitResult,
   getDiff,
@@ -49,9 +50,14 @@ import {
   gitStatusOutputEqual,
   listAll,
   readFile,
+  statFileMtimeMs,
   subscribeFileChange,
   subscribeRepoChange,
 } from "kolu-git";
+import {
+  buildIframePreviewUrl,
+  isIframePreviewable,
+} from "./iframePreviewRoute.ts";
 import { log } from "./log.ts";
 import { publisher } from "./publisher.ts";
 import { cancelPendingAutosave, getSavedSession } from "./session.ts";
@@ -224,8 +230,25 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
         isEqual: fsListAllOutputEqual,
       },
       fsReadFile: {
-        read: async (input) =>
-          unwrapGit(await readFile(input.repoPath, input.filePath, log)),
+        read: async (input): Promise<FsReadFileOutput> => {
+          if (isIframePreviewable(input.filePath)) {
+            const mtimeMs = unwrapGit(
+              await statFileMtimeMs(input.repoPath, input.filePath, log),
+            );
+            return {
+              kind: "binary",
+              url: buildIframePreviewUrl(
+                input.terminalId,
+                input.filePath,
+                mtimeMs,
+              ),
+            };
+          }
+          const { content, truncated } = unwrapGit(
+            await readFile(input.repoPath, input.filePath, log),
+          );
+          return { kind: "text", content, truncated };
+        },
         install: (input, cb) =>
           subscribeFileChange(input.repoPath, input.filePath, cb, log),
         isEqual: fsReadFileOutputEqual,

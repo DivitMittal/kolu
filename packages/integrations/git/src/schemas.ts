@@ -152,17 +152,36 @@ export const FsListAllOutputSchema = z.object({
 export type FsListAllOutput = z.infer<typeof FsListAllOutputSchema>;
 
 export const FsReadFileInputSchema = z.object({
+  /** Terminal that owns the URL handle for `kind: "binary"` outputs.
+   *  Text reads ignore this — the field is on the input because the URL
+   *  shape (`/api/terminals/<id>/file/...`) is constructed server-side
+   *  from this id, so the client doesn't have to know the route layout. */
+  terminalId: z.string().uuid(),
   /** Absolute path to the repo root. */
   repoPath: z.string(),
   /** Path relative to repo root. */
   filePath: z.string(),
 });
 
-export const FsReadFileOutputSchema = z.object({
-  content: z.string(),
-  /** True if the file exceeded the size limit and was truncated. */
-  truncated: z.boolean(),
-});
+/** Discriminated by `kind`. Text files yield their content; iframe-
+ *  previewable binaries yield a cache-busted URL the client points
+ *  an `<iframe>` at. The variant-picker (`isIframePreviewable`) and
+ *  URL builder live server-side in `iframePreviewRoute.ts`. */
+export const FsReadFileOutputSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("text"),
+    content: z.string(),
+    /** True if the file exceeded the size limit and was truncated. */
+    truncated: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("binary"),
+    /** Server-constructed URL for the iframe `src`. Includes a `?v=<mtime>`
+     *  query so the stream re-yield on file change produces a new URL and
+     *  the iframe reloads via the same subscription path. */
+    url: z.string(),
+  }),
+]);
 export type FsReadFileOutput = z.infer<typeof FsReadFileOutputSchema>;
 
 // --- Derived types ---
