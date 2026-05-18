@@ -52,6 +52,7 @@ import {
 } from "kolu-common/helper-protocol";
 import { DEFAULT_COLS, DEFAULT_ROWS } from "kolu-common/config";
 import type { Logger } from "../log.ts";
+import { attachOscParser } from "../osc-parser.ts";
 import type { PtyHandle } from "../pty.ts";
 import { getScreenText } from "../pty.ts";
 import { cleanEnv } from "../shell.ts";
@@ -82,46 +83,6 @@ interface RemoteHostOpts {
    *  `tsx /home/srid/.kolu-helper/src/index.ts --serve`. Defaults to
    *  `kolu-helper --serve` (PATH lookup on the remote). */
   helperRemoteCmd?: string;
-}
-
-/** Convert headless xterm OSC events on the data stream into the same
- *  callbacks the LocalHost emits. Mirrors the parser block in
- *  `pty.ts:124-198` so consumers can't tell local from remote. */
-function attachOscParser(
-  headless: import("@xterm/headless").Terminal,
-  initialCwd: string,
-  opts: {
-    onCwd?(cwd: string): void;
-    onTitleChange?(title: string): void;
-    onCommandRun?(command: string): void;
-    log: Logger;
-  },
-): { currentCwd: () => string; disposers: Array<{ dispose(): void }> } {
-  let cwd = initialCwd;
-  const oscCwd = headless.parser.registerOscHandler(7, (data: string) => {
-    try {
-      const url = new URL(data);
-      if (url.protocol === "file:") {
-        cwd = decodeURIComponent(url.pathname);
-        opts.onCwd?.(cwd);
-      }
-    } catch {
-      // ignore malformed OSC 7
-    }
-    return true;
-  });
-  const titleDisp = headless.onTitleChange((title: string) => {
-    opts.onTitleChange?.(title);
-  });
-  const oscCmd = headless.parser.registerOscHandler(633, (data: string) => {
-    if (!data.startsWith("E;")) return false;
-    opts.onCommandRun?.(data.slice(2));
-    return true;
-  });
-  return {
-    currentCwd: () => cwd,
-    disposers: [oscCwd, titleDisp, oscCmd],
-  };
 }
 
 export function createRemoteHost(opts: RemoteHostOpts): Host {
@@ -361,7 +322,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       onCwd: spOpts.onCwd,
       onTitleChange: spOpts.onTitleChange,
       onCommandRun: spOpts.onCommandRun,
-      log: tlog,
+      onDebug: (payload, message) => tlog.debug(payload, message),
     });
 
     // Foreground PID / process polling. Cached values feed the
@@ -401,7 +362,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       if (disposed) return;
       disposed = true;
       clearInterval(pollTimer);
-      for (const d of parser.disposers) d.dispose();
+      parser.dispose();
       dataListeners.delete(ptyId);
       exitListeners.delete(ptyId);
       headless.dispose();

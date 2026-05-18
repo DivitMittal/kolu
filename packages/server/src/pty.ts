@@ -15,6 +15,7 @@ import {
 import * as pty from "node-pty";
 import pkg from "../package.json" with { type: "json" };
 import type { Logger } from "./log.ts";
+import { attachOscParser } from "./osc-parser.ts";
 import { cleanEnv, koluIdentityEnv, prepareShellInit } from "./shell.ts";
 
 // @xterm packages ship CJS only — use createRequire for clean ESM interop
@@ -139,52 +140,16 @@ export function spawnPty(
   const serializeAddon = new SerializeAddon();
   headless.loadAddon(serializeAddon);
 
-  // Parse OSC 7 (CWD reporting) from headless terminal output.
-  // The rc wrapper injected above ensures the shell emits these sequences.
-  let currentCwd = cwd;
-  const oscDisposable = headless.parser.registerOscHandler(
-    7,
-    (data: string) => {
-      try {
-        const url = new URL(data);
-        if (url.protocol === "file:") {
-          currentCwd = decodeURIComponent(url.pathname);
-          tlog.debug({ cwd: currentCwd }, "cwd changed (OSC 7)");
-          opts.onCwd?.(currentCwd);
-        }
-      } catch {
-        // Ignore malformed OSC 7 data
-      }
-      return true;
-    },
-  );
-
-  // OSC 0/2 title changes signal that the foreground process may have changed.
-  // The shell preexec hook (injected in shell.ts) emits OSC 2 before each command.
-  const titleDisposable = headless.onTitleChange((title: string) => {
-    tlog.debug({ title }, "title changed (OSC 0/2)");
-    opts.onTitleChange?.(title);
+  // Parse OSC 7 (CWD), OSC 0/2 (title), OSC 633;E (preexec command)
+  // off the headless terminal stream. The shared `attachOscParser` is
+  // used identically by RemoteHost's pty so the two producers can't
+  // drift on OSC handling.
+  const oscParser = attachOscParser(headless, cwd, {
+    onCwd: opts.onCwd,
+    onTitleChange: opts.onTitleChange,
+    onCommandRun: opts.onCommandRun,
+    onDebug: (payload, message) => tlog.debug(payload, message),
   });
-
-  // OSC 633 ; E ; <command>  — VS Code's semantic "exact command line"
-  // sequence, emitted by kolu's preexec hook alongside OSC 2. The payload
-  // arrives as "E;<command>"; we accept only the E sub-code and ignore
-  // any other 633;X payloads so future VS Code sequences (A/B/C/D) pass
-  // through untouched.
-  const commandMarkDisposable = headless.parser.registerOscHandler(
-    633,
-    (data: string) => {
-      if (!data.startsWith("E;")) return false;
-      const command = data.slice(2);
-      // DEBUG only: the raw command string is whatever the user typed,
-      // including any ephemeral prompt text, API keys, or secrets. The
-      // downstream `recent agent tracked` log emits the *normalized*
-      // form at INFO, which has prompt flags and their values stripped.
-      tlog.debug({ command }, "command run (OSC 633;E)");
-      opts.onCommandRun?.(command);
-      return true;
-    },
-  );
 
   // Forward device query responses (DA1/DSR) from headless terminal back to
   // the PTY. TUIs like Yazi probe terminal capabilities at startup — the
@@ -206,7 +171,7 @@ export function spawnPty(
   return {
     pid: proc.pid,
     get cwd() {
-      return currentCwd;
+      return oscParser.currentCwd();
     },
     get process() {
       return proc.process;
@@ -227,9 +192,7 @@ export function spawnPty(
     getScreenText: (startLine?: number, endLine?: number) =>
       getScreenText(headless.buffer.active, startLine, endLine),
     dispose() {
-      oscDisposable.dispose();
-      titleDisposable.dispose();
-      commandMarkDisposable.dispose();
+      oscParser.dispose();
       headlessOnDataDisposable.dispose();
       dataDisposable.dispose();
       exitDisposable.dispose();
