@@ -156,6 +156,15 @@ export const FileTree: Component<FileTreeProps> = (props) => {
   // the parents must be expanded for the row to be visible. Pierre's
   // public surface doesn't expose `expandDirectory` directly, so the
   // expand-on-select is routed through this same `resetPaths` call.
+  //
+  // Pierre's `resetPaths` builds a brand-new `PathStore` whose only open
+  // directories are those passed via `initialExpandedPaths`. Without
+  // explicitly carrying the user's current expansion state forward, every
+  // working-tree watcher tick (rm/touch/mv) would collapse every folder
+  // the user had manually opened. Snapshot the directories Pierre
+  // currently considers expanded — derived from the previous paths set —
+  // and merge them into `initialExpandedPaths` so user-toggled state
+  // survives the rebuild.
   createEffect(
     on(
       [
@@ -163,12 +172,31 @@ export const FileTree: Component<FileTreeProps> = (props) => {
         () => props.expandPaths,
         () => props.selectedPath ?? null,
       ],
-      ([paths, expandPaths, selectedPath]) => {
+      ([paths, expandPaths, selectedPath], prev) => {
         try {
+          const previouslyExpanded: string[] = [];
+          if (tree && prev) {
+            const [prevPaths] = prev;
+            const seenDirs = new Set<string>();
+            for (const p of prevPaths) {
+              for (const dir of ancestorDirectoryPaths(p)) {
+                if (seenDirs.has(dir)) continue;
+                seenDirs.add(dir);
+                const item = tree.getItem(dir);
+                if (item && "isExpanded" in item && item.isExpanded()) {
+                  previouslyExpanded.push(dir);
+                }
+              }
+            }
+          }
           const ancestors = selectedPath
             ? ancestorDirectoryPaths(selectedPath)
             : [];
-          const expanded = [...(expandPaths ?? []), ...ancestors];
+          const expanded = [
+            ...previouslyExpanded,
+            ...(expandPaths ?? []),
+            ...ancestors,
+          ];
           tree?.resetPaths(paths, { initialExpandedPaths: expanded });
         } catch (e) {
           props.onError(toError(e));

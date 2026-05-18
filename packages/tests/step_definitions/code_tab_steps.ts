@@ -372,6 +372,18 @@ Then(
   },
 );
 
+// Pierre folder rows carry `aria-expanded="true" | "false"`. Matching on
+// the true value asserts both presence and expansion in one selector.
+Then(
+  "the directory {string} should be expanded in the file browser",
+  async function (this: KoluWorld, path: string) {
+    const dir = this.page.locator(
+      `${TREE} [data-item-path="${path}/"][data-item-type="folder"][aria-expanded="true"]:not([data-file-tree-sticky-row])`,
+    );
+    await dir.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  },
+);
+
 // Pierre marks selected rows with `aria-selected="true"` (and a boolean
 // `data-item-selected` that may serialize as `""` or `"true"` depending
 // on the renderer — `aria-selected` is the reliable string form). The
