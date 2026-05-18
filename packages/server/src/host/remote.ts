@@ -125,8 +125,9 @@ const DEFAULT_HELPER_FLAKE_REF =
 /** Default invocation kolu runs over SSH when the user hasn't set
  *  `KOLU_HELPER_REMOTE_CMD`. `bash -lc` makes the remote shell source
  *  the user's profile so `nix` lands on PATH for a non-interactive
- *  session. */
-const DEFAULT_HELPER_REMOTE_CMD = `bash -lc 'nix --extra-experimental-features "nix-command flakes" run ${DEFAULT_HELPER_FLAKE_REF} -- --serve'`;
+ *  session. `--refresh` skips Nix's flake eval cache so the helper
+ *  picks up new commits to the branch without an hour-long lag. */
+const DEFAULT_HELPER_REMOTE_CMD = `bash -lc 'nix --extra-experimental-features "nix-command flakes" run --refresh ${DEFAULT_HELPER_FLAKE_REF} -- --serve'`;
 
 interface RemoteHostOpts {
   alias: string;
@@ -353,7 +354,13 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     const result = await sendRequest<{ ptyId: string; pid: number }>(
       "spawnPty",
       {
-        shell: "/bin/bash",
+        // Empty `shell` ⇒ helper defaults to the remote user's $SHELL
+        // from their login env (which it inherited via `bash -lc`).
+        // Hardcoding a path here would brick remotes where the binary
+        // lives elsewhere (NixOS has no `/bin/bash` at all — only the
+        // POSIX-mandated `/bin/sh`, which is itself a symlink into the
+        // store).
+        shell: "",
         args: ["--login"],
         // Empty cwd ⇒ let the helper default to the remote user's HOME.
         cwd: spOpts.cwd ?? "",

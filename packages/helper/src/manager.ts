@@ -103,11 +103,19 @@ export function createManager(emit: (event: HelperPtyEvent) => void): Manager {
     // LOCAL nix-store PATH would be sent through and the spawned bash
     // would have no working binaries on the remote.
     const env = { ...process.env, ...opts.env } as Record<string, string>;
+    // Empty `shell` ⇒ use the helper user's login shell ($SHELL), or
+    // fall back to /bin/sh. The controller can't know the remote
+    // user's shell choice; on NixOS, `/bin/bash` doesn't even exist
+    // (only `/bin/sh`), so a hardcoded "/bin/bash" from the controller
+    // would `execvp` fail. node-pty's spawn calls execvp(shell), which
+    // returns ENOENT and the PTY dies immediately with exitCode=1 —
+    // the exact failure mode srid-remote-terminal hit on first try.
+    const shell = opts.shell || env.SHELL || "/bin/sh";
     // Empty cwd ⇒ start in the helper user's HOME. node-pty interprets
     // "" as the literal empty path and fails; substituting HOME matches
     // what the user would get if they `ssh <host>` interactively.
     const cwd = opts.cwd || env.HOME || "/";
-    const proc = ptyLib.spawn(opts.shell, opts.args, {
+    const proc = ptyLib.spawn(shell, opts.args, {
       name: "xterm-256color",
       cols: opts.cols,
       rows: opts.rows,
