@@ -245,6 +245,11 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       // reset the RemoteHost is permanently dead after the first SSH
       // exit instead of just "current PTYs torn down."
       connectPromise = null;
+      // Drop any partial frame from the dying SSH session — without
+      // this reset, the next connect's first `data` chunk would be
+      // prepended with leftover bytes and the very first frame would
+      // fail to parse.
+      stdinBuffer = "";
       // Reject any in-flight requests so callers don't hang forever.
       for (const p of pending.values()) {
         p.reject(new Error(`ssh helper for ${alias} exited`));
