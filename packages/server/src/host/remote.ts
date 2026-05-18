@@ -239,6 +239,12 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     ssh.on("exit", (code, signal) => {
       log.info({ code, signal }, "ssh helper exited");
       child = null;
+      // Drop the cached connect promise too — otherwise `ensureConnected`
+      // sees a resolved promise on the next `spawnPty` call, awaits it
+      // happily, and then `sendRequest` fails on `!child`. Without this
+      // reset the RemoteHost is permanently dead after the first SSH
+      // exit instead of just "current PTYs torn down."
+      connectPromise = null;
       // Reject any in-flight requests so callers don't hang forever.
       for (const p of pending.values()) {
         p.reject(new Error(`ssh helper for ${alias} exited`));
