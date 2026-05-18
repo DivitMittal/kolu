@@ -21,19 +21,33 @@
  */
 
 import { subscribeGitHubPr } from "kolu-github";
+import type { PrResult } from "kolu-github/schemas";
+import { getHost } from "../host/registry.ts";
 import { log } from "../log.ts";
 import { terminalChannels } from "../publisher.ts";
 import type { TerminalProcess } from "../terminal-registry.ts";
+import { startRemotePr } from "./remote-pr.ts";
 import { updateServerLiveMetadata } from "./state.ts";
 
 export function startGitHubPrProvider(
   entry: TerminalProcess,
   terminalId: string,
 ): () => void {
-  const plog = log.child({ provider: "github-pr", terminal: terminalId });
+  const plog = log.child({
+    provider: "github-pr",
+    terminal: terminalId,
+    hostId: entry.meta.hostId,
+  });
   plog.debug("started");
 
-  const watcher = subscribeGitHubPr((pr) => {
+  // Remote terminals: route `gh pr view` through `host.exec` instead of
+  // shelling out locally — the local kolu has no idea what the remote
+  // `/home/toor/code/kolu` repo's GitHub remote is, and `gh`'s
+  // origin-discovery only works against a real working tree.
+  const host = getHost(entry.meta.hostId);
+  const useRemote = host !== undefined && host.kind === "remote-ssh";
+
+  const onChange = (pr: PrResult): void => {
     updateServerLiveMetadata(entry, terminalId, (m) => {
       m.pr = pr;
     });
@@ -48,7 +62,11 @@ export function startGitHubPrProvider(
         : { pr: pr.kind },
       "pr info updated",
     );
-  }, plog);
+  };
+
+  const watcher = useRemote
+    ? startRemotePr(host, onChange, plog)
+    : subscribeGitHubPr(onChange, plog);
 
   const cleanup = terminalChannels.git(terminalId).consume({
     onEvent: (git) =>
