@@ -63,10 +63,6 @@ export const HelperAttachParamsSchema = z.object({
   sinceSeq: z.number().int().nonnegative().optional(),
 });
 
-export const HelperDetachParamsSchema = z.object({
-  ptyId: z.string(),
-});
-
 export const HelperListPtysParamsSchema = z.object({}).strict();
 
 export const HelperRpcMethodSchema = z.enum([
@@ -91,32 +87,6 @@ export const HelperRequestSchema = z.object({
 export type HelperRequest = z.infer<typeof HelperRequestSchema>;
 
 // ── Responses ─────────────────────────────────────────────────────────
-
-export const HelperSpawnPtyResultSchema = z.object({
-  ptyId: z.string(),
-  pid: z.number(),
-});
-
-export const HelperForegroundPidResultSchema = z.object({
-  /** undefined if no foreground process (shell idle) or tcgetpgrp unavailable. */
-  pid: z.number().optional(),
-});
-
-export const HelperProcessNameResultSchema = z.object({
-  /** undefined if the PTY's foreground process can't be inspected. */
-  name: z.string().optional(),
-});
-
-export const HelperListPtysResultSchema = z.object({
-  ptys: z.array(
-    z.object({
-      ptyId: z.string(),
-      pid: z.number(),
-      /** Most recent sequence number assigned to this PTY's event stream. */
-      lastSeq: z.number().int().nonnegative(),
-    }),
-  ),
-});
 
 export const HelperErrorShape = z.object({
   kind: z.enum(["not-found", "spawn-failed", "invalid"]),
