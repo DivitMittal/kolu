@@ -119,8 +119,22 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
                           <For each={group.terminals}>
                             {(t) => (
                               <div title={t.cwd}>
-                                <div class="text-sm text-fg-2 truncate leading-snug">
-                                  {terminalKey(t).label}
+                                <div class="text-sm text-fg-2 truncate leading-snug flex items-center gap-2">
+                                  <Show when={t.hostId}>
+                                    {(hostId) => (
+                                      <span
+                                        data-testid="restore-host-chip"
+                                        class="inline-flex items-center gap-1 px-1.5 py-px rounded-sm font-mono text-[0.55rem] uppercase tracking-[0.1em] font-bold bg-accent/15 text-accent border border-accent/30 shrink-0"
+                                        title={`Remote on ${hostId()}`}
+                                      >
+                                        <span aria-hidden="true">SSH</span>
+                                        <span class="normal-case tracking-normal font-semibold truncate max-w-[14ch]">
+                                          {hostId()}
+                                        </span>
+                                      </span>
+                                    )}
+                                  </Show>
+                                  <span class="truncate">{terminalKey(t).label}</span>
                                 </div>
                                 <Show
                                   when={

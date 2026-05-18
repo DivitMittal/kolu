@@ -173,7 +173,17 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
           {
             kind: "action",
             name: "In current directory",
-            onSelect: () => deps.handleCreate(deps.activeMeta()?.cwd),
+            // Inherit the active terminal's host so "duplicate this
+            // shell here" stays on the same machine. Without this,
+            // clicking the option while the active terminal lives on
+            // a remote SSH host would spawn a NEW LOCAL terminal at
+            // the remote cwd path (which doesn't exist locally) and
+            // immediately fail.
+            onSelect: () =>
+              deps.handleCreate(
+                deps.activeMeta()?.cwd,
+                deps.activeMeta()?.hostId,
+              ),
           },
           // Remote-host entries — one per SSH alias in ~/.ssh/config.
           // Hidden when no remote hosts are configured so the picker
