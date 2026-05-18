@@ -15,13 +15,11 @@
  * sequence-numbered ring buffer is already in place to support that.
  */
 
+import { createInterface } from "node:readline";
 import {
   type HelperFrame,
   type HelperPtyEvent,
   HelperRequestSchema,
-} from "kolu-common/helper-protocol";
-import pkg from "../package.json" with { type: "json" };
-import {
   HelperAttachParamsSchema,
   HelperDisposeParamsSchema,
   HelperForegroundPidParamsSchema,
@@ -31,6 +29,7 @@ import {
   HelperSpawnPtyParamsSchema,
   HelperWriteParamsSchema,
 } from "kolu-common/helper-protocol";
+import pkg from "../package.json" with { type: "json" };
 import { createManager } from "./manager.ts";
 
 const HELPER_VERSION: string = pkg.version;
@@ -129,40 +128,33 @@ function handleRequest(req: {
   }
 }
 
-let stdinBuffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk: string) => {
-  stdinBuffer += chunk;
-  let newlineIdx = stdinBuffer.indexOf("\n");
-  while (newlineIdx !== -1) {
-    const line = stdinBuffer.slice(0, newlineIdx);
-    stdinBuffer = stdinBuffer.slice(newlineIdx + 1);
-    if (line.trim().length > 0) {
-      try {
-        const parsed = JSON.parse(line);
-        const req = HelperRequestSchema.safeParse(parsed);
-        if (req.success) {
-          handleRequest(req.data);
-        } else {
-          // Malformed request — we don't have an id to respond to. Emit
-          // a diagnostic on stderr (visible in kolu's helper log) and
-          // continue. Throwing here would kill the whole helper for one
-          // bad line, which is the wrong failure mode.
-          process.stderr.write(
-            `kolu-helper: malformed request: ${req.error.message}\n`,
-          );
-        }
-      } catch (err) {
-        process.stderr.write(
-          `kolu-helper: JSON parse error: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
-      }
+// readline handles the NDJSON line-framing: splits on '\n', handles partial
+// chunks across multiple 'data' events, and emits 'close' on EOF.
+const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+rl.on("line", (line) => {
+  if (line.trim().length === 0) return;
+  try {
+    const parsed = JSON.parse(line);
+    const req = HelperRequestSchema.safeParse(parsed);
+    if (req.success) {
+      handleRequest(req.data);
+    } else {
+      // Malformed request — we don't have an id to respond to. Emit
+      // a diagnostic on stderr (visible in kolu's helper log) and
+      // continue. Throwing here would kill the whole helper for one
+      // bad line, which is the wrong failure mode.
+      process.stderr.write(
+        `kolu-helper: malformed request: ${req.error.message}\n`,
+      );
     }
-    newlineIdx = stdinBuffer.indexOf("\n");
+  } catch (err) {
+    process.stderr.write(
+      `kolu-helper: JSON parse error: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
   }
 });
 
-process.stdin.on("end", () => {
+rl.on("close", () => {
   // Controller dropped the connection. v0: kill every PTY and exit.
   manager.shutdown();
   process.exit(0);

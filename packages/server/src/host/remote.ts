@@ -44,6 +44,7 @@
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { createInterface } from "node:readline";
 import {
   type HelperDataEvent,
   type HelperExitEvent,
@@ -138,7 +139,6 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
    *  stdin parser when an event for that ptyId arrives. */
   const dataListeners = new Map<string, (e: HelperDataEvent) => void>();
   const exitListeners = new Map<string, (e: HelperExitEvent) => void>();
-  let stdinBuffer = "";
   let connectPromise: Promise<void> | null = null;
   /** Resolver for the in-flight `connect()` waiting on the helper's
    *  `ready` event. Set by `connect`, cleared by `dispatchFrame` on
@@ -235,17 +235,10 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     });
     child = ssh;
 
-    ssh.stdout.setEncoding("utf8");
-    ssh.stdout.on("data", (chunk: string) => {
-      stdinBuffer += chunk;
-      let nl = stdinBuffer.indexOf("\n");
-      while (nl !== -1) {
-        const line = stdinBuffer.slice(0, nl);
-        stdinBuffer = stdinBuffer.slice(nl + 1);
-        dispatchFrame(line, log);
-        nl = stdinBuffer.indexOf("\n");
-      }
-    });
+    // readline handles NDJSON framing: splits on '\n', buffers partial
+    // chunks, and closes naturally when the SSH process exits.
+    const rl = createInterface({ input: ssh.stdout, crlfDelay: Infinity });
+    rl.on("line", (line) => dispatchFrame(line, log));
 
     ssh.stderr.setEncoding("utf8");
     ssh.stderr.on("data", (chunk: string) => {
@@ -261,11 +254,6 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       // reset the RemoteHost is permanently dead after the first SSH
       // exit instead of just "current PTYs torn down."
       connectPromise = null;
-      // Drop any partial frame from the dying SSH session — without
-      // this reset, the next connect's first `data` chunk would be
-      // prepended with leftover bytes and the very first frame would
-      // fail to parse.
-      stdinBuffer = "";
       // Reject any in-flight requests so callers don't hang forever.
       for (const p of pending.values()) {
         p.reject(new Error(`ssh helper for ${alias} exited`));
