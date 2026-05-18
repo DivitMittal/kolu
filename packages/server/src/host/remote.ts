@@ -136,6 +136,10 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
   const exitListeners = new Map<string, (e: HelperExitEvent) => void>();
   let stdinBuffer = "";
   let connectPromise: Promise<void> | null = null;
+  /** Resolver for the in-flight `connect()` waiting on the helper's
+   *  `ready` event. Set by `connect`, cleared by `dispatchFrame` on
+   *  the first ready event. */
+  let readyResolve: ((version: string) => void) | null = null;
 
   function dispatchFrame(line: string, log: Logger): void {
     if (line.trim().length === 0) return;
@@ -173,7 +177,15 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       return;
     }
     const event = asEvent.data;
-    if (event.method === "ready") return; // handled by connect()
+    if (event.method === "ready") {
+      // Fire the connect()-side resolver. Doing it through the
+      // line-framing layer (not a substring match on raw chunks)
+      // handles ready frames that get split across two stdout `data`
+      // events.
+      readyResolve?.(event.params.version);
+      readyResolve = null;
+      return;
+    }
     if (event.method === "data") {
       dataListeners.get(event.params.ptyId)?.(event);
     } else if (event.method === "exit") {
@@ -267,25 +279,28 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     });
 
     // Wait for the `ready` event (or stderr / exit) before resolving.
-    await new Promise<void>((resolve, reject) => {
+    // The resolver is fired from `dispatchFrame` once it parses a
+    // `ready` frame — going through the line-framing layer (not a
+    // substring match on the raw chunk) is what handles ready frames
+    // split across two stdout `data` events.
+    const helperVersion = await new Promise<string>((resolve, reject) => {
       const readyTimeout = setTimeout(() => {
+        readyResolve = null;
         reject(new Error(`ssh helper for ${alias} did not signal ready`));
       }, 15_000);
-      const readyHandler = (chunk: string) => {
-        if (chunk.includes('"method":"ready"')) {
-          clearTimeout(readyTimeout);
-          ssh.stdout.off("data", readyHandler);
-          resolve();
-        }
+      readyResolve = (version: string) => {
+        clearTimeout(readyTimeout);
+        resolve(version);
       };
-      ssh.stdout.on("data", readyHandler);
       ssh.on("exit", (code) => {
         clearTimeout(readyTimeout);
+        readyResolve = null;
         reject(
           new Error(`ssh helper for ${alias} exited (${code}) before ready`),
         );
       });
     });
+    log.info({ alias, helperVersion }, "helper ready");
   }
 
   async function ensureConnected(log: Logger): Promise<void> {
