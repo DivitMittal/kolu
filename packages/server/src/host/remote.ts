@@ -293,10 +293,14 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     // substring match on the raw chunk) is what handles ready frames
     // split across two stdout `data` events.
     const helperVersion = await new Promise<string>((resolve, reject) => {
+      // 120s — covers the first `nix run --refresh` against a cold
+      // remote (flake evaluation + closure substitute + node-pty
+      // native-binding fetch). Subsequent connects from a warm store
+      // resolve in well under a second.
       const readyTimeout = setTimeout(() => {
         readyResolve = null;
         reject(new Error(`ssh helper for ${alias} did not signal ready`));
-      }, 15_000);
+      }, 120_000);
       readyResolve = (version: string) => {
         clearTimeout(readyTimeout);
         resolve(version);
