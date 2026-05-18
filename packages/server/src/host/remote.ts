@@ -72,6 +72,49 @@ const { SerializeAddon } =
  *  and it can tolerate a quarter-second staleness easily. */
 const FOREGROUND_POLL_MS = 250;
 
+/** Spawn a periodic poll loop that keeps `foregroundPid` and `process`
+ *  fresh for the remote PTY. Returned `stop` clears the timer.
+ *
+ *  Lives outside `spawnPty` so the closure inside `spawnPty` doesn't
+ *  braid three things into one factory call: the lifecycle of the PTY
+ *  itself, the OSC parser, AND the background poller. Local separation
+ *  per Hickey C1 — the broader fix (an async `ForegroundPidSource` that
+ *  removes the synchronous-getter complect from `PtyHandle` itself)
+ *  remains the deferred follow-up the file header calls out. */
+interface ForegroundPoller {
+  foregroundPid(): number | undefined;
+  processName(): string;
+  stop(): void;
+}
+
+function createForegroundPoller(
+  ptyId: string,
+  sendRequest: <T>(method: string, params: unknown, log: Logger) => Promise<T>,
+  tlog: Logger,
+): ForegroundPoller {
+  let cachedForegroundPid: number | undefined;
+  let cachedProcess = "";
+  const timer = setInterval(() => {
+    sendRequest<{ pid?: number }>("foregroundPid", { ptyId }, tlog)
+      .then((r) => {
+        cachedForegroundPid = r.pid;
+      })
+      .catch(() => {
+        // Helper gone or PTY missing — leave the cached value alone.
+      });
+    sendRequest<{ name?: string }>("processName", { ptyId }, tlog)
+      .then((r) => {
+        cachedProcess = r.name ?? "";
+      })
+      .catch(() => {});
+  }, FOREGROUND_POLL_MS);
+  return {
+    foregroundPid: () => cachedForegroundPid,
+    processName: () => cachedProcess,
+    stop: () => clearInterval(timer),
+  };
+}
+
 interface PendingRequest {
   resolve(result: unknown): void;
   reject(err: Error): void;
@@ -325,24 +368,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       onDebug: (payload, message) => tlog.debug(payload, message),
     });
 
-    // Foreground PID / process polling. Cached values feed the
-    // synchronous getters on PtyHandle.
-    let cachedForegroundPid: number | undefined;
-    let cachedProcess = "";
-    const pollTimer = setInterval(() => {
-      sendRequest<{ pid?: number }>("foregroundPid", { ptyId }, tlog)
-        .then((r) => {
-          cachedForegroundPid = r.pid;
-        })
-        .catch(() => {
-          // Helper gone or PTY missing — leave cached value.
-        });
-      sendRequest<{ name?: string }>("processName", { ptyId }, tlog)
-        .then((r) => {
-          cachedProcess = r.name ?? "";
-        })
-        .catch(() => {});
-    }, FOREGROUND_POLL_MS);
+    const foregroundPoller = createForegroundPoller(ptyId, sendRequest, tlog);
 
     // Track per-PTY high-water-mark sequence on every event we receive
     // so a future reconnect-replay path can pass `sinceSeq` to the
@@ -361,7 +387,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     function cleanup(): void {
       if (disposed) return;
       disposed = true;
-      clearInterval(pollTimer);
+      foregroundPoller.stop();
       parser.dispose();
       dataListeners.delete(ptyId);
       exitListeners.delete(ptyId);
@@ -374,10 +400,10 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
         return parser.currentCwd();
       },
       get process() {
-        return cachedProcess;
+        return foregroundPoller.processName();
       },
       get foregroundPid() {
-        return cachedForegroundPid;
+        return foregroundPoller.foregroundPid();
       },
       write(data: string) {
         // Fire-and-forget — write errors land in the helper log via
