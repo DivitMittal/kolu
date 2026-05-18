@@ -24,12 +24,14 @@ const TREE = '[data-testid="pierre-file-tree"]';
 const DIFF_VIEW = '[data-testid="pierre-diff-view"]';
 const FILE_VIEW = '[data-testid="pierre-file-view"]';
 
-function fileRow(path: string): string {
-  return `${TREE} [data-item-path="${path}"][data-item-type="file"]:not([data-file-tree-sticky-row])`;
+function fileRow(path: string, ariaSelected?: "true" | "false"): string {
+  const sel = ariaSelected ? `[aria-selected="${ariaSelected}"]` : "";
+  return `${TREE} [data-item-path="${path}"][data-item-type="file"]${sel}:not([data-file-tree-sticky-row])`;
 }
 
-function dirRow(path: string): string {
-  return `${TREE} [data-item-path="${path}/"][data-item-type="folder"]:not([data-file-tree-sticky-row])`;
+function dirRow(path: string, ariaExpanded?: "true" | "false"): string {
+  const exp = ariaExpanded ? `[aria-expanded="${ariaExpanded}"]` : "";
+  return `${TREE} [data-item-path="${path}/"][data-item-type="folder"]${exp}:not([data-file-tree-sticky-row])`;
 }
 
 /** Wait for a changed file to appear. The Code tab subscribes to a live
@@ -377,9 +379,7 @@ Then(
 Then(
   "the directory {string} should be expanded in the file browser",
   async function (this: KoluWorld, path: string) {
-    const dir = this.page.locator(
-      `${TREE} [data-item-path="${path}/"][data-item-type="folder"][aria-expanded="true"]:not([data-file-tree-sticky-row])`,
-    );
+    const dir = this.page.locator(dirRow(path, "true"));
     await dir.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
   },
 );
@@ -393,9 +393,7 @@ Then(
 Then(
   "the file {string} should be selected in the file browser",
   async function (this: KoluWorld, path: string) {
-    const item = this.page.locator(
-      `${TREE} [data-item-path="${path}"][data-item-type="file"][aria-selected="true"]:not([data-file-tree-sticky-row])`,
-    );
+    const item = this.page.locator(fileRow(path, "true"));
     await item.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
   },
 );
