@@ -12,24 +12,20 @@
  *     parsing lives kolu-side: the helper streams raw PTY bytes, kolu
  *     pipes them into a local headless xterm to extract cwd/title/cmd.
  *
- * Helper deployment (v0 prototype):
- *   The user is responsible for deploying `kolu-helper` to the remote
- *   host. The simplest deployment is:
- *     - rsync `packages/helper` + its node_modules to `~/.kolu-helper/`
- *       on the remote, OR
- *     - on a Nix-based remote, `nix copy --to ssh-ng://<host>` the kolu
- *       derivation and use its helper store path.
+ * Helper deployment is automatic via Nix:
  *
- *   The kolu controller invokes the remote helper via the command in
- *   `$KOLU_HELPER_REMOTE_CMD`, falling back to `kolu-helper --serve`
- *   (assumes the binary is on the remote PATH). Set the env var to
- *   something like `tsx /home/srid/.kolu-helper/src/index.ts --serve`
- *   if you're running the helper from source over tsx.
+ *   ssh <alias> bash -lc 'nix run github:juspay/kolu/<branch>#kolu-helper -- --serve'
  *
- *   Auto-deploy via `nix copy` on first connect is on the v1 list —
- *   the talk-mode design called for it, but for the prototype the
- *   manual one-time deploy keeps the change focused on the architecture
- *   (Host abstraction + helper RPC) rather than packaging.
+ *   The remote evaluates the flake for its own platform, substitutes
+ *   from `cache.nixos.asia/oss` if available, or builds locally — first
+ *   connect is slow, subsequent ones are cached. No rsync, no scp, no
+ *   PATH twiddling. Override the default with `KOLU_HELPER_REMOTE_CMD`
+ *   if the remote runs the helper a different way (custom build, Docker,
+ *   non-Nix host, …).
+ *
+ *   `bash -lc` is load-bearing — a non-interactive SSH session doesn't
+ *   source the user's profile by default, so `nix` typically isn't on
+ *   PATH without it.
  *
  * v0 limitations (documented in the talk-mode plan; tracked for follow-up):
  *   - When the SSH child exits the helper exits and its PTYs die. v1
@@ -121,11 +117,24 @@ interface PendingRequest {
   reject(err: Error): void;
 }
 
+/** Branch the auto-deploy command targets. Once the prototype merges,
+ *  switch to `github:juspay/kolu#kolu-helper` so existing clones don't
+ *  have to track a feature branch by name. */
+const DEFAULT_HELPER_FLAKE_REF =
+  "github:juspay/kolu/feat/remote-terminal-prototype#kolu-helper";
+
+/** Default invocation kolu runs over SSH when the user hasn't set
+ *  `KOLU_HELPER_REMOTE_CMD`. `bash -lc` makes the remote shell source
+ *  the user's profile so `nix` lands on PATH for a non-interactive
+ *  session. */
+const DEFAULT_HELPER_REMOTE_CMD = `bash -lc 'nix --extra-experimental-features "nix-command flakes" run ${DEFAULT_HELPER_FLAKE_REF} -- --serve'`;
+
 interface RemoteHostOpts {
   alias: string;
-  /** Full shell command to launch the helper on the remote — e.g.
-   *  `tsx /home/srid/.kolu-helper/src/index.ts --serve`. Defaults to
-   *  `kolu-helper --serve` (PATH lookup on the remote). */
+  /** Full shell command to launch the helper on the remote. Defaults to
+   *  `nix run github:juspay/kolu/<branch>#kolu-helper -- --serve` under
+   *  `bash -lc` — works out of the box on any remote with Nix. Override
+   *  for non-Nix remotes or custom deployment shapes. */
   helperRemoteCmd?: string;
 }
 
@@ -228,7 +237,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
   async function connect(log: Logger): Promise<void> {
     if (child) return;
 
-    const remoteCmd = helperRemoteCmd ?? "kolu-helper --serve";
+    const remoteCmd = helperRemoteCmd ?? DEFAULT_HELPER_REMOTE_CMD;
     log.info({ alias, remoteCmd }, "spawning ssh helper");
     const ssh = spawn("ssh", [alias, remoteCmd], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -240,8 +249,13 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     const rl = createInterface({ input: ssh.stdout, crlfDelay: Infinity });
     rl.on("line", (line) => dispatchFrame(line, log));
 
+    // Accumulate stderr so a failed-to-start helper surfaces its
+    // real reason in the rejection message — without this, all the
+    // caller sees is "exited (127) before ready" with no idea WHY.
+    let stderrBuffer = "";
     ssh.stderr.setEncoding("utf8");
     ssh.stderr.on("data", (chunk: string) => {
+      stderrBuffer += chunk;
       log.warn({ stderr: chunk.trimEnd() }, "ssh helper stderr");
     });
 
@@ -287,8 +301,19 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       ssh.on("exit", (code) => {
         clearTimeout(readyTimeout);
         readyResolve = null;
+        // Build a useful error: include the stderr tail (most failures
+        // land there) and a hint for the common exit-127 case where
+        // the remote shell can't find `nix` or `bash`.
+        const stderrTail = stderrBuffer.trim().split("\n").slice(-5).join("\n");
+        const hint =
+          code === 127
+            ? ` — exit 127 means the remote shell couldn't run the helper command. The default invocation requires \`nix\` on the remote's PATH (try logging in as ${alias} and running \`nix --version\`). Override with KOLU_HELPER_REMOTE_CMD if your remote uses a different deployment.`
+            : "";
+        const stderrPart = stderrTail ? `\nstderr:\n${stderrTail}` : "";
         reject(
-          new Error(`ssh helper for ${alias} exited (${code}) before ready`),
+          new Error(
+            `ssh helper for ${alias} exited (${code}) before ready${hint}${stderrPart}`,
+          ),
         );
       });
     });

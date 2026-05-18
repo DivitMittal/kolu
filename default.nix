@@ -174,7 +174,29 @@ let
     makeWrapper ${koluBin}/bin/kolu $out/bin/kolu \
       --run 'export KOLU_STATE_DIR="''${XDG_CONFIG_HOME:-$HOME/.config}/kolu"'
   '';
+
+  # `kolu-helper` — the remote arm of a Kolu remote terminal. Same shape
+  # as `koluBin`: a `tsx` wrapper that runs `packages/helper/src/index.ts`
+  # from the built `kolu` derivation. The controller side spawns this
+  # over SSH (default invocation lives in `host/remote.ts`); the helper
+  # speaks newline-delimited JSON-RPC over stdio and owns the remote
+  # node-pty processes.
+  #
+  # Built once per platform; `nix run github:juspay/kolu#kolu-helper`
+  # on a fresh remote substitutes from cache.nixos.asia/oss or builds
+  # locally — either way, no rsync, no scp, no PATH-twiddling. Falls
+  # back to `KOLU_HELPER_REMOTE_CMD` if the user wants to override.
+  kolu-helper = pkgs.runCommand "kolu-helper"
+    {
+      nativeBuildInputs = [ pkgs.makeWrapper ];
+      meta.mainProgram = "kolu-helper";
+    } ''
+    mkdir -p $out/bin
+    makeWrapper ${pkgs.tsx}/bin/tsx $out/bin/kolu-helper \
+      --add-flags "${koluStamped}/packages/helper/src/index.ts" \
+      --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs ]}
+  '';
 in
 {
-  inherit default koluBin koluEnv pnpmDeps;
+  inherit default koluBin koluEnv pnpmDeps kolu-helper;
 }
