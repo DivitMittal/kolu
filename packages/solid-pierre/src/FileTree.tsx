@@ -187,6 +187,13 @@ export const FileTree: Component<FileTreeProps> = (props) => {
               for (const dir of ancestorDirectoryPaths(p)) {
                 if (seenDirs.has(dir)) continue;
                 seenDirs.add(dir);
+                // The trailing-slash key from `ancestorDirectoryPaths`
+                // structurally identifies a folder, but Pierre's
+                // `getItem` returns the un-narrowed `FileTreeItemHandle`
+                // union — `"isExpanded" in item` narrows to the
+                // directory branch (which has `isExpanded`) and
+                // double-guards against a future Pierre change that
+                // shifts what `getItem` returns for a slash key.
                 const item = tree.getItem(dir);
                 if (item && "isExpanded" in item && item.isExpanded()) {
                   previouslyExpanded.push(dir);
