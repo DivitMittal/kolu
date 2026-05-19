@@ -3,7 +3,7 @@
 import { cwdBasename } from "kolu-common/path";
 import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
 import { type Component, For } from "solid-js";
-import TerminalIcon from "./TerminalIcon";
+import TerminalUserIcon from "./TerminalUserIcon";
 
 const SubPanelTabBar: Component<{
   subIds: TerminalId[];
@@ -41,7 +41,7 @@ const SubPanelTabBar: Component<{
                 data-active={isActive() || undefined}
                 onClick={() => props.onSelect(id)}
               >
-                <TerminalIcon
+                <TerminalUserIcon
                   icon={meta()?.icon}
                   class="text-sm leading-none shrink-0"
                 />

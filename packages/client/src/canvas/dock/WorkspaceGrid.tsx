@@ -25,7 +25,7 @@ import {
   on,
 } from "solid-js";
 import { formatTimeAgo, useIdleClassifier } from "../../terminal/staleness";
-import TerminalIcon from "../../terminal/TerminalIcon";
+import TerminalUserIcon from "../../terminal/TerminalUserIcon";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import {
   bucketDescriptor,
@@ -513,7 +513,7 @@ const WorkspaceCard: Component<{
        *  the repo-name color and out of `searchTextFor` (dockModel.ts). */}
       <div class="flex items-center justify-between gap-2 min-w-0">
         <span class="flex items-center gap-1.5 min-w-0">
-          <TerminalIcon
+          <TerminalUserIcon
             icon={props.entry.info.meta.icon}
             class="text-sm leading-none shrink-0"
           />

@@ -45,7 +45,7 @@ import { toast } from "solid-sonner";
 import AgentIndicator from "../../terminal/AgentIndicator";
 import { tailBuffer } from "../../terminal/bufferTail";
 import { formatTimeAgo, useStaleCheck } from "../../terminal/staleness";
-import TerminalIcon from "../../terminal/TerminalIcon";
+import TerminalUserIcon from "../../terminal/TerminalUserIcon";
 import type { TerminalDisplayInfo } from "../../terminal/terminalDisplay";
 import { getTerminalRefs } from "../../terminal/terminalRefs";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
@@ -471,7 +471,7 @@ const RailSegment: Component<{
       aria-label="Jump to this terminal"
     >
       <Show when={props.mode === "rail" && props.icon}>
-        <TerminalIcon
+        <TerminalUserIcon
           icon={props.icon}
           class="block text-base leading-none mix-blend-multiply"
         />
@@ -591,7 +591,7 @@ const AwaitingCardBody: Component<{
       >
         <div class="flex items-baseline justify-between gap-2 min-w-0">
           <span class="flex items-baseline gap-1.5 min-w-0">
-            <TerminalIcon
+            <TerminalUserIcon
               icon={props.meta.icon}
               class="text-sm leading-none shrink-0"
             />
@@ -671,7 +671,7 @@ const WorkingPillBody: Component<{
     >
       <div class="flex items-baseline justify-between gap-2 min-w-0">
         <span class="flex items-baseline gap-1.5 min-w-0">
-          <TerminalIcon
+          <TerminalUserIcon
             icon={props.meta.icon}
             class="text-sm leading-none shrink-0"
           />
@@ -722,7 +722,7 @@ const QuietRowBody: Component<{
       title={props.info.meta.cwd}
     >
       <div class="flex items-baseline gap-2 min-w-0">
-        <TerminalIcon
+        <TerminalUserIcon
           icon={props.meta.icon}
           class="text-sm leading-none shrink-0"
         />

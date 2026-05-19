@@ -4,12 +4,18 @@
  *  so surfaces that consume `TerminalMetadata` directly (like
  *  `SubPanelTabBar`) can use the same component without rewiring.
  *
+ *  Named `TerminalUserIcon` (not `TerminalIcon`) because a SVG glyph
+ *  component named `TerminalIcon` already lives in `../ui/Icons.tsx`
+ *  for the generic terminal-window symbol; identical names + identical
+ *  `class?: string` shape would let a wrong-path auto-import silently
+ *  render the wrong thing with no type error.
+ *
  *  Per-terminal scope is established by the field declaration in
  *  `surface.ts`; this component does not inject any default. */
 
 import { type Component, Show } from "solid-js";
 
-const TerminalIcon: Component<{
+const TerminalUserIcon: Component<{
   icon: string | undefined;
   /** Tailwind size + spacing applied to the outer span. Override for
    *  tighter chromes (e.g. sub-panel tabs) where the default `text-base
@@ -29,4 +35,4 @@ const TerminalIcon: Component<{
   </Show>
 );
 
-export default TerminalIcon;
+export default TerminalUserIcon;

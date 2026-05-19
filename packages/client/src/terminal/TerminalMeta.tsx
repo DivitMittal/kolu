@@ -21,7 +21,7 @@ import ChecksIndicator from "./ChecksIndicator";
 import { copyTextWithToast } from "./clipboard";
 import { PrUnavailableButton } from "./PrUnavailablePopover";
 import type { TerminalDisplayInfo } from "./terminalDisplay";
-import TerminalIcon from "./TerminalIcon";
+import TerminalUserIcon from "./TerminalUserIcon";
 import TerminalIconPopover from "./TerminalIconPopover";
 
 const TerminalMeta: Component<{
@@ -47,7 +47,9 @@ const TerminalMeta: Component<{
            *  process title. */}
           <div class="flex items-center gap-1.5 min-h-7 text-sm font-medium min-w-0">
             <Show when={props.id}>
-              {(id) => <TerminalIconChip id={id()} icon={info().meta.icon} />}
+              {(id) => (
+                <TerminalUserIconChip id={id()} icon={info().meta.icon} />
+              )}
             </Show>
             <NameSpan info={info()} />
             <Show when={info().key.suffix}>
@@ -174,7 +176,7 @@ export const TerminalMetaCompact: Component<{
     <Show when={i()} fallback={<TerminalMetaSkeleton />}>
       {(info) => (
         <div class="flex items-center gap-1.5 min-h-7 text-sm font-medium min-w-0">
-          <TerminalIcon icon={info().meta.icon} />
+          <TerminalUserIcon icon={info().meta.icon} />
           <NameSpan info={info()} />
           <Show when={info().meta.git?.isWorktree}>
             <WorktreeBadge />
@@ -282,7 +284,7 @@ const TerminalMetaSkeleton: Component = () => (
 
 /** Icon chip next to the name — clickable in the canvas title bar. Shows
  *  a faint "＋" placeholder when unset so users discover the affordance.
- *  Pure rendering of the icon glyph lives in `<TerminalIcon>`; this
+ *  Pure rendering of the icon glyph lives in `<TerminalUserIcon>`; this
  *  component layers the picker trigger + popover on top of it. */
 const TerminalIconChip: Component<{
   id: TerminalId;
@@ -326,11 +328,11 @@ const TerminalIconChip: Component<{
               </span>
             }
           >
-            <TerminalIcon icon={props.icon} />
+            <TerminalUserIcon icon={props.icon} />
           </Show>
         </button>
       </Tip>
-      <TerminalIconPopover
+      <TerminalUserIconPopover
         open={open()}
         onOpenChange={setOpen}
         triggerRef={triggerRef()}
