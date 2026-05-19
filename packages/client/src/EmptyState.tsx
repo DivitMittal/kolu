@@ -5,6 +5,7 @@ import { terminalKey } from "kolu-common/terminalKey";
 import { type Component, createMemo, createSignal, For, Show } from "solid-js";
 import { ACTIONS } from "./input/actions";
 import { formatKeybind } from "./input/keyboard";
+import HostChip from "./ui/HostChip";
 import Kbd from "./ui/Kbd";
 import Toggle from "./ui/Toggle";
 
@@ -122,16 +123,11 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
                                 <div class="text-sm text-fg-2 truncate leading-snug">
                                   {terminalKey(t).label}
                                 </div>
-                                <Show when={t.hostId}>
-                                  {(hostId) => (
-                                    <div
-                                      data-testid="restore-host-chip"
-                                      class="mt-1 inline-flex font-mono text-[10px] leading-none px-1.5 py-0.5 rounded border border-accent/30 text-accent bg-accent/10"
-                                    >
-                                      SSH {hostId()}
-                                    </div>
-                                  )}
-                                </Show>
+                                <HostChip
+                                  hostId={t.hostId}
+                                  testId="restore-host-chip"
+                                  class="mt-1"
+                                />
                                 <Show
                                   when={
                                     resumeAgents() && t.lastAgentCommand

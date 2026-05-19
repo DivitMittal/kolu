@@ -13,6 +13,7 @@
 import { prLabel, prUnavailableSource, prValue } from "kolu-github/schemas";
 import { type Component, Show } from "solid-js";
 import { PrStateIcon, WorktreeIcon } from "../ui/Icons";
+import HostChip from "../ui/HostChip";
 import Tip from "../ui/Tip";
 import ChecksIndicator from "./ChecksIndicator";
 import { copyTextWithToast } from "./clipboard";
@@ -52,7 +53,7 @@ const TerminalMeta: Component<{
             <Show when={info().meta.git?.isWorktree}>
               <WorktreeBadge />
             </Show>
-            <HostChip hostId={info().meta.hostId} />
+            <HostChip hostId={info().meta.hostId} testId="terminal-host-chip" />
             {/* Foreground process title — OSC 2 string when present.
              *  Replaces what used to be the cwd slot; cwd is now a
              *  tooltip on the repo name. `flex-1` so it fills until
@@ -238,20 +239,6 @@ const WorktreeBadge: Component = () => (
   >
     <WorktreeIcon />
   </span>
-);
-
-const HostChip: Component<{ hostId?: string }> = (props) => (
-  <Show when={props.hostId}>
-    {(hostId) => (
-      <span
-        data-testid="terminal-host-chip"
-        class="font-mono text-[10px] leading-none px-1.5 py-0.5 rounded border border-accent/30 text-accent bg-accent/10 shrink-0"
-        title={`SSH host ${hostId()}`}
-      >
-        SSH {hostId()}
-      </span>
-    )}
-  </Show>
 );
 
 const AgentTaskProgress: Component<{ completed: number; total: number }> = (

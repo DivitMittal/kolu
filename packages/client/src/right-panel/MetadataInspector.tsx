@@ -8,6 +8,7 @@ import { Dynamic } from "solid-js/web";
 import ChecksIndicator from "../terminal/ChecksIndicator";
 import { ProviderUnavailableContent } from "../terminal/PrUnavailablePopover";
 import { agentIcons, agentNames, stateLabels } from "../ui/agentDisplay";
+import HostChip from "../ui/HostChip";
 import { PrStateIcon, TerminalIcon, WorktreeIcon } from "../ui/Icons";
 import Row from "../ui/Row";
 import Section from "../ui/Section";
@@ -40,12 +41,7 @@ const MetadataInspector: Component<{
             <Show when={meta().hostId}>
               {(hostId) => (
                 <div class="mt-2">
-                  <span
-                    data-testid="inspector-host"
-                    class="inline-flex font-mono text-[10px] leading-none px-1.5 py-0.5 rounded border border-accent/30 text-accent bg-accent/10"
-                  >
-                    SSH {hostId()}
-                  </span>
+                  <HostChip hostId={hostId()} testId="inspector-host" />
                 </div>
               )}
             </Show>

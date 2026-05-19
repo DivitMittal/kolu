@@ -49,6 +49,7 @@ import type { TerminalDisplayInfo } from "../../terminal/terminalDisplay";
 import { getTerminalRefs } from "../../terminal/terminalRefs";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import { ChevronDownIcon, PlusIcon, SearchIcon } from "../../ui/Icons";
+import HostChip from "../../ui/HostChip";
 import { client } from "../../wire";
 import { isPlatformModifier } from "../../input/keyboard";
 import { useTileTheme } from "../useTileTheme";
@@ -592,7 +593,11 @@ const AwaitingCardBody: Component<{
           >
             {props.info.key.label}
           </span>
-          <HostChip hostId={props.meta.hostId} />
+          <HostChip
+            hostId={props.meta.hostId}
+            size="xs"
+            testId="dock-host-chip"
+          />
         </div>
         <DockMetaRow meta={props.meta} />
         <PrLine meta={props.meta} />
@@ -770,18 +775,5 @@ const DockMetaRow: Component<{ meta: TerminalMetadata }> = (props) => {
     </Show>
   );
 };
-
-const HostChip: Component<{ hostId?: string }> = (props) => (
-  <Show when={props.hostId}>
-    {(hostId) => (
-      <span
-        data-testid="dock-host-chip"
-        class="font-mono text-[0.55rem] leading-none px-1 py-0.5 rounded border border-accent/30 text-accent bg-accent/10 shrink-0"
-      >
-        SSH {hostId()}
-      </span>
-    )}
-  </Show>
-);
 
 export default Dock;
