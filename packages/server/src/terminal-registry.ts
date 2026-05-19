@@ -19,6 +19,7 @@ import type {
   TerminalInfo,
   TerminalMetadata,
 } from "kolu-common/surface";
+import type { Host } from "./host/types.ts";
 import type { PtyHandle } from "./pty.ts";
 
 /** Server-side terminal state. `info` is the wire shape sent in the
@@ -28,6 +29,7 @@ import type { PtyHandle } from "./pty.ts";
 export interface TerminalProcess {
   info: TerminalInfo;
   meta: TerminalMetadata;
+  host: Host;
   handle: PtyHandle;
   /** Cleanup function for all metadata providers. */
   stopProviders: () => void;

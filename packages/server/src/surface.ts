@@ -44,16 +44,12 @@ import {
   type FsReadFileOutput,
   fsReadFileOutputEqual,
   type GitResult,
-  getDiff,
-  getStatus,
   gitDiffOutputEqual,
   gitStatusOutputEqual,
-  listAll,
-  readFile,
   statFileMtimeMs,
-  subscribeFileChange,
-  subscribeRepoChange,
 } from "kolu-git";
+import { localHost } from "./host/local.ts";
+import type { Host } from "./host/types.ts";
 import {
   buildIframePreviewUrl,
   isIframePreviewable,
@@ -111,6 +107,13 @@ export function unwrapGit<T>(result: GitResult<T>): T {
     }))
     .exhaustive();
   throw new ORPCError(status, { message });
+}
+
+function hostForTerminal(terminalId?: string): Host {
+  if (!terminalId) return localHost;
+  const term = getTerminal(terminalId);
+  if (!term) throw new TerminalNotFoundError(terminalId);
+  return term.host;
 }
 
 const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
@@ -204,14 +207,25 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
     streams: {
       gitStatus: {
         read: async (input) =>
-          unwrapGit(await getStatus(input.repoPath, input.mode, log)),
-        install: (input, cb) => subscribeRepoChange(input.repoPath, cb, log),
+          unwrapGit(
+            await hostForTerminal(input.terminalId).getStatus(
+              input.repoPath,
+              input.mode,
+              log,
+            ),
+          ),
+        install: (input, cb) =>
+          hostForTerminal(input.terminalId).subscribeRepoChange(
+            input.repoPath,
+            cb,
+            log,
+          ),
         isEqual: gitStatusOutputEqual,
       },
       gitDiff: {
         read: async (input) =>
           unwrapGit(
-            await getDiff(
+            await hostForTerminal(input.terminalId).getDiff(
               input.repoPath,
               input.filePath,
               input.mode,
@@ -219,19 +233,35 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
               input.oldPath,
             ),
           ),
-        install: (input, cb) => subscribeRepoChange(input.repoPath, cb, log),
+        install: (input, cb) =>
+          hostForTerminal(input.terminalId).subscribeRepoChange(
+            input.repoPath,
+            cb,
+            log,
+          ),
         isEqual: gitDiffOutputEqual,
       },
       fsListAll: {
         read: async (input) => ({
-          paths: unwrapGit(await listAll(input.repoPath, log)),
+          paths: unwrapGit(
+            await hostForTerminal(input.terminalId).listAll(
+              input.repoPath,
+              log,
+            ),
+          ),
         }),
-        install: (input, cb) => subscribeRepoChange(input.repoPath, cb, log),
+        install: (input, cb) =>
+          hostForTerminal(input.terminalId).subscribeRepoChange(
+            input.repoPath,
+            cb,
+            log,
+          ),
         isEqual: fsListAllOutputEqual,
       },
       fsReadFile: {
         read: async (input): Promise<FsReadFileOutput> => {
-          if (isIframePreviewable(input.filePath)) {
+          const host = hostForTerminal(input.terminalId);
+          if (!host.summary && isIframePreviewable(input.filePath)) {
             const mtimeMs = unwrapGit(
               await statFileMtimeMs(input.repoPath, input.filePath, log),
             );
@@ -245,12 +275,17 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
             };
           }
           const { content, truncated } = unwrapGit(
-            await readFile(input.repoPath, input.filePath, log),
+            await host.readFile(input.repoPath, input.filePath, log),
           );
           return { kind: "text", content, truncated };
         },
         install: (input, cb) =>
-          subscribeFileChange(input.repoPath, input.filePath, cb, log),
+          hostForTerminal(input.terminalId).subscribeFileChange(
+            input.repoPath,
+            input.filePath,
+            cb,
+            log,
+          ),
         isEqual: fsReadFileOutputEqual,
       },
     },

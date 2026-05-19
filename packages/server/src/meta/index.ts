@@ -60,6 +60,7 @@ import { startAgentCommandTracker } from "./agent-command.ts";
 import { startGitProvider } from "./git.ts";
 import { startGitHubPrProvider } from "./github.ts";
 import { startProcessProvider } from "./process.ts";
+import { startRemoteAgentProvider } from "./remote-agent.ts";
 
 export {
   createMetadata,
@@ -79,14 +80,33 @@ export function startProviders(
   // Subscribe the tracker before any provider — the stash it maintains is
   // read by `startAgentProvider`'s reconcile via `getLastAgentCommandName`.
   const stopAgentCommand = startAgentCommandTracker(terminalId);
+  const stopGit = startGitProvider(entry, terminalId);
   if (entry.meta.hostId) {
+    const stopClaude = startRemoteAgentProvider(
+      claudeCodeProvider.kind,
+      entry,
+      terminalId,
+    );
+    const stopCodex = startRemoteAgentProvider(
+      codexProvider.kind,
+      entry,
+      terminalId,
+    );
+    const stopOpenCode = startRemoteAgentProvider(
+      opencodeProvider.kind,
+      entry,
+      terminalId,
+    );
     const stopProcess = startProcessProvider(entry, terminalId);
     return () => {
       stopAgentCommand();
+      stopGit();
+      stopClaude();
+      stopCodex();
+      stopOpenCode();
       stopProcess();
     };
   }
-  const stopGit = startGitProvider(entry, terminalId);
   const stopGitHubPr = startGitHubPrProvider(entry, terminalId);
   const stopClaude = startAgentProvider(claudeCodeProvider, entry, terminalId);
   const stopCodex = startAgentProvider(codexProvider, entry, terminalId);

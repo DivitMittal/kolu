@@ -10,7 +10,6 @@
  * deltas without needing to know about cwd-change semantics.
  */
 
-import { subscribeGitInfo } from "kolu-git";
 import { trackRecentRepo } from "../activity.ts";
 import { log } from "../log.ts";
 import { terminalChannels } from "../publisher.ts";
@@ -24,7 +23,7 @@ export function startGitProvider(
   const plog = log.child({ provider: "git", terminal: terminalId });
   plog.debug({ cwd: entry.meta.cwd }, "started");
 
-  const watcher = subscribeGitInfo(
+  const watcher = entry.host.subscribeGitInfo(
     entry.meta.cwd,
     (git) => {
       if (git) trackRecentRepo(git.mainRepoRoot, git.repoName);

@@ -19,6 +19,7 @@ import type {
 } from "anyagent";
 import type { Logger } from "kolu-shared";
 import type { AgentInfo } from "kolu-common/surface";
+import type { HostAgentState } from "../host/types.ts";
 import { log } from "../log.ts";
 import { terminalChannels } from "../publisher.ts";
 import type { TerminalProcess } from "../terminal-registry.ts";
@@ -65,7 +66,7 @@ export function shouldBumpRecencyForAgentChange(
  *  via the persisting variant. The two-call shape is forced by the
  *  bidirectional type fence in `state.ts`; the second publish is
  *  cheap and only happens on transitions. */
-function setAgentMetadata(
+export function setAgentMetadata(
   entry: TerminalProcess,
   terminalId: string,
   nextAgent: AgentInfo | null,
@@ -140,6 +141,24 @@ function snapshotTerminalState(
         basename = readForegroundBasenameOnce(entry, plog);
       return basename;
     },
+    lastAgentCommandName: shellIdle
+      ? null
+      : getLastAgentCommandName(terminalId),
+  };
+}
+
+export function snapshotHostAgentState(
+  entry: TerminalProcess,
+  terminalId: string,
+  plog: Logger,
+): HostAgentState {
+  const foregroundPid = entry.handle.foregroundPid;
+  const shellIdle =
+    foregroundPid === undefined || foregroundPid === entry.handle.pid;
+  return {
+    foregroundPid,
+    cwd: entry.meta.cwd,
+    foregroundProcess: readForegroundBasenameOnce(entry, plog),
     lastAgentCommandName: shellIdle
       ? null
       : getLastAgentCommandName(terminalId),

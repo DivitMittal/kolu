@@ -89,6 +89,7 @@ export const GitBaseRefSchema = z.object({
 export type GitBaseRef = z.infer<typeof GitBaseRefSchema>;
 
 export const GitStatusInputSchema = z.object({
+  terminalId: z.string().uuid().optional(),
   repoPath: z.string(),
   mode: GitDiffModeSchema,
 });
@@ -101,6 +102,7 @@ export const GitStatusOutputSchema = z.object({
 export type GitStatusOutput = z.infer<typeof GitStatusOutputSchema>;
 
 export const GitDiffInputSchema = z.object({
+  terminalId: z.string().uuid().optional(),
   repoPath: z.string(),
   /** Path relative to the repo root. */
   filePath: z.string(),
@@ -141,6 +143,7 @@ export type GitDiffOutput = z.infer<typeof GitDiffOutputSchema>;
 // --- File tree browsing ---
 
 export const FsListAllInputSchema = z.object({
+  terminalId: z.string().uuid().optional(),
   /** Absolute path to the repo root. */
   repoPath: z.string(),
 });

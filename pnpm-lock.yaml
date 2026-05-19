@@ -209,9 +209,24 @@ importers:
 
   packages/helper:
     dependencies:
+      anyagent:
+        specifier: workspace:*
+        version: link:../integrations/anyagent
+      kolu-claude-code:
+        specifier: workspace:*
+        version: link:../integrations/claude-code
+      kolu-codex:
+        specifier: workspace:*
+        version: link:../integrations/codex
       kolu-common:
         specifier: workspace:*
         version: link:../common
+      kolu-git:
+        specifier: workspace:*
+        version: link:../integrations/git
+      kolu-opencode:
+        specifier: workspace:*
+        version: link:../integrations/opencode
       kolu-shared:
         specifier: workspace:*
         version: link:../shared

@@ -6,9 +6,13 @@ import {
 import { createInterface } from "node:readline";
 import {
   HELPER_PROTOCOL_VERSION,
+  type AgentInfo,
+  type AgentKind,
+  type HelperAgentEvent,
   type HelperDataEvent,
   HelperEventSchema,
   type HelperExitEvent,
+  type HelperFsReadFileResult,
   type HelperParams,
   type HelperRpcMethod,
   type HelperResult,
@@ -17,10 +21,20 @@ import {
 } from "kolu-common/helper-protocol";
 import { DEFAULT_COLS, DEFAULT_ROWS } from "kolu-common/config";
 import type { HostSummary } from "kolu-common/contract";
+import {
+  err as gitErr,
+  gitInfoEqual,
+  ok as gitOk,
+  type GitDiffOutput,
+  type GitError,
+  type GitInfo,
+  type GitResult,
+  type GitStatusOutput,
+} from "kolu-git";
 import { match } from "ts-pattern";
-import type { Logger } from "../log.ts";
+import { log, type Logger } from "../log.ts";
 import { createPtyScreen, type PtyHandle, type PtyScreen } from "../pty.ts";
-import type { Host } from "./types.ts";
+import type { Host, HostAgentState, HostAgentWatch } from "./types.ts";
 
 const HELPER_READY_TIMEOUT_MS = 120_000;
 const HELPER_REQUEST_TIMEOUT_MS = 60_000;
@@ -44,12 +58,17 @@ interface PtyEventHandlers {
   onExit(event: HelperExitEvent): void;
 }
 
+interface AgentEventHandlers {
+  onChange(info: AgentInfo | null): void;
+}
+
 interface RemoteHostOpts {
   summary: HostSummary;
   helperRemoteCmd?: string;
 }
 
 const MAX_PENDING_PTY_EVENTS = 512;
+const REMOTE_GIT_POLL_MS = 2_000;
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -85,9 +104,21 @@ function appendTail(current: string, chunk: string): string {
     : next;
 }
 
+function gitErrorFromHelper(err: unknown): GitError {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/helper not-found:/i.test(message)) return { code: "NOT_A_REPO" };
+  return { code: "GIT_FAILED", message };
+}
+
+function remoteChangePoll(onChange: () => void): () => void {
+  const timer = setInterval(onChange, REMOTE_GIT_POLL_MS);
+  return () => clearInterval(timer);
+}
+
 export function createRemoteHost(opts: RemoteHostOpts): Host {
   const { summary } = opts;
   const helperRemoteCmd = opts.helperRemoteCmd ?? defaultHelperRemoteCmd();
+  const fallbackLog = log.child({ host: summary.id });
   let child: ChildProcessWithoutNullStreams | null = null;
   let connectPromise: Promise<void> | null = null;
   let helperReady = false;
@@ -97,6 +128,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
   const pending = new Map<number, PendingRequest>();
   const pendingPtys = new Map<string, PendingPty>();
   const ptys = new Map<string, PtyEventHandlers>();
+  const agentWatchers = new Map<string, AgentEventHandlers>();
 
   function rejectAll(err: Error): void {
     for (const req of pending.values()) req.reject(err);
@@ -205,6 +237,15 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
         if (reg) reg.onExit(exit);
         else queuePendingPtyEvent(exit, tlog);
       })
+      .with({ method: "agent" }, (agent: HelperAgentEvent) => {
+        const reg = agentWatchers.get(agent.params.watchId);
+        if (reg) reg.onChange(agent.params.info);
+        else
+          tlog.warn(
+            { host: summary.id, watchId: agent.params.watchId },
+            "helper agent event for unknown watch",
+          );
+      })
       .exhaustive();
   }
 
@@ -279,6 +320,8 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
             params: { ptyId, exitCode: typeof code === "number" ? code : 255 },
           });
         }
+        for (const reg of agentWatchers.values()) reg.onChange(null);
+        agentWatchers.clear();
         pendingPtys.clear();
       });
     }).finally(() => {
@@ -326,6 +369,162 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     return promise;
   }
 
+  async function resolveRemoteGitInfo(
+    cwd: string,
+    tlog: Logger,
+  ): Promise<GitResult<GitInfo>> {
+    try {
+      const info = await sendRequest("resolveGitInfo", { cwd }, tlog);
+      return info ? gitOk(info) : gitErr({ code: "NOT_A_REPO" });
+    } catch (err) {
+      return gitErr(gitErrorFromHelper(err));
+    }
+  }
+
+  function subscribeRemoteGitInfo(
+    initialCwd: string,
+    onChange: (info: GitInfo | null) => void,
+    tlog?: Logger,
+  ) {
+    const plog = tlog ?? fallbackLog;
+    let currentCwd = initialCwd;
+    let currentInfo: GitInfo | null = null;
+    let stopped = false;
+    let inFlight = false;
+    let pendingResolve = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    function schedule(): void {
+      if (stopped) return;
+      timer = setTimeout(requestResolve, REMOTE_GIT_POLL_MS);
+    }
+
+    function requestResolve(): void {
+      if (stopped) return;
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      if (inFlight) {
+        pendingResolve = true;
+        return;
+      }
+      inFlight = true;
+      const cwdAtStart = currentCwd;
+      void resolveRemoteGitInfo(cwdAtStart, plog)
+        .then((result) => {
+          if (stopped || cwdAtStart !== currentCwd) return;
+          const next = result.ok ? result.value : null;
+          if (!result.ok && result.error.code !== "NOT_A_REPO") {
+            plog.error(
+              { host: summary.id, code: result.error.code, cwd: currentCwd },
+              "remote git resolution failed",
+            );
+          }
+          if (gitInfoEqual(next, currentInfo)) return;
+          currentInfo = next;
+          onChange(next);
+        })
+        .catch((err) =>
+          plog.error(
+            { err, host: summary.id, cwd: currentCwd },
+            "remote git resolution threw",
+          ),
+        )
+        .finally(() => {
+          inFlight = false;
+          if (pendingResolve) {
+            pendingResolve = false;
+            requestResolve();
+          } else {
+            schedule();
+          }
+        });
+    }
+
+    requestResolve();
+    return {
+      setCwd(next: string): void {
+        if (stopped || next === currentCwd) return;
+        currentCwd = next;
+        requestResolve();
+      },
+      stop(): void {
+        stopped = true;
+        if (timer) clearTimeout(timer);
+      },
+    };
+  }
+
+  async function remoteGit<T>(action: () => Promise<T>): Promise<GitResult<T>> {
+    try {
+      return gitOk(await action());
+    } catch (err) {
+      return gitErr(gitErrorFromHelper(err));
+    }
+  }
+
+  function startAgentWatch(
+    kind: AgentKind,
+    state: HostAgentState,
+    onChange: (info: AgentInfo | null) => void,
+    tlog?: Logger,
+  ): HostAgentWatch {
+    const plog = tlog ?? fallbackLog;
+    const watchId = crypto.randomUUID();
+    let stopped = false;
+    let active = false;
+    let queued: HostAgentState | null = state;
+    agentWatchers.set(watchId, { onChange });
+
+    async function drain(): Promise<void> {
+      if (active) return;
+      active = true;
+      try {
+        while (!stopped && queued) {
+          const next = queued;
+          queued = null;
+          const result = await sendRequest(
+            "watchAgent",
+            { watchId, kind, state: next },
+            plog,
+          );
+          if (!stopped && result.sessionKey === null) onChange(null);
+        }
+      } catch (err) {
+        plog.error(
+          { err, host: summary.id, kind, watchId },
+          "remote agent watch failed",
+        );
+        if (!stopped) onChange(null);
+      } finally {
+        active = false;
+        if (!stopped && queued) void drain();
+      }
+    }
+
+    void drain();
+    return {
+      update(next: HostAgentState): void {
+        if (stopped) return;
+        queued = next;
+        void drain();
+      },
+      stop(): void {
+        if (stopped) return;
+        stopped = true;
+        queued = null;
+        agentWatchers.delete(watchId);
+        void sendRequest("unwatchAgent", { watchId }, plog).catch((err) =>
+          plog.error(
+            { err, host: summary.id, kind, watchId },
+            "remote agent unwatch failed",
+          ),
+        );
+      },
+    };
+  }
+
   function maybeShutdown(): void {
     if (ptys.size > 0) return;
     child?.kill();
@@ -334,6 +533,43 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
 
   return {
     summary,
+    subscribeGitInfo: subscribeRemoteGitInfo,
+    getStatus(repoPath, mode, tlog) {
+      return remoteGit<GitStatusOutput>(() =>
+        sendRequest("gitStatus", { repoPath, mode }, tlog ?? fallbackLog),
+      );
+    },
+    getDiff(repoPath, filePath, mode, tlog, oldPath) {
+      return remoteGit<GitDiffOutput>(() =>
+        sendRequest(
+          "gitDiff",
+          { repoPath, filePath, mode, oldPath },
+          tlog ?? fallbackLog,
+        ),
+      );
+    },
+    listAll(repoPath, tlog) {
+      return remoteGit<string[]>(async () => {
+        const result = await sendRequest(
+          "fsListAll",
+          { repoPath },
+          tlog ?? fallbackLog,
+        );
+        return result.paths;
+      });
+    },
+    readFile(repoPath, filePath, tlog) {
+      return remoteGit<HelperFsReadFileResult>(() =>
+        sendRequest("fsReadFile", { repoPath, filePath }, tlog ?? fallbackLog),
+      );
+    },
+    subscribeRepoChange(_repoRoot, onChange) {
+      return remoteChangePoll(onChange);
+    },
+    subscribeFileChange(_repoRoot, _filePath, onChange) {
+      return remoteChangePoll(onChange);
+    },
+    watchAgent: startAgentWatch,
     async spawnPty(tlog, terminalId, opts, cwd): Promise<PtyHandle> {
       pendingPtys.set(terminalId, { events: [], overflowed: false });
       let result: HelperResult<"spawnPty">;
@@ -458,6 +694,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       helperReady = false;
       pendingPtys.clear();
       ptys.clear();
+      agentWatchers.clear();
       rejectAll(new Error(`remote host ${summary.id} shut down`));
     },
   };

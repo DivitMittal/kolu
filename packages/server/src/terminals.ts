@@ -165,6 +165,7 @@ export async function createTerminal(
   const entry: TerminalProcess = {
     info: { id, pid: handle.pid },
     meta,
+    host,
     handle,
     stopProviders: () => {},
   };
