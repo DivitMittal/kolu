@@ -33,6 +33,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
   const helperRemoteCmd = opts.helperRemoteCmd ?? DEFAULT_HELPER_REMOTE_CMD;
   let child: ChildProcessWithoutNullStreams | null = null;
   let connectPromise: Promise<void> | null = null;
+  let helperReady = false;
   let readyResolve: (() => void) | null = null;
   let readyReject: ((err: Error) => void) | null = null;
   let nextRequestId = 1;
@@ -51,6 +52,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
     readyReject?.(err);
     readyReject = null;
     readyResolve = null;
+    helperReady = false;
   }
 
   function dispatchFrame(line: string, tlog: Logger): void {
@@ -94,6 +96,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
         { host: summary.id, version: event.data.params.version },
         "remote helper ready",
       );
+      helperReady = true;
       readyResolve?.();
       readyResolve = null;
       readyReject = null;
@@ -109,7 +112,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
   }
 
   function ensureConnected(tlog: Logger): Promise<void> {
-    if (child) return Promise.resolve();
+    if (helperReady && child) return Promise.resolve();
     if (connectPromise !== null) return connectPromise;
 
     connectPromise = new Promise<void>((resolve, reject) => {
@@ -117,11 +120,10 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
         stdio: "pipe",
       });
       child = ssh;
-      readyResolve = resolve;
-      readyReject = reject;
+      helperReady = false;
 
       const readyTimer = setTimeout(() => {
-        reject(
+        readyReject?.(
           new Error(`remote helper on ${summary.id} did not become ready`),
         );
         ssh.kill();
@@ -130,6 +132,10 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
         clearTimeout(readyTimer);
         resolve();
       };
+      readyReject = (err) => {
+        clearTimeout(readyTimer);
+        reject(err);
+      };
 
       createInterface({ input: ssh.stdout }).on("line", (line) =>
         dispatchFrame(line, tlog),
@@ -137,10 +143,16 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
       ssh.stderr.on("data", (data: Buffer) => {
         tlog.debug({ host: summary.id, stderr: data.toString() }, "ssh stderr");
       });
+      ssh.on("error", (err) => {
+        child = null;
+        connectPromise = null;
+        rejectAll(err);
+      });
       ssh.on("exit", (code, signal) => {
         clearTimeout(readyTimer);
         child = null;
         connectPromise = null;
+        helperReady = false;
         const err = new Error(
           `ssh helper for ${summary.id} exited (${signal ?? code ?? "unknown"})`,
         );
@@ -154,7 +166,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
         }
       });
     }).finally(() => {
-      if (child) connectPromise = null;
+      if (helperReady || !child) connectPromise = null;
     });
 
     return connectPromise;
@@ -217,7 +229,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
 
       function writeRemote(data: string): void {
         void sendRequest("write", { ptyId, data }, tlog).catch((err) =>
-          tlog.warn({ err, host: summary.id }, "remote pty write failed"),
+          tlog.error({ err, host: summary.id }, "remote pty write failed"),
         );
       }
 
@@ -265,7 +277,7 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
         resize: (cols, rows) => {
           screen?.resize(cols, rows);
           void sendRequest("resize", { ptyId, cols, rows }, tlog).catch((err) =>
-            tlog.warn({ err, host: summary.id }, "remote pty resize failed"),
+            tlog.error({ err, host: summary.id }, "remote pty resize failed"),
           );
         },
         getScreenState: () => screen?.getScreenState() ?? "",
@@ -276,14 +288,21 @@ export function createRemoteHost(opts: RemoteHostOpts): Host {
           disposed = true;
           ptys.delete(ptyId);
           screen?.dispose();
-          void sendRequest("dispose", { ptyId }, tlog).catch(() => {});
-          maybeShutdown();
+          void sendRequest("dispose", { ptyId }, tlog)
+            .catch((err) =>
+              tlog.error(
+                { err, host: summary.id },
+                "remote pty dispose failed",
+              ),
+            )
+            .finally(maybeShutdown);
         },
       };
     },
     shutdown() {
       child?.kill();
       child = null;
+      helperReady = false;
       ptys.clear();
       rejectAll(new Error(`remote host ${summary.id} shut down`));
     },
