@@ -194,7 +194,7 @@ let
     mkdir -p $out/bin
     makeWrapper ${pkgs.tsx}/bin/tsx $out/bin/kolu-helper \
       --add-flags "${koluStamped}/packages/helper/src/index.ts" \
-      --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs ]}
+      --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs pkgs.gh pkgs.git ]}
   '';
 in
 {
