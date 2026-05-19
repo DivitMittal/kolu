@@ -14,6 +14,7 @@ export {
   type AgentProvider,
   type AgentTerminalState,
   type AgentWatcher,
+  type Executor,
   agentInfoEqual,
   matchesAgent,
 } from "./agent-provider.ts";

@@ -17,8 +17,13 @@
  * suffices for every provider.
  */
 
+import type { GitExecutor } from "kolu-git/executor";
 import type { Logger } from "kolu-shared";
 import type { TaskProgress } from "./schemas.ts";
+
+/** Re-export the universal executor type so integration packages don't
+ *  have to take a direct dep on kolu-git just to reference it. */
+export type { GitExecutor as Executor } from "kolu-git/executor";
 
 /** Snapshot of a terminal's observable state, passed to `resolveSession`.
  *  Fields are the inputs every agent's session-matching logic can draw from;
@@ -73,15 +78,28 @@ export interface AgentInfoShape {
 
 /** Agent-detection contract. Type parameters: `Session` is the provider's
  *  opaque match result (its lifetime == one matched session); `Info` is the
- *  wire-shape yielded by the watcher. */
+ *  wire-shape yielded by the watcher.
+ *
+ *  Every IO-bearing method takes an `executor` — the orchestrator supplies
+ *  `localExecutor` for local terminals and the terminal's `Host` for remote
+ *  ones. Both implement the same `GitExecutor` (`exec` / `readFile` /
+ *  `statMtimeMs` / `watch` / `queryDb`) shape so the provider body is
+ *  identical for both. Same code path, two backends. */
 export interface AgentProvider<Session, Info extends AgentInfoShape> {
   /** Discriminator matching `Info["kind"]` (e.g. "claude-code", "opencode"). */
   readonly kind: Info["kind"];
 
   /** Given a snapshot of terminal state, return the currently-matching
-   *  session for this agent kind, or null if no session applies. Pure and
-   *  cheap — may be called repeatedly on title events and external changes. */
-  resolveSession(state: AgentTerminalState, log: Logger): Session | null;
+   *  session for this agent kind, or null if no session applies. May query
+   *  the executor (e.g. opencode hits SQLite) — kept narrow so the
+   *  orchestrator can await it on every title / cwd / preexec event without
+   *  jank. Returns null fast when the foreground process gate fails so
+   *  no IO happens unless this provider's binary is actually running. */
+  resolveSession(
+    state: AgentTerminalState,
+    executor: GitExecutor,
+    log: Logger,
+  ): Promise<Session | null>;
 
   /** Stable dedup key for a resolved session. The orchestrator compares
    *  successive `sessionKey(resolveSession(...))` values to decide whether
@@ -96,6 +114,7 @@ export interface AgentProvider<Session, Info extends AgentInfoShape> {
    *  debounce timers, in-flight async work). */
   createWatcher(
     session: Session,
+    executor: GitExecutor,
     onChange: (info: Info) => void,
     log: Logger,
   ): AgentWatcher;
@@ -109,33 +128,32 @@ export interface AgentProvider<Session, Info extends AgentInfoShape> {
    *  Must NOT be used for per-session state changes — those are the
    *  responsibility of the watcher returned by `createWatcher`.
    *
-   *  Lazy activation: the orchestrator calls `install` at most once per
-   *  process, the first time any terminal's state satisfies `isPresent`.
-   *  Until then, zero watchers fire for this provider — a fresh machine
-   *  where the user has never run this agent pays no watcher cost and
-   *  logs no missing-directory errors. Once installed, the subscription
-   *  lives for the remainder of the process; there is no uninstall,
-   *  matching how the underlying singletons (Codex's WAL watcher,
-   *  Claude's SESSIONS_DIR watcher) already work. */
+   *  Activation is per-executor. The orchestrator memo-keys on
+   *  `{ kind, executorId }` and installs at most once per executor (a
+   *  fresh machine where the user has never run this agent pays no
+   *  watcher cost). `isPresent` may probe filesystem state via the
+   *  executor (the watcher install needs the relevant directory to
+   *  exist on the same backend the watcher will fire from). */
   externalChanges?: {
-    /** True if this agent is (or might soon be) relevant on this machine
-     *  — either because the foreground process is (or looks like) this
-     *  agent, or because its on-disk state is already present (the user
-     *  has used the agent here before, even if no terminal currently
+    /** True if this agent is (or might soon be) relevant on this executor's
+     *  backend — either because the foreground process is (or looks like)
+     *  this agent, or because its on-disk state is already present (the
+     *  user has used the agent here before, even if no terminal currently
      *  hosts it). Called on every reconcile; the first `true` across any
-     *  terminal for this provider triggers `install`. Must NOT require
-     *  `resolveSession` to have succeeded — for Codex, the foreground
-     *  process is `codex` before any DB row exists, and the WAL watcher
-     *  is what catches the row's appearance. */
-    isPresent(state: AgentTerminalState): boolean;
-    /** Install the process-wide watcher and wire its events to `onChange`.
-     *  Called at most once per process. `onError` receives exceptions
+     *  terminal for this provider+executor triggers `install`. */
+    isPresent(
+      state: AgentTerminalState,
+      executor: GitExecutor,
+    ): Promise<boolean>;
+    /** Install the per-executor watcher and wire its events to `onChange`.
+     *  Called at most once per executor. `onError` receives exceptions
      *  thrown by `onChange`. */
     install(
+      executor: GitExecutor,
       onChange: () => void,
       onError: (err: unknown) => void,
       log: Logger,
-    ): void;
+    ): Promise<{ stop(): void }>;
   };
 }
 

@@ -1,72 +1,39 @@
 /**
- * OpenCode core — pure functions and IO helpers for detecting OpenCode
- * sessions and deriving state from its SQLite database.
+ * OpenCode core — pure functions for detecting OpenCode sessions and
+ * deriving state from its SQLite database.
  *
- * No dependency on server internals (no updateServerMetadata, no TerminalProcess).
- * The server's provider imports these and wires them into the metadata system.
+ * Every IO operation flows through an `Executor` (`exec` / `readFile` /
+ * `statMtimeMs` / `watch` / `queryDb`). The local kolu process passes
+ * `localExecutor` from `kolu-git/executor`; remote terminals pass the
+ * SSH host. Same code, two backends — no parallel "remote-opencode.ts"
+ * shim, no DB-vs-RPC fork.
  *
  * Architecture: OpenCode (TUI mode) is a single process that owns
  * `~/.local/share/opencode/opencode.db` directly via SQLite WAL mode.
- * The TUI does NOT expose an HTTP server by default — that's `opencode serve`.
- * So the only way to observe TUI sessions is to read the SQLite DB directly.
- *
- * Read concurrency is safe because OpenCode uses WAL mode — readers don't
- * block writers and vice versa. We open the DB read-only.
+ * The TUI does NOT expose an HTTP server by default — that's `opencode
+ * serve`. So the only way to observe TUI sessions is to read the SQLite
+ * DB directly. Read concurrency is safe because OpenCode uses WAL mode
+ * — readers don't block writers and vice versa.
  *
  * State derivation from the latest message in a session:
  *   - role: "user"                          → "thinking" (waiting for assistant)
  *   - role: "assistant", no time.completed  → "thinking" (in flight)
  *   - role: "assistant", finish: "stop"     → "waiting"  (assistant finished)
  *   - role: "assistant", finish: other      → "thinking" (still working)
- *
- * Structure note: this file holds the leaf module. Peers `session-watcher.ts`,
- * `wal-watcher.ts`, and `agent-provider.ts` import from here; `index.ts` is
- * a pure barrel re-exporting from all of them plus `schemas.ts` / `config.ts`.
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { classifyByAwaiting } from "anyagent";
+import type { Executor } from "anyagent";
 import type { Logger } from "kolu-shared";
-import { withDb as sharedWithDb } from "kolu-shared/sqlite";
+import { classifyByAwaiting } from "anyagent";
 import { match } from "ts-pattern";
 import { OPENCODE_DB_PATH } from "./config.ts";
 import type { OpenCodeInfo, TaskProgress } from "./schemas.ts";
 
-// --- Database helpers ---
-
-/** OpenCode-specific `withDb` — partial application of anyagent's
- *  shared helper over our `openDb`. Keeps the local call signature so
- *  consumers within this package don't need to change. */
-function withDb<T>(
-  fn: (db: DatabaseSync) => T,
-  errorMsg: string,
-  errorCtx: Record<string, unknown>,
-  log?: Logger,
-  db?: DatabaseSync,
-): T | null {
-  return sharedWithDb<DatabaseSync, T>(openDb, fn, errorMsg, errorCtx, log, db);
-}
-
-// --- Database session lookup ---
-
-/** SQL: most recently updated unarchived session for a directory.
- *  Shared between the local DatabaseSync path here and the remote
- *  `host.queryDb` path in `server/src/meta/remote-opencode.ts`. */
-export const SESSION_BY_DIRECTORY_SQL =
-  "SELECT id, title, directory FROM session WHERE directory = ? AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 1";
-
-/** SQL: latest message blob for a session — feeds `parseMessageState`. */
-export const LATEST_MESSAGE_SQL =
-  "SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1";
-
-export interface OpenCodeSession {
-  id: string;
-  title: string | null;
-  directory: string;
-}
-
-/** Open a read-only connection to OpenCode's database. Returns null if absent.
- *  Caller MUST close the returned database when done. */
+/** Open a read-only connection to OpenCode's database on the controller's
+ *  local fs. Used by the one-shot HTML transcript exporter (`transcript.ts`),
+ *  which runs only against the local DB — the live agent-detection path
+ *  goes through the executor instead. */
 export function openDb(log?: Logger): DatabaseSync | null {
   try {
     return new DatabaseSync(OPENCODE_DB_PATH, { readOnly: true });
@@ -76,192 +43,230 @@ export function openDb(log?: Logger): DatabaseSync | null {
   }
 }
 
+// --- SQL constants — exported so callers can audit / share ---
+
+export const SESSION_BY_DIRECTORY_SQL =
+  "SELECT id, title, directory FROM session WHERE directory = ? AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 1";
+
+export const SESSION_TITLE_SQL = "SELECT title FROM session WHERE id = ?";
+
+export const LATEST_MESSAGE_SQL =
+  "SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1";
+
+export const LATEST_ASSISTANT_MESSAGE_SQL =
+  "SELECT data FROM message WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant' ORDER BY time_created DESC LIMIT 1";
+
+export const TASK_PROGRESS_SQL =
+  "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed FROM todo WHERE session_id = ?";
+
+/** OpenCode built-in tools whose pending invocation means the agent is
+ *  awaiting the human. Both call `Question.Service.ask` and write a
+ *  `part` row with `state.status = "running"` while blocking on the
+ *  user's reply. */
+const AWAITING_USER_TOOLS = ["question", "plan_exit"] as const;
+
+export const RUNNING_TOOLS_SQL = (() => {
+  // Inline placeholder list from a constant — safe because every value
+  // is a hard-coded literal, not user input.
+  const placeholders = AWAITING_USER_TOOLS.map(() => "?").join(", ");
+  return `SELECT COUNT(*) AS total, SUM(CASE WHEN json_extract(data, '$.tool') IN (${placeholders}) THEN 1 ELSE 0 END) AS awaiting FROM part WHERE message_id = ? AND json_extract(data, '$.type') = 'tool' AND json_extract(data, '$.state.status') = 'running'`;
+})();
+
+// --- queryDb helper ---
+
+/** Run a queryDb against an executor; surface the unsupported-op case
+ *  (some executors may not implement queryDb) as a clean log + null. */
+async function queryDb(
+  executor: Executor,
+  path: string,
+  sql: string,
+  params: ReadonlyArray<string | number | null>,
+  log: Logger | undefined,
+  errorCtx: Record<string, unknown>,
+  errorMsg: string,
+): Promise<Array<Record<string, unknown>> | null> {
+  if (!executor.queryDb) {
+    log?.debug({ ...errorCtx }, "executor lacks queryDb support");
+    return null;
+  }
+  try {
+    return await executor.queryDb(path, sql, params);
+  } catch (err) {
+    log?.debug({ err, ...errorCtx }, errorMsg);
+    return null;
+  }
+}
+
+// --- DB path resolution ---
+
+/** Resolve the OpenCode DB path on this executor's filesystem.
+ *  Local: `process.env.HOME/.local/share/opencode/opencode.db` (or the
+ *  `KOLU_OPENCODE_DB` env override).
+ *  Remote: `printenv HOME` on the helper, then append the rel path.
+ *  Memoized per call; the caller typically caches it across refreshes. */
+export async function resolveOpencodeDbPath(
+  executor: Executor,
+  log?: Logger,
+): Promise<string | null> {
+  // Local-side env override for testing — only applies if HOME resolves
+  // to the controller's HOME (i.e. we're using localExecutor).
+  if (process.env.KOLU_OPENCODE_DB) return process.env.KOLU_OPENCODE_DB;
+  try {
+    const r = await executor.exec("printenv", ["HOME"], { timeoutMs: 5_000 });
+    if (r.exitCode !== 0) {
+      log?.debug({ stderr: r.stderr }, "printenv HOME failed");
+      return null;
+    }
+    const home = r.stdout.trim();
+    if (!home) return null;
+    return `${home}/.local/share/opencode/opencode.db`;
+  } catch (err) {
+    log?.debug({ err }, "resolveOpencodeDbPath failed");
+    return null;
+  }
+}
+
+// --- Database session lookup ---
+
+export interface OpenCodeSession {
+  id: string;
+  title: string | null;
+  directory: string;
+  /** The resolved DB path used to find this session. Stashed here so the
+   *  session-watcher doesn't have to re-resolve it on every refresh. */
+  dbPath: string;
+}
+
 /**
  * Find the most recently updated session for a given directory.
  * Returns null if no sessions exist for that directory or the DB is absent.
  *
  * Heuristic: pick the session with the largest `time_updated` — the one
- * the user most recently interacted with. If multiple sessions share a
- * directory, this picks the active one in practice.
+ * the user most recently interacted with.
  */
-export function findSessionByDirectory(
+export async function findSessionByDirectory(
   directory: string,
+  executor: Executor,
   log?: Logger,
-): OpenCodeSession | null {
-  return withDb(
-    (conn) => {
-      const row = conn.prepare(SESSION_BY_DIRECTORY_SQL).get(directory) as
-        | { id: string; title: string; directory: string }
-        | undefined;
-      if (!row) return null;
-      return {
-        id: row.id,
-        title: row.title || null,
-        directory: row.directory,
-      };
-    },
-    "opencode session query failed",
-    { directory },
+): Promise<OpenCodeSession | null> {
+  const dbPath = await resolveOpencodeDbPath(executor, log);
+  if (!dbPath) return null;
+  const rows = await queryDb(
+    executor,
+    dbPath,
+    SESSION_BY_DIRECTORY_SQL,
+    [directory],
     log,
+    { directory },
+    "opencode session query failed",
   );
+  if (!rows || rows.length === 0) return null;
+  const row = rows[0] as { id: string; title: string; directory: string };
+  return {
+    id: row.id,
+    title: row.title || null,
+    directory: row.directory,
+    dbPath,
+  };
 }
 
 // --- Session title refresh ---
 
-/** Re-read the current session title from the DB. Returns null if absent. */
-export function getSessionTitle(
+export async function getSessionTitle(
   sessionId: string,
+  dbPath: string,
+  executor: Executor,
   log?: Logger,
-  db?: DatabaseSync,
-): string | null {
-  return withDb(
-    (conn) => {
-      const row = conn
-        .prepare("SELECT title FROM session WHERE id = ?")
-        .get(sessionId) as { title: string } | undefined;
-      return row?.title || null;
-    },
-    "opencode session title query failed",
-    { sessionId },
+): Promise<string | null> {
+  const rows = await queryDb(
+    executor,
+    dbPath,
+    SESSION_TITLE_SQL,
+    [sessionId],
     log,
-    db,
+    { sessionId },
+    "opencode session title query failed",
   );
+  if (!rows || rows.length === 0) return null;
+  return (rows[0] as { title: string }).title || null;
 }
 
 // --- Todo progress ---
 
-/**
- * Read todo progress for a session from the `todo` table.
- * Returns null if the session has no todos.
- *
- * Pass an existing `db` to share a connection with the caller — used by
- * `createOpenCodeWatcher` to avoid opening/closing on every WAL event.
- * If `db` is omitted, opens and closes its own connection.
- */
-export function getSessionTaskProgress(
+export async function getSessionTaskProgress(
   sessionId: string,
+  dbPath: string,
+  executor: Executor,
   log?: Logger,
-  db?: DatabaseSync,
-): TaskProgress | null {
-  return withDb(
-    (conn) => {
-      const row = conn
-        .prepare(
-          "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed FROM todo WHERE session_id = ?",
-        )
-        .get(sessionId) as
-        | { total: number; completed: number | null }
-        | undefined;
-      if (!row || row.total === 0) return null;
-      return { total: row.total, completed: row.completed ?? 0 };
-    },
-    "opencode todo query failed",
-    { sessionId },
+): Promise<TaskProgress | null> {
+  const rows = await queryDb(
+    executor,
+    dbPath,
+    TASK_PROGRESS_SQL,
+    [sessionId],
     log,
-    db,
+    { sessionId },
+    "opencode todo query failed",
   );
+  if (!rows || rows.length === 0) return null;
+  const row = rows[0] as { total: number; completed: number | null };
+  if (row.total === 0) return null;
+  return { total: row.total, completed: row.completed ?? 0 };
 }
 
 // --- Context-token lookup ---
 
-/**
- * Read the latest assistant message's running context-token total from
- * `tokens.total`. Independent of `deriveSessionState` because the signals
- * terminate differently: state pivots on the newest message of any role,
- * but the token total only lives on assistant messages — using the single
- * latest message would blank the count whenever the user's prompt is the
- * newest row (Thinking state).
- *
- * One indexed query against (session_id, time_created). `json_extract`
- * forces per-row blob inspection, but the walker stops at the first match
- * — in practice 1–3 rows.
- */
-export function getLatestAssistantContextTokens(
+export async function getLatestAssistantContextTokens(
   sessionId: string,
+  dbPath: string,
+  executor: Executor,
   log?: Logger,
-  db?: DatabaseSync,
-): number | null {
-  return withDb(
-    (conn) => {
-      const row = conn
-        .prepare(
-          "SELECT data FROM message WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant' ORDER BY time_created DESC LIMIT 1",
-        )
-        .get(sessionId) as { data: string } | undefined;
-      if (!row) return null;
-      let parsed: MessageData;
-      try {
-        parsed = JSON.parse(row.data) as MessageData;
-      } catch (err) {
-        // OpenCode writes this JSON itself, so a parse failure is a real
-        // anomaly — surface it rather than silently blanking the badge.
-        log?.error(
-          { err, sessionId },
-          "opencode assistant message.data parse failed",
-        );
-        return null;
-      }
-      return parsed.tokens?.total ?? null;
-    },
-    "opencode context-tokens query failed",
-    { sessionId },
+): Promise<number | null> {
+  const rows = await queryDb(
+    executor,
+    dbPath,
+    LATEST_ASSISTANT_MESSAGE_SQL,
+    [sessionId],
     log,
-    db,
+    { sessionId },
+    "opencode context-tokens query failed",
   );
+  if (!rows || rows.length === 0) return null;
+  const raw = (rows[0] as { data: string }).data;
+  let parsed: MessageData;
+  try {
+    parsed = JSON.parse(raw) as MessageData;
+  } catch (err) {
+    log?.error(
+      { err, sessionId },
+      "opencode assistant message.data parse failed",
+    );
+    return null;
+  }
+  return parsed.tokens?.total ?? null;
 }
 
 // --- Tool detection ---
 
-/** OpenCode built-in tools whose pending invocation means the agent is
- *  awaiting the human. Both call `Question.Service.ask` and write a
- *  `part` row with `state.status = "running"` while blocking on the
- *  user's reply (upstream verification:
- *  `packages/opencode/src/tool/question.ts:24` and
- *  `packages/opencode/src/tool/plan.ts:29`). Other interactive flows
- *  (`ctx.ask` permission prompts inside `shell`/`edit`/`write`/etc.)
- *  don't surface a distinct `tool` value — the part stays `shell`/etc.
- *  and is indistinguishable from a real-work tool. */
-const AWAITING_USER_TOOLS = ["question", "plan_exit"] as const;
-
-/** Classify the tool parts currently in the "running" state for one
- *  message (the current assistant turn) — scoped per-message rather
- *  than per-session so a transcript with thousands of completed tool
- *  parts stays cheap to scan.
- *
- *  Returns `null` when no tools are running (the caller keeps its base
- *  state), `"tool_use"` when at least one real-work tool is in flight,
- *  and `"awaiting_user"` when every running part is in
- *  `AWAITING_USER_TOOLS`. One SQL pass counts total + awaiting using
- *  the `part_message_id_id_idx` index. */
-export function runningToolsBucket(
+export async function runningToolsBucket(
   messageId: string,
+  dbPath: string,
+  executor: Executor,
   log?: Logger,
-  db?: DatabaseSync,
-): "tool_use" | "awaiting_user" | null {
-  // SQLite's parameter binding doesn't accept arrays for `IN (...)`,
-  // so the placeholder list is constructed inline from a constant —
-  // safe because every value is a hard-coded literal, not user input.
-  const placeholders = AWAITING_USER_TOOLS.map(() => "?").join(", ");
-  return (
-    withDb(
-      (conn) => {
-        const row = conn
-          .prepare(
-            `SELECT COUNT(*) AS total, SUM(CASE WHEN json_extract(data, '$.tool') IN (${placeholders}) THEN 1 ELSE 0 END) AS awaiting FROM part WHERE message_id = ? AND json_extract(data, '$.type') = 'tool' AND json_extract(data, '$.state.status') = 'running'`,
-          )
-          .get(...AWAITING_USER_TOOLS, messageId) as
-          | { total: number; awaiting: number | null }
-          | undefined;
-        const total = row?.total ?? 0;
-        if (total === 0) return null;
-        return classifyByAwaiting(row?.awaiting ?? 0, total);
-      },
-      "opencode running-tools query failed",
-      { messageId },
-      log,
-      db,
-    ) ?? null
+): Promise<"tool_use" | "awaiting_user" | null> {
+  const rows = await queryDb(
+    executor,
+    dbPath,
+    RUNNING_TOOLS_SQL,
+    [...AWAITING_USER_TOOLS, messageId],
+    log,
+    { messageId },
+    "opencode running-tools query failed",
   );
+  if (!rows || rows.length === 0) return null;
+  const row = rows[0] as { total: number; awaiting: number | null };
+  if (row.total === 0) return null;
+  return classifyByAwaiting(row.awaiting ?? 0, row.total);
 }
 
 // --- State derivation ---
@@ -273,23 +278,14 @@ interface MessageData {
   providerID?: string;
   finish?: string;
   time?: { created?: number; completed?: number };
-  /** Present on assistant messages once OpenCode has accounted the turn.
-   *  `total` is the running session token count, pre-summed by the
-   *  provider — we just pass it through. */
   tokens?: { total?: number };
 }
 
-/** State derived from message JSON content only. Token telemetry is a
- *  separate signal (see `getLatestAssistantContextTokens`) because the
- *  latest-message lens this function provides doesn't match the
- *  latest-assistant-message lens that context accounting needs. */
 export type ParsedMessageState = {
   state: OpenCodeInfo["state"];
   model: string | null;
 };
 
-/** Full derived state including the message ID for scoping
- *  downstream queries (e.g. tool-part lookup) to the current turn. */
 export type DerivedState = ParsedMessageState & {
   messageId: string;
 };
@@ -297,35 +293,31 @@ export type DerivedState = ParsedMessageState & {
 /**
  * Read the latest message for a session and derive Kolu state from it.
  * Returns null if the session has no messages or the DB is absent.
- *
- * Pass an existing `db` to share a connection with the caller — used by
- * `createOpenCodeWatcher` to avoid opening/closing on every WAL event.
- * If `db` is omitted, opens and closes its own connection.
  */
-export function deriveSessionState(
+export async function deriveSessionState(
   sessionId: string,
+  dbPath: string,
+  executor: Executor,
   log?: Logger,
-  db?: DatabaseSync,
-): DerivedState | null {
-  return withDb(
-    (conn) => {
-      const row = conn.prepare(LATEST_MESSAGE_SQL).get(sessionId) as
-        | { id: string; data: string }
-        | undefined;
-      if (!row) return null;
-      const parsed = parseMessageState(row.data);
-      if (!parsed) return null;
-      return { ...parsed, messageId: row.id };
-    },
-    "opencode message query failed",
-    { sessionId },
+): Promise<DerivedState | null> {
+  const rows = await queryDb(
+    executor,
+    dbPath,
+    LATEST_MESSAGE_SQL,
+    [sessionId],
     log,
-    db,
+    { sessionId },
+    "opencode message query failed",
   );
+  if (!rows || rows.length === 0) return null;
+  const row = rows[0] as { id: string; data: string };
+  const parsed = parseMessageState(row.data);
+  if (!parsed) return null;
+  return { ...parsed, messageId: row.id };
 }
 
-/** Parse a `message.data` JSON blob into derived state.
- *  Exported for unit testing. */
+/** Parse a `message.data` JSON blob into derived state. Exported for unit
+ *  testing — the same parsing logic feeds both local and remote paths. */
 export function parseMessageState(data: string): ParsedMessageState | null {
   let parsed: MessageData;
   try {
@@ -345,13 +337,9 @@ export function parseMessageState(data: string): ParsedMessageState | null {
           ? `${m.providerID}/${m.modelID}`
           : m.modelID
         : null;
-      // Assistant message with completion timestamp + clean stop = waiting
       if (m.time?.completed && m.finish === "stop") {
         return { state: "waiting" as const, model };
       }
-      // Otherwise still working (no completion yet, or non-stop finish
-      // reason like "tool-calls"). The watcher upgrades "thinking" to
-      // "tool_use" when hasRunningTools() finds active tool parts.
       return { state: "thinking" as const, model };
     })
     .otherwise(() => null);

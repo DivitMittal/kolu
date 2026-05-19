@@ -1,18 +1,24 @@
 /**
- * `GitExecutor` — the side-effecting primitives kolu-git needs from its
- * environment. By taking these as a parameter (rather than reaching for
- * `child_process` / `fs` directly), every kolu-git operation works
- * unchanged against:
+ * `GitExecutor` — the side-effecting primitives kolu-git (and the other
+ * agent integrations) need from their environment. By taking these as a
+ * parameter (rather than reaching for `child_process` / `fs` directly),
+ * every operation works unchanged against:
  *
  *   - the controller's local filesystem (`localExecutor`, the default
  *     when callers pass nothing), and
  *
  *   - any other host that satisfies this shape — including kolu-server's
  *     `Host` interface, which routes the same primitives through the SSH
- *     helper. That's how Code-tab / branch chip / repo watching all
- *     light up for remote terminals.
+ *     helper. That's how Code-tab / branch chip / repo watching / agent
+ *     detection / agent state all light up for remote terminals.
  *
  * No duplication. One module, two backends.
+ *
+ * The name is historical — this interface predates the unification across
+ * kolu-opencode / kolu-codex / kolu-claude-code; "GitExecutor" is now a
+ * misnomer for what is the universal kolu-side IO primitive set. Renaming
+ * is deferred until the agent-integration refactors land so the diff stays
+ * small for review.
  */
 
 import { execFile } from "node:child_process";
@@ -30,11 +36,16 @@ export interface WatchHandle {
   stop(): void;
 }
 
-/** Side-effecting primitives kolu-git operations need.
+/** Side-effecting primitives kolu operations need.
  *  - `exec` runs a process and captures output.
  *  - `readFile` reads a UTF-8 file with a maxBytes guard.
  *  - `statMtimeMs` returns mtime in ms for cache-bust URLs.
  *  - `watch` subscribes to filesystem change events.
+ *  - `queryDb` runs a read-only SQLite query (used by opencode / codex
+ *    state derivation). Optional so a future executor without SQLite
+ *    can still implement the interface (the kolu-side type system
+ *    forces a guard at the call site, surfacing the unsupported-op
+ *    case cleanly).
  */
 export interface GitExecutor {
   exec(
@@ -56,6 +67,11 @@ export interface GitExecutor {
     onChange: (relPath: string) => void,
     opts?: { recursive?: boolean },
   ): Promise<WatchHandle>;
+  queryDb?(
+    path: string,
+    sql: string,
+    params?: ReadonlyArray<string | number | null>,
+  ): Promise<Array<Record<string, unknown>>>;
 }
 
 const execFileP = promisify(execFile);
@@ -131,5 +147,19 @@ export const localExecutor: GitExecutor = {
         }
       },
     };
+  },
+  queryDb: async (path, sql, params) => {
+    // node:sqlite is "experimental" on the kolu controller (Node 24) but
+    // stable. Read-only + WAL means we can poll a live OpenCode / Codex
+    // DB while the agent process is writing it without blocking either
+    // side.
+    const sqlite = await import("node:sqlite");
+    const db = new sqlite.DatabaseSync(path, { readOnly: true });
+    try {
+      const stmt = db.prepare(sql);
+      return stmt.all(...(params ?? [])) as Array<Record<string, unknown>>;
+    } finally {
+      db.close();
+    }
   },
 };

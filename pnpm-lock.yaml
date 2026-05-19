@@ -237,6 +237,9 @@ importers:
 
   packages/integrations/anyagent:
     dependencies:
+      kolu-git:
+        specifier: workspace:*
+        version: link:../git
       kolu-shared:
         specifier: workspace:*
         version: link:../../shared

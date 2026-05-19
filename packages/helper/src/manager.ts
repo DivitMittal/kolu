@@ -343,22 +343,14 @@ export function createManager(
     sql: string;
     params?: ReadonlyArray<string | number | null>;
   }): Promise<{ rows: Array<Record<string, unknown>> }> {
-    // node:sqlite is "experimental" but stable across the 22.x range
-    // kolu's helper runs under (its derivation pins nodejs >= 22).
-    // Read-only + WAL means we can poll a live OpenCode / Codex DB
-    // while the agent process is writing it without blocking either
-    // side.
-    const sqlite = await import("node:sqlite");
-    const db = new sqlite.DatabaseSync(opts.path, { readOnly: true });
-    try {
-      const stmt = db.prepare(opts.sql);
-      const rows = stmt.all(...(opts.params ?? [])) as Array<
-        Record<string, unknown>
-      >;
-      return { rows };
-    } finally {
-      db.close();
+    // Delegate to localExecutor — the helper's queryDb is identical to
+    // the controller's localExecutor.queryDb (both wrap node:sqlite the
+    // same way). One source of truth.
+    if (!localExecutor.queryDb) {
+      throw new Error("queryDb not supported by localExecutor");
     }
+    const rows = await localExecutor.queryDb(opts.path, opts.sql, opts.params);
+    return { rows };
   }
 
   function shutdown(): void {

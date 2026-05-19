@@ -123,7 +123,11 @@ const _ACTIONS = {
     label: "New terminal",
     keybind: { key: "t", mod: true },
     altKeybind: { key: "Enter", mod: true },
-    handler: (ctx) => ctx.handleCreate(ctx.activeMeta()?.cwd ?? undefined),
+    handler: (ctx) =>
+      ctx.handleCreate(
+        ctx.activeMeta()?.cwd ?? undefined,
+        ctx.activeMeta()?.hostId,
+      ),
   },
   newTerminalMenu: {
     label: "New terminal menu",

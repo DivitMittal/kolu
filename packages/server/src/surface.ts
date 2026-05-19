@@ -70,15 +70,20 @@ import {
   listTerminals,
 } from "./terminal-registry.ts";
 
-/** Look up the `Host` that owns a given repoPath. The Code-tab streams
- *  (gitStatus / gitDiff / fsListAll / fsReadFile) take only `repoPath`
- *  on the wire — no `hostId` — so the server has to find which terminal
- *  (and therefore which host) the repo belongs to before it can route
- *  the operation. Falls back to the local host when no terminal claims
- *  the path so legacy clients keep working. */
+/** Look up the `Host` that owns a given repoPath, OR `undefined` if the
+ *  repo lives on the controller's local filesystem.
+ *
+ *  Returning `undefined` for local — rather than `getHost(undefined)` =
+ *  `LocalHost` — is load-bearing: kolu-git's executor-aware code paths
+ *  treat any truthy executor as "remote" and skip the fast local watchers
+ *  (`@parcel/watcher`, refcounted `.git/HEAD` subscribe). Reviewer #2 on
+ *  PR #929 caught this — passing the local Host through made local Code
+ *  tabs install per-consumer recursive `fs.watch` against the executor
+ *  protocol instead of the shared parcel-watcher path. */
 function hostForRepoPath(repoPath: string): Host | undefined {
   const entry = findTerminalByRepoPath(repoPath);
-  return getHost(entry?.meta.hostId);
+  if (!entry?.meta.hostId) return undefined;
+  return getHost(entry.meta.hostId);
 }
 
 // `t` is the host router builder; both `surfaceRouter` and the raw oRPC

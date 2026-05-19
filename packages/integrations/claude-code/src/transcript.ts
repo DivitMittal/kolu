@@ -13,6 +13,7 @@
  *  vendors emit too many shapes to model usefully. */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   type Fetcher,
@@ -21,7 +22,14 @@ import {
   type Transcript,
   type TranscriptEvent,
 } from "kolu-transcript-core";
-import { encodeProjectPath, PROJECTS_DIR } from "./core.ts";
+import { encodeProjectPath } from "./core.ts";
+
+/** Local controller's projects dir. The transcript exporter only runs
+ *  against the controller's local `~/.claude/`; remote sessions don't
+ *  flow through this entry point. */
+const PROJECTS_DIR =
+  process.env.KOLU_CLAUDE_PROJECTS_DIR ??
+  path.join(os.homedir(), ".claude", "projects");
 
 interface AssistantContentBlock {
   type?: string;

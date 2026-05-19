@@ -25,16 +25,14 @@ export {
   extractTasks,
   fetchSessionSummary,
   findTranscriptPath,
-  PROJECTS_DIR,
   readSessionFile,
+  resolveClaudeDirs,
   SESSIONS_DIR,
   type SessionFile,
   SUMMARY_FETCH_ENABLED,
   subscribeSessionsDir,
   TAIL_BYTES,
   tailJsonlLines,
-  tryWatchDir,
-  watchOrWaitForDir,
 } from "./core.ts";
 export {
   type ClaudeCodeInfo,
@@ -46,7 +44,6 @@ export {
   createSessionWatcher,
   getPendingSummaryFetches,
   type SessionWatcher,
-  type WatcherLog,
 } from "./session-watcher.ts";
 
 export {

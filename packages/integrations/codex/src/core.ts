@@ -1,78 +1,83 @@
 /**
- * Codex core — pure functions and IO helpers for detecting Codex sessions
- * and deriving state from its SQLite threads DB + per-session JSONL rollout
- * transcripts.
+ * Codex core — pure functions for detecting Codex sessions and deriving
+ * state from its SQLite threads DB + per-session JSONL rollout transcripts.
+ *
+ * Every IO operation flows through an `Executor` — the controller's local
+ * fs (`localExecutor`) for local terminals, the SSH `Host` for remote
+ * ones. Same code, two backends.
  *
  * Codex stores:
- *  - `~/.codex/state_<N>.sqlite` — authoritative thread metadata.
- *    The `<N>` is Codex's schema-version suffix, currently v5;
- *    `findCodexStateDbPath` enumerates and picks the highest at startup
- *    so a user who upgrades Codex past v5 isn't silently blind. The
- *    `threads` table carries: id, rollout_path, cwd, title, tokens_used,
- *    model, updated_at_ms, source, archived.
+ *  - `~/.codex/state_v<N>.sqlite` — authoritative thread metadata.
+ *    The `<N>` is Codex's schema-version suffix; v5 today,
+ *    `resolveCodexDbPath` picks the highest in HOME so a user who upgrades
+ *    Codex past v5 isn't silently blind.
  *  - `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl` — per-thread
- *    append-only event log. Each line is a typed event; the first line
- *    is `session_meta`, followed by a mix of `event_msg` (lifecycle:
- *    task_started, task_complete, token_count, thread_name_updated,
- *    exec_command_end) and `response_item` (assistant I/O:
- *    function_call, function_call_output, message, reasoning).
+ *    append-only event log.
  *
- * Division of labor:
- *  - **SQLite** — session discovery (`findSessionByDirectory` joins
- *    cwd→thread in O(indexed-row-count)) and mutable metadata (title,
- *    model). Cheap indexed reads.
- *  - **JSONL** — state derivation (thinking / tool_use / waiting) and
- *    the per-turn context-token count. The SQLite row has no `state`
- *    column, and `threads.tokens_used` is a session-lifetime cumulative
- *    total (climbs to millions; unusable as a context-window percentage).
- *
- * The two sources are written atomically in the same cycle (verified:
- * WAL and JSONL mtimes agree to the nanosecond), so one fs.watch on the
- * WAL covers both.
- *
- * Structure note: this file holds the leaf module. Peers `session-watcher.ts`,
- * `wal-watcher.ts`, and `agent-provider.ts` import from here; `index.ts` is
- * a pure barrel re-exporting from all of them plus `schemas.ts` / `config.ts`.
+ * Division of labor between SQLite and JSONL is unchanged from the
+ * pre-refactor version — see the inline algorithm doc on
+ * `parseRolloutState`.
  */
 
 import { DatabaseSync } from "node:sqlite";
+import type { Executor } from "anyagent";
 import { classifyByAwaiting } from "anyagent";
 import type { Logger } from "kolu-shared";
-import { withDb as sharedWithDb } from "kolu-shared/sqlite";
-import { CODEX_DB_PATH } from "./config.ts";
+import { CODEX_DB_PATH, CODEX_DIR } from "./config.ts";
 import type { CodexInfo } from "./schemas.ts";
 
-// --- Database helpers ---
+// --- DB path resolution ---
 
-/** Codex-specific `withDb` — partial application of anyagent's shared
- *  helper over our `openDb`. Callers stay unaware that the machinery
- *  lives upstream; they just get the same `(fn, errorMsg, errorCtx,
- *  log?, db?) → T | null` signature they had before. */
-function withDb<T>(
-  fn: (db: DatabaseSync) => T,
-  errorMsg: string,
-  errorCtx: Record<string, unknown>,
+/** Resolve Codex's `state_v<N>.sqlite` path on this executor's filesystem.
+ *  Walks `~/.codex/` for the highest-version `state_v<N>.sqlite` so users
+ *  who upgrade Codex past v5 aren't silently blind. */
+export async function resolveCodexDbPath(
+  executor: Executor,
   log?: Logger,
-  db?: DatabaseSync,
-): T | null {
-  return sharedWithDb<DatabaseSync, T>(openDb, fn, errorMsg, errorCtx, log, db);
+): Promise<string | null> {
+  if (process.env.KOLU_CODEX_DB) return process.env.KOLU_CODEX_DB;
+  try {
+    const r = await executor.exec(
+      "sh",
+      [
+        "-c",
+        // List state_v*.sqlite under ~/.codex/, pick highest version.
+        'ls -1 "$HOME"/.codex/state_v*.sqlite 2>/dev/null | sort -V | tail -n 1',
+      ],
+      { timeoutMs: 5_000 },
+    );
+    if (r.exitCode !== 0) return null;
+    const p = r.stdout.trim();
+    return p || null;
+  } catch (err) {
+    log?.debug({ err }, "resolveCodexDbPath failed");
+    return null;
+  }
 }
 
-// --- Database session lookup ---
-
-export interface CodexSession {
-  /** Thread id (uuid v7). */
-  id: string;
-  /** Absolute path to the rollout JSONL — copied from the DB row at
-   *  match time so the watcher doesn't re-query to locate its file. */
-  rolloutPath: string;
+/** Resolve `~/.codex/` on this executor's filesystem. Used by
+ *  `externalChanges.isPresent` to decide whether to install the WAL
+ *  watcher at all. */
+export async function resolveCodexDir(
+  executor: Executor,
+  log?: Logger,
+): Promise<string | null> {
+  try {
+    const r = await executor.exec("printenv", ["HOME"], { timeoutMs: 5_000 });
+    if (r.exitCode !== 0) return null;
+    const home = r.stdout.trim();
+    if (!home) return null;
+    return `${home}/.codex`;
+  } catch (err) {
+    log?.debug({ err }, "resolveCodexDir failed");
+    return null;
+  }
 }
 
-/** Columns our SELECTs depend on. If Codex renames or drops any of
- *  these, the queries would silently return zero rows, leaving the user
- *  with no Codex badge and no indication why. Keep this list in sync
- *  with `findSessionByDirectory` (id, rollout_path, cwd, source,
- *  archived, updated_at_ms) and `getThreadMetadata` (title, model). */
+// --- Schema validation ---
+
+/** Columns our SELECTs depend on. If Codex renames or drops any of these,
+ *  the queries would silently return zero rows. */
 export const REQUIRED_THREAD_COLUMNS: readonly string[] = [
   "id",
   "rollout_path",
@@ -84,245 +89,140 @@ export const REQUIRED_THREAD_COLUMNS: readonly string[] = [
   "model",
 ];
 
-/** Return the list of required columns missing from the `threads` table
- *  on the given DB — empty array when the schema matches. Pure-ish
- *  (reads from the DB but has no side effects); exported for unit
- *  tests. */
-export function missingThreadColumns(db: DatabaseSync): string[] {
-  const rows = db.prepare("PRAGMA table_info(threads)").all() as {
-    name: string;
-  }[];
-  const observed = new Set(rows.map((r) => r.name));
-  return REQUIRED_THREAD_COLUMNS.filter((c) => !observed.has(c));
+/** Return the list of required columns missing from the `threads` table.
+ *  Empty array when the schema matches. */
+export async function missingThreadColumns(
+  dbPath: string,
+  executor: Executor,
+  log?: Logger,
+): Promise<string[]> {
+  if (!executor.queryDb) return [];
+  try {
+    const rows = (await executor.queryDb(
+      dbPath,
+      "PRAGMA table_info(threads)",
+      [],
+    )) as Array<{ name: string }>;
+    const observed = new Set(rows.map((r) => r.name));
+    return REQUIRED_THREAD_COLUMNS.filter((c) => !observed.has(c));
+  } catch (err) {
+    log?.debug({ err, dbPath }, "codex schema introspection failed");
+    return REQUIRED_THREAD_COLUMNS.slice();
+  }
 }
 
-/** One-shot guard: has openDb already logged a schema-mismatch error
- *  for this process? The mismatch can't resolve without a restart
- *  (CODEX_DB_PATH is resolved once at module load), so re-logging on
- *  every openDb call would be noise. */
+/** One-shot guard: has the schema-mismatch error been logged for this
+ *  process? The mismatch can't resolve without a restart. */
 let loggedSchemaError = false;
 
-/** Open a read-only connection to Codex's threads database. Returns null
- *  if the DB is absent (ENOENT silently; other errors at `error`) or if
- *  the `threads` table is missing required columns (logged loudly once).
- *  WAL mode is Codex's default, so a read-only connection coexists with
- *  Codex's own writes without blocking either side. Caller MUST close
- *  the returned database when done. */
-export function openDb(log?: Logger): DatabaseSync | null {
-  let db: DatabaseSync;
-  try {
-    db = new DatabaseSync(CODEX_DB_PATH, { readOnly: true });
-  } catch (err) {
-    log?.debug({ err, path: CODEX_DB_PATH }, "codex db unavailable");
-    return null;
-  }
-  let missing: string[];
-  try {
-    missing = missingThreadColumns(db);
-  } catch (err) {
-    db.close();
-    if (!loggedSchemaError) {
-      loggedSchemaError = true;
-      log?.error(
-        { err, path: CODEX_DB_PATH },
-        "codex schema introspection failed — Codex detection disabled",
-      );
-    }
-    return null;
-  }
-  if (missing.length > 0) {
-    db.close();
-    if (!loggedSchemaError) {
-      loggedSchemaError = true;
-      log?.error(
-        {
-          path: CODEX_DB_PATH,
-          missing,
-          required: REQUIRED_THREAD_COLUMNS,
-        },
-        "codex `threads` table is missing required columns — Codex detection disabled. Upstream may have bumped the schema; set KOLU_CODEX_DB to pin a known-good DB while a fix ships.",
-      );
-    }
-    return null;
-  }
-  return db;
+// --- Database session lookup ---
+
+export interface CodexSession {
+  /** Thread id (uuid v7). */
+  id: string;
+  /** Absolute path to the rollout JSONL on the executor's fs. */
+  rolloutPath: string;
+  /** Resolved DB path used to find this session. Stashed so the watcher
+   *  doesn't have to re-resolve on every refresh. */
+  dbPath: string;
 }
 
 /**
- * Find the most recently updated thread for a given directory.
- * Returns null if no threads exist for that directory or the DB is absent.
- *
- * Filters:
+ * Find the most recently updated thread for a given directory. Filters:
  *  - `cwd = ?` — exact match on the thread's starting directory.
- *  - `source = 'cli'` — excludes Codex-spawned sub-agent threads,
- *    whose `source` column is a JSON blob like
- *    `{"subagent":{"thread_spawn":...}}`. Those are not user sessions;
- *    they have no foreground terminal to bind to.
- *  - `archived = 0` — excludes archived threads the user has dismissed.
- *
- * Order: `updated_at_ms DESC` to pick the active session when multiple
- * live threads share a cwd. Mirrors OpenCode's `time_updated DESC`
- * heuristic.
+ *  - `source = 'cli'` — excludes Codex-spawned sub-agent threads.
+ *  - `archived = 0` — excludes archived threads.
  */
-export function findSessionByDirectory(
+export async function findSessionByDirectory(
   directory: string,
+  executor: Executor,
   log?: Logger,
-): CodexSession | null {
-  return withDb(
-    (conn) => {
-      const row = conn
-        .prepare(
-          "SELECT id, rollout_path FROM threads WHERE cwd = ? AND source = 'cli' AND archived = 0 ORDER BY updated_at_ms DESC LIMIT 1",
-        )
-        .get(directory) as { id: string; rollout_path: string } | undefined;
-      if (!row) return null;
-      return {
-        id: row.id,
-        rolloutPath: row.rollout_path,
-      };
-    },
-    "codex threads query failed",
-    { directory },
-    log,
-  );
+): Promise<CodexSession | null> {
+  const dbPath = await resolveCodexDbPath(executor, log);
+  if (!dbPath) return null;
+  if (!executor.queryDb) return null;
+  const missing = await missingThreadColumns(dbPath, executor, log);
+  if (missing.length > 0) {
+    if (!loggedSchemaError) {
+      loggedSchemaError = true;
+      log?.error(
+        { path: dbPath, missing, required: REQUIRED_THREAD_COLUMNS },
+        "codex `threads` table is missing required columns — Codex detection disabled.",
+      );
+    }
+    return null;
+  }
+  try {
+    const rows = (await executor.queryDb(
+      dbPath,
+      "SELECT id, rollout_path FROM threads WHERE cwd = ? AND source = 'cli' AND archived = 0 ORDER BY updated_at_ms DESC LIMIT 1",
+      [directory],
+    )) as Array<{ id: string; rollout_path: string }>;
+    if (rows.length === 0) return null;
+    const row = rows[0]!;
+    return { id: row.id, rolloutPath: row.rollout_path, dbPath };
+  } catch (err) {
+    log?.debug({ err, directory }, "codex threads query failed");
+    return null;
+  }
 }
 
-// --- Thread row refresh (title + model) ---
+// --- Thread row refresh ---
 
-/** Fields the watcher re-reads from the DB on every WAL event. */
 export interface ThreadMetadata {
   title: string | null;
   model: string | null;
 }
 
-/**
- * Re-read the mutable thread columns (title, model) from the DB.
- * Returns null if the row has been deleted (rare — only on Codex wipe)
- * or the DB is absent.
- *
- * NOTE — `threads.tokens_used` is NOT read here, even though it's a
- * tempting one-line SELECT. That column holds the SESSION-LIFETIME
- * cumulative total (`total_token_usage.total_tokens` summed across
- * every turn, including cache re-reads on each turn). For a
- * long-running session it can reach tens of millions — wildly larger
- * than the model's context window, and misleading as a "how close am
- * I to context exhaustion" signal. Current-turn context usage lives
- * in `info.last_token_usage` inside the rollout JSONL's latest
- * `token_count` event — see `parseRolloutContextTokens`.
- */
-export function getThreadMetadata(
+export async function getThreadMetadata(
   threadId: string,
+  dbPath: string,
+  executor: Executor,
   log?: Logger,
-  db?: DatabaseSync,
-): ThreadMetadata | null {
-  return withDb(
-    (conn) => {
-      const row = conn
-        .prepare("SELECT title, model FROM threads WHERE id = ?")
-        .get(threadId) as
-        | { title: string | null; model: string | null }
-        | undefined;
-      if (!row) return null;
-      return {
-        title: row.title || null,
-        model: row.model || null,
-      };
-    },
-    "codex thread metadata query failed",
-    { threadId },
-    log,
-    db,
-  );
+): Promise<ThreadMetadata | null> {
+  if (!executor.queryDb) return null;
+  try {
+    const rows = (await executor.queryDb(
+      dbPath,
+      "SELECT title, model FROM threads WHERE id = ?",
+      [threadId],
+    )) as Array<{ title: string | null; model: string | null }>;
+    if (rows.length === 0) return null;
+    const row = rows[0]!;
+    return { title: row.title || null, model: row.model || null };
+  } catch (err) {
+    log?.debug({ err, threadId }, "codex thread metadata query failed");
+    return null;
+  }
 }
 
-// --- JSONL state derivation ---
+// --- Local-only DB helper (transcript export) ---
 
-/** Subset of a rollout line's shape that the parsers below read.
- *  Codex's actual records carry far more — we intentionally read only
- *  the fields the state machine + token accounting need, so unexpected
- *  additions upstream can't break parsing. */
+/** Open the controller's local Codex DB read-only. Used by the one-shot
+ *  HTML transcript exporter, which runs only against local sessions.
+ *  The live agent-detection path goes through the executor instead. */
+export function openDb(log?: Logger): DatabaseSync | null {
+  try {
+    return new DatabaseSync(CODEX_DB_PATH, { readOnly: true });
+  } catch (err) {
+    log?.debug({ err, path: CODEX_DB_PATH }, "codex db unavailable");
+    return null;
+  }
+}
+
+// --- JSONL state derivation (pure) ---
+
 interface RolloutLine {
   type?: string;
   payload?: {
     type?: string;
-    /** On `task_started` / `task_complete` event_msgs. Carried here
-     *  only so we can use its presence as the "this is a real event"
-     *  gate — its value is not needed by the state machine (Codex
-     *  guarantees task_complete follows task_started for the same
-     *  turn, so "last lifecycle signal was a complete" is sufficient
-     *  without matching ids). */
     turn_id?: string;
-    /** On `response_item` payloads for function_call/function_call_output. */
     call_id?: string;
-    /** Function-call name on `response_item:function_call` payloads
-     *  (e.g. `shell`, `request_user_input`, `update_plan`). */
     name?: string;
-    /** On `token_count` event_msgs. Nested because Codex envelopes the
-     *  accounting under `.info` alongside rate-limit metadata. */
-    info?: {
-      /** Token usage for the MOST RECENT turn. In OpenAI's schema
-       *  (which Codex follows), `input_tokens` is the TOTAL prompt
-       *  the model saw — new + cached together — and matches what
-       *  Codex's own `/status` command calls "used" context. Do NOT
-       *  add `cached_input_tokens` on top: it's a breakdown showing
-       *  what portion of `input_tokens` was a cache hit, not an
-       *  additional count.
-       *
-       *  Contrast with Anthropic's schema (which claude-code reads):
-       *  there, `input_tokens` / `cache_creation_input_tokens` /
-       *  `cache_read_input_tokens` are DISJOINT buckets and summed.
-       *  Mapping Anthropic's sum-three-fields pattern onto OpenAI's
-       *  schema double-counts the cached portion. */
-      last_token_usage?: {
-        input_tokens?: number;
-      };
-    };
+    info?: { last_token_usage?: { input_tokens?: number } };
   };
 }
 
-/**
- * Derive Codex state from the rollout JSONL's tail.
- *
- * Algorithm (single forward pass, O(lines)):
- *  1. Track the kind of the latest `task_started`/`task_complete`
- *     lifecycle event seen. Turn ids are NOT matched across events:
- *     whatever the last lifecycle event was dictates the outcome —
- *     this handles a tail that captured only `task_complete` without
- *     its matching `task_started` (long tool-heavy turns that exceed
- *     TAIL_BYTES).
- *  2. Track open function calls by `call_id` **scoped to the current
- *     turn**: add on `function_call`, remove on `function_call_output`,
- *     clear on `task_started`. Scoping matters — a `function_call` from
- *     a prior turn that never got a matching `function_call_output`
- *     (user aborted mid-tool, or tail head clipped the output) would
- *     otherwise pin state at `tool_use` forever into the next turn.
- *     `exec_command_end` is ignored — it carries a call_id but is a
- *     mid-tool event; the call stays open until its
- *     `function_call_output` arrives.
- *  3. Decide:
- *     - No lifecycle events seen → null (fresh thread, suppress badge).
- *     - Last lifecycle event was `task_complete` → **waiting**.
- *     - Last lifecycle event was `task_started` + any call_id open
- *       **for the current turn** → **tool_use**.
- *     - Last lifecycle event was `task_started` + no open calls →
- *       **thinking**.
- *
- * Pure function — unit-testable without touching the filesystem.
- */
-/** Codex function-call names whose pending invocation means the agent
- *  is awaiting the human. All three handlers `await session.<…>(…)` on
- *  the user before resolving:
- *   - `request_user_input` — structured multi-choice prompt (Plan mode
- *     only by default; gated on the `DefaultModeRequestUserInput`
- *     feature flag for Default mode — see
- *     `codex-rs/protocol/src/config_types.rs:593-595`).
- *   - `request_permissions` — model asks to escalate sandbox or
- *     filesystem permissions; available in all modes
- *     (`codex-rs/core/src/tools/handlers/request_permissions.rs:64`).
- *   - `request_plugin_install` — MCP-elicitation prompt to install a
- *     connector/plugin
- *     (`codex-rs/core/src/tools/handlers/request_plugin_install.rs:157`).
- *  Policy lives in `classifyByAwaiting`. */
 const AWAITING_USER_TOOLS = new Set([
   "request_user_input",
   "request_permissions",
@@ -332,23 +232,18 @@ const AWAITING_USER_TOOLS = new Set([
 export function parseRolloutState(lines: string[]): CodexInfo["state"] | null {
   let lastLifecycle: "started" | "completed" | null = null;
   const openCalls = new Map<string, string>();
-
   for (const line of lines) {
     let entry: RolloutLine;
     try {
       entry = JSON.parse(line) as RolloutLine;
     } catch {
-      // Skip malformed lines — Codex writes well-formed JSONL, but a
-      // truncated final write during tail read is possible.
       continue;
     }
     const outer = entry.type;
     const inner = entry.payload?.type;
-
     if (outer === "event_msg") {
       if (inner === "task_started" && entry.payload?.turn_id) {
         lastLifecycle = "started";
-        // Scope openCalls to the current turn — see algorithm doc.
         openCalls.clear();
       } else if (inner === "task_complete" && entry.payload?.turn_id) {
         lastLifecycle = "completed";
@@ -372,27 +267,6 @@ export function parseRolloutState(lines: string[]): CodexInfo["state"] | null {
   return classifyByAwaiting(awaiting, openCalls.size);
 }
 
-/**
- * Find the CURRENT-TURN context-window token count in the rollout
- * JSONL's tail — `info.last_token_usage.input_tokens` from the latest
- * `token_count` event.
- *
- * Why `input_tokens` alone? In OpenAI's API (which Codex emits),
- * `input_tokens` is the TOTAL prompt the model saw this turn —
- * already inclusive of any cached portion. `cached_input_tokens` is a
- * breakdown of that total, not an additional count. Adding the two
- * would double-count every cache hit; Codex's own `/status` command
- * shows exactly this field as "context used" against the window.
- *
- * Why not `threads.tokens_used` (the SQLite column)? That's the
- * session-lifetime cumulative `total_token_usage.total_tokens` —
- * summed across every turn, climbing into millions on long sessions,
- * dwarfing the 258 K context window and giving nonsense percentages.
- *
- * Walks backward so the first matching event wins; returns null if no
- * `token_count` event is in the tail (fresh thread, or token_count
- * scrolled off a long transcript before the next one landed).
- */
 export function parseRolloutContextTokens(lines: string[]): number | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const raw = lines[i];
@@ -407,10 +281,57 @@ export function parseRolloutContextTokens(lines: string[]): number | null {
     if (entry.payload?.type !== "token_count") continue;
     const input = entry.payload.info?.last_token_usage?.input_tokens;
     if (typeof input !== "number") continue;
-    // 0 means the event landed before the first assistant turn
-    // accounted (empty placeholder) — render as "not yet" rather than
-    // "0 tokens used."
     return input > 0 ? input : null;
   }
   return null;
 }
+
+// --- Rollout tail reader ---
+
+/** Read the last `maxBytes` of a rollout JSONL via the executor. Local
+ *  uses fs read-with-offset under the hood (executor.readFile with
+ *  truncate-from-tail semantics is the simplest portable shape); we just
+ *  fetch the whole file capped at maxBytes from the END. For 256 KB
+ *  tails over SSH that's a one-RPC round-trip. */
+export async function readRolloutTail(
+  rolloutPath: string,
+  maxBytes: number,
+  executor: Executor,
+  log?: Logger,
+): Promise<string[] | null> {
+  try {
+    // `tail -c <bytes>` is portable across GNU + BSD coreutils and
+    // streams the right slice from disk without us having to track file
+    // size + offset by hand. On both local (via execFile) and remote
+    // (via helper exec) this returns the last maxBytes bytes of the
+    // file as stdout.
+    const r = await executor.exec(
+      "tail",
+      ["-c", String(maxBytes), rolloutPath],
+      { timeoutMs: 10_000, maxBytes: maxBytes + 4096 },
+    );
+    if (r.exitCode !== 0) {
+      log?.debug(
+        { stderr: r.stderr, rolloutPath },
+        "codex rollout tail failed",
+      );
+      return null;
+    }
+    // Split into lines and drop the first if it's a partial (the byte
+    // cut likely sliced mid-line; the first non-empty line might be
+    // truncated). Empty trailing element from trailing newline gets
+    // filtered too.
+    const all = r.stdout.split("\n");
+    const lines: string[] = [];
+    for (let i = 1; i < all.length; i++) {
+      const l = all[i];
+      if (l && l.length > 0) lines.push(l);
+    }
+    return lines;
+  } catch (err) {
+    log?.debug({ err, rolloutPath }, "codex rollout tail threw");
+    return null;
+  }
+}
+
+export { CODEX_DIR };
