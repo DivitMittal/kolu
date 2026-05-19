@@ -129,13 +129,19 @@ export const ServerPersistedTerminalFieldsSchema = z.object({
  * `LiveTerminalFieldsSchema`. See the partition comment above.
  */
 export const ClientPersistedTerminalFieldsSchema = z.object({
-  themeName: z.string().optional(),
+  themeName: z.string().min(1).optional(),
   /** If set, this terminal is a sub-terminal of the given parent. */
   parentId: z.string().optional(),
   /** Canvas tile position/size — client-reported, used for session restore. */
   canvasLayout: CanvasLayoutSchema.optional(),
   /** Sub-panel collapsed/size state — client-reported, used for session restore. */
   subPanel: SubPanelStateSchema.optional(),
+  /** User-chosen icon for this terminal — typically an emoji (one or more
+   *  codepoints). Per-terminal scope (not per-repo or per-(repo,branch));
+   *  a new worktree/terminal gets a fresh empty slot. Per-repo coloring
+   *  (`repoColor` in `terminalDisplay.ts`) already covers group identity
+   *  — this field gives users a hand-picked personality glyph on top. */
+  icon: z.string().min(1).optional(),
 });
 
 /**
@@ -206,10 +212,11 @@ export const TerminalMetadataSchema = PersistedTerminalFieldsSchema.merge(
  *  keeps recency ordering stable across restart — without it,
  *  `createMetadata` would reset every restored terminal to `0`. */
 export const InitialTerminalMetadataSchema = z.object({
-  themeName: z.string().optional(),
+  themeName: z.string().min(1).optional(),
   canvasLayout: CanvasLayoutSchema.optional(),
   subPanel: SubPanelStateSchema.optional(),
   lastActivityAt: z.number().optional(),
+  icon: z.string().min(1).optional(),
 });
 
 // ── Terminal cell value + raw-procedure shared schemas ────────────────

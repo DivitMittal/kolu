@@ -11,23 +11,32 @@
  *  exported below for reuse. */
 
 import { prLabel, prUnavailableSource, prValue } from "kolu-github/schemas";
-import { type Component, Show } from "solid-js";
+import type { TerminalId } from "kolu-common/surface";
+import { type Component, Show, createSignal } from "solid-js";
+import { toast } from "solid-sonner";
 import { PrStateIcon, WorktreeIcon } from "../ui/Icons";
 import Tip from "../ui/Tip";
+import { client } from "../wire";
 import ChecksIndicator from "./ChecksIndicator";
 import { copyTextWithToast } from "./clipboard";
 import { PrUnavailableButton } from "./PrUnavailablePopover";
 import type { TerminalDisplayInfo } from "./terminalDisplay";
+import TerminalIcon from "./TerminalIcon";
+import TerminalIconPopover from "./TerminalIconPopover";
 
 const TerminalMeta: Component<{
   info: TerminalDisplayInfo | undefined;
+  /** Terminal ID — required for the icon picker. Optional so callers
+   *  that only render the skeleton (no live info yet) don't need to
+   *  thread it; the chip won't render until `info` is defined anyway. */
+  id?: TerminalId;
 }> = (props) => {
   const i = () => props.info;
   return (
     <Show when={i()} fallback={<TerminalMetaSkeleton />}>
       {(info) => (
         <>
-          {/* Name row — `name suffix [worktree-icon] [fg-title] [progress]`.
+          {/* Name row — `[icon] name suffix [worktree-icon] [fg-title] [progress]`.
            *  Sub-count lives on the title-bar split toggle (one source
            *  of truth for "this tile has children"); the agent task
            *  progress bar owns the right slot when an agent is running.
@@ -37,6 +46,9 @@ const TerminalMeta: Component<{
            *  repo name) — visible space is reserved for the OSC 2
            *  process title. */}
           <div class="flex items-center gap-1.5 min-h-7 text-sm font-medium min-w-0">
+            <Show when={props.id}>
+              {(id) => <TerminalIconChip id={id()} icon={info().meta.icon} />}
+            </Show>
             <NameSpan info={info()} />
             <Show when={info().key.suffix}>
               {(suffix) => (
@@ -162,6 +174,7 @@ export const TerminalMetaCompact: Component<{
     <Show when={i()} fallback={<TerminalMetaSkeleton />}>
       {(info) => (
         <div class="flex items-center gap-1.5 min-h-7 text-sm font-medium min-w-0">
+          <TerminalIcon icon={info().meta.icon} />
           <NameSpan info={info()} />
           <Show when={info().meta.git?.isWorktree}>
             <WorktreeBadge />
@@ -266,5 +279,66 @@ const TerminalMetaSkeleton: Component = () => (
     <div class="h-3 w-16 bg-surface-2 rounded" />
   </div>
 );
+
+/** Icon chip next to the name — clickable in the canvas title bar. Shows
+ *  a faint "＋" placeholder when unset so users discover the affordance.
+ *  Pure rendering of the icon glyph lives in `<TerminalIcon>`; this
+ *  component layers the picker trigger + popover on top of it. */
+const TerminalIconChip: Component<{
+  id: TerminalId;
+  icon: string | undefined;
+}> = (props) => {
+  const [open, setOpen] = createSignal(false);
+  const [triggerRef, setTriggerRef] = createSignal<
+    HTMLButtonElement | undefined
+  >(undefined);
+
+  function handleSelect(icon: string) {
+    void client.terminal
+      .setIcon({ id: props.id, icon })
+      .catch((err: Error) => toast.error(`Failed to set icon: ${err.message}`));
+  }
+
+  return (
+    <>
+      <Tip label={props.icon ? "Change icon" : "Set icon"}>
+        <button
+          type="button"
+          data-testid="terminal-icon-chip"
+          ref={setTriggerRef}
+          class="appearance-none bg-transparent border-0 p-0 m-0 cursor-pointer text-fg-3 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded shrink-0"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }}
+          onDblClick={(e) => e.stopPropagation()}
+          aria-label={props.icon ? "Change terminal icon" : "Set terminal icon"}
+        >
+          <Show
+            when={props.icon}
+            fallback={
+              <span
+                class="text-xs opacity-50 hover:opacity-90"
+                aria-hidden="true"
+              >
+                ＋
+              </span>
+            }
+          >
+            <TerminalIcon icon={props.icon} />
+          </Show>
+        </button>
+      </Tip>
+      <TerminalIconPopover
+        open={open()}
+        onOpenChange={setOpen}
+        triggerRef={triggerRef()}
+        currentIcon={props.icon}
+        onSelect={handleSelect}
+      />
+    </>
+  );
+};
 
 export default TerminalMeta;

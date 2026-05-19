@@ -89,4 +89,8 @@ export const AMBIENT_TIPS: readonly Tip[] = [
     id: "amb-minimap-window",
     text: "Click the `All` chip in the minimap's zoom bar to pick an activity window (4h/12h/24h/48h) — older tiles collapse to small ghost markers so attention stays on what's still in play",
   },
+  {
+    id: "amb-terminal-icon",
+    text: "Click the ＋ next to a tile's repo name to pin an emoji icon — it shows up in the workspace switcher, dock, and sub-panel tabs so terminals are differentiable at a glance",
+  },
 ];

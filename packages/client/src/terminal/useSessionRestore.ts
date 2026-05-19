@@ -243,6 +243,7 @@ export function useSessionRestore(deps: {
           canvasLayout: t.canvasLayout,
           subPanel: t.subPanel,
           lastActivityAt: t.lastActivityAt,
+          icon: t.icon,
         });
         oldToNew.set(t.id, newId);
         // Step 2: in-loop assert. Combined with step 1, this puts the

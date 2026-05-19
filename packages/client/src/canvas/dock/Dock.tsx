@@ -45,6 +45,7 @@ import { toast } from "solid-sonner";
 import AgentIndicator from "../../terminal/AgentIndicator";
 import { tailBuffer } from "../../terminal/bufferTail";
 import { formatTimeAgo, useStaleCheck } from "../../terminal/staleness";
+import TerminalIcon from "../../terminal/TerminalIcon";
 import type { TerminalDisplayInfo } from "../../terminal/terminalDisplay";
 import { getTerminalRefs } from "../../terminal/terminalRefs";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
@@ -405,6 +406,7 @@ const DockRow: Component<{
             repoColor={c().info.repoColor}
             bucket={props.bucket}
             mode={props.mode}
+            icon={c().meta.icon}
           />
           <Show when={props.mode === "cards"}>
             <div class="flex-1 min-w-0">
@@ -436,6 +438,7 @@ const RailSegment: Component<{
   repoColor: string;
   bucket: DockRowBucket;
   mode: DockMode;
+  icon: string | undefined;
 }> = (props) => {
   const store = useTerminalStore();
   // The breath/pulse animation belongs only to live attention states.
@@ -457,7 +460,7 @@ const RailSegment: Component<{
       data-testid="dock-rail"
       data-agent-bucket={props.bucket}
       onClick={() => store.activate(props.id)}
-      class={`shrink-0 cursor-pointer transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 ${
+      class={`shrink-0 cursor-pointer transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 flex items-center justify-center ${
         props.mode === "rail" ? "w-full h-6" : "w-1.5"
       } ${animClass()}`}
       classList={{
@@ -466,7 +469,14 @@ const RailSegment: Component<{
       style={{ "background-color": props.repoColor }}
       title="Jump to this terminal"
       aria-label="Jump to this terminal"
-    />
+    >
+      <Show when={props.mode === "rail" && props.icon}>
+        <TerminalIcon
+          icon={props.icon}
+          class="block text-base leading-none mix-blend-multiply"
+        />
+      </Show>
+    </button>
   );
 };
 
@@ -580,11 +590,17 @@ const AwaitingCardBody: Component<{
         title="Jump to this terminal"
       >
         <div class="flex items-baseline justify-between gap-2 min-w-0">
-          <span
-            class="font-mono text-[0.7rem] font-bold uppercase tracking-[0.14em] truncate min-w-0"
-            style={{ color: props.info.repoColor }}
-          >
-            {props.info.key.group}
+          <span class="flex items-baseline gap-1.5 min-w-0">
+            <TerminalIcon
+              icon={props.meta.icon}
+              class="text-sm leading-none shrink-0"
+            />
+            <span
+              class="font-mono text-[0.7rem] font-bold uppercase tracking-[0.14em] truncate min-w-0"
+              style={{ color: props.info.repoColor }}
+            >
+              {props.info.key.group}
+            </span>
           </span>
           <span
             class="text-[0.95rem] font-semibold leading-tight truncate min-w-0"
@@ -654,11 +670,17 @@ const WorkingPillBody: Component<{
       title="Jump to this terminal"
     >
       <div class="flex items-baseline justify-between gap-2 min-w-0">
-        <span
-          class="font-mono text-[0.65rem] font-bold uppercase tracking-[0.14em] truncate min-w-0"
-          style={{ color: props.info.repoColor }}
-        >
-          {props.info.key.group}
+        <span class="flex items-baseline gap-1.5 min-w-0">
+          <TerminalIcon
+            icon={props.meta.icon}
+            class="text-sm leading-none shrink-0"
+          />
+          <span
+            class="font-mono text-[0.65rem] font-bold uppercase tracking-[0.14em] truncate min-w-0"
+            style={{ color: props.info.repoColor }}
+          >
+            {props.info.key.group}
+          </span>
         </span>
         <span
           class="text-[0.85rem] font-semibold leading-tight truncate min-w-0"
@@ -700,6 +722,10 @@ const QuietRowBody: Component<{
       title={props.info.meta.cwd}
     >
       <div class="flex items-baseline gap-2 min-w-0">
+        <TerminalIcon
+          icon={props.meta.icon}
+          class="text-sm leading-none shrink-0"
+        />
         <span
           class="font-mono text-[0.6rem] font-bold uppercase tracking-[0.14em] truncate min-w-0"
           style={{ color: props.info.repoColor }}

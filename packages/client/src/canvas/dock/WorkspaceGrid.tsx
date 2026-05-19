@@ -25,6 +25,7 @@ import {
   on,
 } from "solid-js";
 import { formatTimeAgo, useIdleClassifier } from "../../terminal/staleness";
+import TerminalIcon from "../../terminal/TerminalIcon";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import {
   bucketDescriptor,
@@ -507,13 +508,21 @@ const WorkspaceCard: Component<{
         </span>
       </Show>
 
-      {/* Eyebrow: repo identity + (right) PR # if resolved. */}
+      {/* Eyebrow: optional icon + repo identity + (right) PR # if resolved.
+       *  Icon is rendered as a separate sibling span — it stays out of
+       *  the repo-name color and out of `searchTextFor` (dockModel.ts). */}
       <div class="flex items-center justify-between gap-2 min-w-0">
-        <span
-          class="font-mono text-[0.6rem] font-bold uppercase tracking-[0.16em] truncate min-w-0"
-          style={{ color: props.entry.info.repoColor }}
-        >
-          {props.entry.repoName}
+        <span class="flex items-center gap-1.5 min-w-0">
+          <TerminalIcon
+            icon={props.entry.info.meta.icon}
+            class="text-sm leading-none shrink-0"
+          />
+          <span
+            class="font-mono text-[0.6rem] font-bold uppercase tracking-[0.16em] truncate min-w-0"
+            style={{ color: props.entry.info.repoColor }}
+          >
+            {props.entry.repoName}
+          </span>
         </span>
         <Show when={pr()}>
           {(summary) => (

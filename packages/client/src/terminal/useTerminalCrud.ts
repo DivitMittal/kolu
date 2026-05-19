@@ -129,6 +129,7 @@ export function useTerminalCrud(deps: {
         canvasLayout: initial?.canvasLayout,
         subPanel: initial?.subPanel,
         lastActivityAt: initial?.lastActivityAt,
+        icon: initial?.icon,
       })
       .catch((err: Error) => {
         toast.error(`Failed to create terminal: ${err.message}`);

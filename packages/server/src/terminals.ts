@@ -158,6 +158,7 @@ export function createTerminal(
   if (initial?.subPanel) meta.subPanel = initial.subPanel;
   if (initial?.lastActivityAt !== undefined)
     meta.lastActivityAt = initial.lastActivityAt;
+  if (initial?.icon) meta.icon = initial.icon;
   const entry: TerminalProcess = {
     info: { id, pid: handle.pid },
     meta,
@@ -265,6 +266,16 @@ export function setTerminalTheme(id: TerminalId, themeName: string): void {
       m.themeName = themeName;
     });
   }
+}
+
+/** Set or clear a terminal's user-chosen icon. Empty string clears it. */
+export function setTerminalIcon(id: TerminalId, icon: string): void {
+  const entry = getTerminal(id);
+  if (!entry) return;
+  const next = icon.length > 0 ? icon : undefined;
+  updateClientMetadata(entry, id, (m) => {
+    m.icon = next;
+  });
 }
 
 /** Kill and remove all terminals. Used by tests to reset server state between scenarios. */

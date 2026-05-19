@@ -33,6 +33,7 @@ import {
   setActiveTerminalId,
   setCanvasLayout,
   setSubPanelState,
+  setTerminalIcon,
   setTerminalParent,
   setTerminalTheme,
 } from "./terminals.ts";
@@ -59,6 +60,7 @@ export const appRouter = t.router({
         canvasLayout: input.canvasLayout,
         subPanel: input.subPanel,
         lastActivityAt: input.lastActivityAt,
+        icon: input.icon,
       }),
     ),
 
@@ -74,6 +76,12 @@ export const appRouter = t.router({
       requireTerminal(input.id);
       log.info({ terminal: input.id, theme: input.themeName }, "set theme");
       setTerminalTheme(input.id, input.themeName);
+    }),
+
+    setIcon: t.terminal.setIcon.handler(async ({ input }) => {
+      requireTerminal(input.id);
+      log.info({ terminal: input.id, icon: input.icon }, "set icon");
+      setTerminalIcon(input.id, input.icon);
     }),
 
     setCanvasLayout: t.terminal.setCanvasLayout.handler(async ({ input }) => {
