@@ -120,7 +120,13 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
                             {(t) => (
                               <div title={t.cwd}>
                                 <div class="text-sm text-fg-2 truncate leading-snug flex items-center gap-2">
-                                  <Show when={t.hostId}>
+                                  <Show
+                                    when={
+                                      t.hostId && t.hostId !== "local"
+                                        ? t.hostId
+                                        : undefined
+                                    }
+                                  >
                                     {(hostId) => (
                                       <span
                                         data-testid="restore-host-chip"

@@ -32,8 +32,15 @@ const MetadataInspector: Component<{
           class="overflow-y-auto overflow-x-hidden h-full"
           data-testid="inspector-cwd"
         >
-          {/* Host (remote terminals only) */}
-          <Show when={meta().hostId}>
+          {/* Host (remote terminals only — `"local"` is the controller and
+              isn't worth surfacing as its own section). */}
+          <Show
+            when={
+              meta().hostId && meta().hostId !== "local"
+                ? meta().hostId
+                : undefined
+            }
+          >
             {(hostId) => (
               <Section title="Host" accent="border-accent">
                 <div class="text-[11px] text-fg font-mono break-all leading-relaxed">
