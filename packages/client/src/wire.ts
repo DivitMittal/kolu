@@ -64,6 +64,7 @@ export function refreshSshHosts(): void {
 }
 
 ws.addEventListener("open", refreshSshHosts);
+if (ws.readyState === WebSocket.OPEN) refreshSshHosts();
 
 // ── Module-level singleton subscriptions ───────────────────────────────
 
