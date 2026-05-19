@@ -72,23 +72,25 @@ const TerminalIconPopover: Component<{
         >
           <div class="flex flex-wrap gap-1">
             <For each={QUICK_ROW}>
-              {(glyph) => (
-                <button
-                  type="button"
-                  data-testid="terminal-icon-quick"
-                  data-glyph={glyph}
-                  data-selected={props.currentIcon === glyph ? "" : undefined}
-                  class="flex items-center justify-center w-8 h-8 rounded-md text-lg leading-none cursor-pointer hover:bg-surface-2/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                  classList={{
-                    "bg-surface-2 ring-1 ring-accent/40":
-                      props.currentIcon === glyph,
-                  }}
-                  onClick={() => commit(glyph)}
-                  aria-label={`Set terminal icon to ${glyph}`}
-                >
-                  {glyph}
-                </button>
-              )}
+              {(glyph) => {
+                const selected = () => props.currentIcon === glyph;
+                return (
+                  <button
+                    type="button"
+                    data-testid="terminal-icon-quick"
+                    data-glyph={glyph}
+                    data-selected={selected() ? "" : undefined}
+                    class="flex items-center justify-center w-8 h-8 rounded-md text-lg leading-none cursor-pointer hover:bg-surface-2/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                    classList={{
+                      "bg-surface-2 ring-1 ring-accent/40": selected(),
+                    }}
+                    onClick={() => commit(glyph)}
+                    aria-label={`Set terminal icon to ${glyph}`}
+                  >
+                    {glyph}
+                  </button>
+                );
+              }}
             </For>
           </div>
           <form class="flex items-center gap-2" onSubmit={submitDraft}>
