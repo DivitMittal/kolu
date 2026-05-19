@@ -130,6 +130,12 @@ export const appRouter = t.router({
 
     pasteImage: t.terminal.pasteImage.handler(async ({ input }) => {
       const entry = requireTerminal(input.id);
+      if (entry.meta.hostId) {
+        throw new ORPCError("PRECONDITION_FAILED", {
+          message:
+            "Image paste is only supported for local terminals; remote SSH terminals do not have file staging yet",
+        });
+      }
       // base64 → decoded byte count: (len * 3/4) minus padding
       const padding = input.data.endsWith("==")
         ? 2

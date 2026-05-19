@@ -231,24 +231,38 @@ export function useSessionRestore(deps: {
       const subTerminals = session.terminals.filter(
         (t): t is typeof t & { parentId: string } => t.parentId !== undefined,
       );
+      const skipped: string[] = [];
+      const resumeFailures: string[] = [];
+      let restored = 0;
       let resumed = 0;
       /** New id of the saved active terminal — captured in step 2, used in step 3. */
       let restoredActiveId: TerminalId | null = null;
+      const describeSavedTerminal = (t: SavedSession["terminals"][number]) =>
+        `${t.hostId ? `SSH ${t.hostId}: ` : ""}${t.cwd}`;
       // Seed each new terminal with its saved metadata atomically at create
       // time — the server embeds it into the first `terminal.list` snapshot,
       // so the canvas cascade effect sees the saved layout on its first run
       // and skips the default-cascade branch (#642).
       for (const t of topLevel) {
-        const newId = await deps.handleCreate(
-          t.cwd,
-          {
-            themeName: t.themeName,
-            canvasLayout: t.canvasLayout,
-            subPanel: t.subPanel,
-            lastActivityAt: t.lastActivityAt,
-          },
-          t.hostId,
-        );
+        let newId: TerminalId;
+        try {
+          newId = await deps.handleCreate(
+            t.cwd,
+            {
+              themeName: t.themeName,
+              canvasLayout: t.canvasLayout,
+              subPanel: t.subPanel,
+              lastActivityAt: t.lastActivityAt,
+            },
+            t.hostId,
+          );
+        } catch (err) {
+          skipped.push(
+            `${describeSavedTerminal(t)}: ${(err as Error).message}`,
+          );
+          continue;
+        }
+        restored++;
         oldToNew.set(t.id, newId);
         // Step 2: in-loop assert. Combined with step 1, this puts the
         // intended active in place before the first canvas mount.
@@ -269,17 +283,34 @@ export function useSessionRestore(deps: {
         if (t.lastAgentCommand && optedIn) {
           const resumeForm = resumeAgentCommand(t.lastAgentCommand);
           if (resumeForm) {
-            await client.terminal.sendInput({
-              id: newId,
-              data: `${resumeForm}\r`,
-            });
-            resumed++;
+            try {
+              await client.terminal.sendInput({
+                id: newId,
+                data: `${resumeForm}\r`,
+              });
+              resumed++;
+            } catch (err) {
+              resumeFailures.push(
+                `${describeSavedTerminal(t)}: ${(err as Error).message}`,
+              );
+            }
           }
         }
       }
       for (const t of subTerminals) {
         const newParentId = oldToNew.get(t.parentId);
-        if (newParentId) await deps.handleCreateSubTerminal(newParentId, t.cwd);
+        if (!newParentId) continue;
+        try {
+          await deps.handleCreateSubTerminal(newParentId, t.cwd);
+          restored++;
+        } catch (err) {
+          skipped.push(
+            `${describeSavedTerminal(t)}: ${(err as Error).message}`,
+          );
+        }
+      }
+      if (restored === 0) {
+        throw new Error(skipped[0] ?? "No saved terminals could be restored");
       }
       // Step 3: post-loop reassert (see protocol block above).
       if (restoredActiveId !== null) {
@@ -290,10 +321,29 @@ export function useSessionRestore(deps: {
       }
       const summary =
         resumed > 0
-          ? `Restored ${session.terminals.length} terminals, resumed ${resumed} agent${resumed > 1 ? "s" : ""}`
-          : "Session restored";
+          ? `Restored ${restored} terminals, resumed ${resumed} agent${resumed > 1 ? "s" : ""}`
+          : `Restored ${restored} terminals`;
       setSavedSession(null);
-      toast.success(summary, { id });
+      if (skipped.length > 0 || resumeFailures.length > 0) {
+        const firstFailure =
+          skipped[0] ?? resumeFailures[0] ?? "unknown restore failure";
+        const extraCount = skipped.length + resumeFailures.length - 1;
+        const skippedText =
+          skipped.length > 0
+            ? `skipped ${skipped.length} terminal${skipped.length === 1 ? "" : "s"}`
+            : "";
+        const resumeText =
+          resumeFailures.length > 0
+            ? `${resumeFailures.length} resume failed`
+            : "";
+        const degraded = [skippedText, resumeText].filter(Boolean).join(", ");
+        toast.warning(
+          `${summary}; ${degraded}: ${firstFailure}${extraCount > 0 ? ` (${extraCount} more)` : ""}`,
+          { id },
+        );
+      } else {
+        toast.success(summary, { id });
+      }
     } catch (err) {
       toast.error(`Restore failed: ${(err as Error).message}`, { id });
       throw err;
