@@ -12,21 +12,22 @@
 
 import { prLabel, prUnavailableSource, prValue } from "kolu-github/schemas";
 import type { TerminalId } from "kolu-common/surface";
-import { type Component, Show, createSignal } from "solid-js";
-import { toast } from "solid-sonner";
+import { type Component, Show } from "solid-js";
 import { PrStateIcon, WorktreeIcon } from "../ui/Icons";
 import Tip from "../ui/Tip";
-import { client } from "../wire";
 import ChecksIndicator from "./ChecksIndicator";
 import { copyTextWithToast } from "./clipboard";
 import { PrUnavailableButton } from "./PrUnavailablePopover";
 import type { TerminalDisplayInfo } from "./terminalDisplay";
 import TerminalUserIcon from "./TerminalUserIcon";
-import TerminalIconPopover from "./TerminalIconPopover";
+import { useTerminalStore } from "./useTerminalStore";
 
 const TerminalMeta: Component<{
   info: TerminalDisplayInfo | undefined;
   id: TerminalId;
+  /** Open the command palette pre-drilled into "Set icon". Activates
+   *  this tile first so the palette acts on the right terminal. */
+  onOpenIconPicker: () => void;
 }> = (props) => {
   const i = () => props.info;
   return (
@@ -43,7 +44,11 @@ const TerminalMeta: Component<{
            *  repo name) — visible space is reserved for the OSC 2
            *  process title. */}
           <div class="flex items-center gap-1.5 min-h-7 text-sm font-medium min-w-0">
-            <TerminalIconChip id={props.id} icon={info().meta.icon} />
+            <TerminalIconChip
+              id={props.id}
+              icon={info().meta.icon}
+              onOpen={props.onOpenIconPicker}
+            />
             <NameSpan info={info()} />
             <Show when={info().key.suffix}>
               {(suffix) => (
@@ -277,65 +282,45 @@ const TerminalMetaSkeleton: Component = () => (
 
 /** Icon chip next to the name — clickable in the canvas title bar. Shows
  *  a faint "＋" placeholder when unset so users discover the affordance.
- *  Pure rendering of the icon glyph lives in `<TerminalUserIcon>`; this
- *  component layers the picker trigger + popover on top of it. */
+ *  Clicking activates this tile (so the palette acts on the right
+ *  terminal) and opens the command palette pre-drilled into "Set icon"
+ *  — same shape as the theme pill at `TileTitleActions.tsx`. */
 const TerminalIconChip: Component<{
   id: TerminalId;
   icon: string | undefined;
+  onOpen: () => void;
 }> = (props) => {
-  const [open, setOpen] = createSignal(false);
-  const [triggerRef, setTriggerRef] = createSignal<
-    HTMLButtonElement | undefined
-  >(undefined);
-
-  function handleSelect(icon: string) {
-    void client.terminal
-      .setIcon({ id: props.id, icon })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        toast.error(`Failed to set icon: ${message}`);
-      });
-  }
-
+  const store = useTerminalStore();
   return (
-    <>
-      <Tip label={props.icon ? "Change icon" : "Set icon"}>
-        <button
-          type="button"
-          data-testid="terminal-icon-chip"
-          ref={setTriggerRef}
-          class="appearance-none bg-transparent border-0 p-0 m-0 cursor-pointer text-fg-3 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded shrink-0"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen((v) => !v);
-          }}
-          onDblClick={(e) => e.stopPropagation()}
-          aria-label={props.icon ? "Change terminal icon" : "Set terminal icon"}
+    <Tip label={props.icon ? "Change icon" : "Set icon"}>
+      <button
+        type="button"
+        data-testid="terminal-icon-chip"
+        class="appearance-none bg-transparent border-0 p-0 m-0 cursor-pointer text-fg-3 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded shrink-0"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          store.setActiveSilently(props.id);
+          props.onOpen();
+        }}
+        onDblClick={(e) => e.stopPropagation()}
+        aria-label={props.icon ? "Change terminal icon" : "Set terminal icon"}
+      >
+        <Show
+          when={props.icon}
+          fallback={
+            <span
+              class="text-xs opacity-50 hover:opacity-90"
+              aria-hidden="true"
+            >
+              ＋
+            </span>
+          }
         >
-          <Show
-            when={props.icon}
-            fallback={
-              <span
-                class="text-xs opacity-50 hover:opacity-90"
-                aria-hidden="true"
-              >
-                ＋
-              </span>
-            }
-          >
-            {(icon) => <TerminalUserIcon icon={icon()} />}
-          </Show>
-        </button>
-      </Tip>
-      <TerminalIconPopover
-        open={open()}
-        onOpenChange={setOpen}
-        triggerRef={triggerRef()}
-        currentIcon={props.icon}
-        onSelect={handleSelect}
-      />
-    </>
+          {(icon) => <TerminalUserIcon icon={icon()} />}
+        </Show>
+      </button>
+    </Tip>
   );
 };
 

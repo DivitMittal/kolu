@@ -48,6 +48,25 @@ function workspaceGridBody(
   );
 }
 
+/** Curated terminal-icon quick row. Each entry pairs the glyph with a
+ *  short label so the palette's fuzzy search can match by intent —
+ *  typing `home`, `rocket`, or `bug` lands the user on the right row.
+ *  Keep the list short; users can type any character via "Custom emoji…". */
+const ICON_QUICK_ROW: readonly { emoji: string; label: string }[] = [
+  { emoji: "🏠", label: "home" },
+  { emoji: "🧪", label: "experiment" },
+  { emoji: "🐛", label: "bug" },
+  { emoji: "⚡", label: "fast" },
+  { emoji: "🔥", label: "hot" },
+  { emoji: "🚀", label: "rocket" },
+  { emoji: "🎯", label: "focus" },
+  { emoji: "📦", label: "package" },
+  { emoji: "🔧", label: "wrench" },
+  { emoji: "✨", label: "sparkle" },
+  { emoji: "🧠", label: "brain" },
+  { emoji: "🌱", label: "seedling" },
+];
+
 /** Live worktree-name validator — reuses the server schema so the rule
  *  has one source of truth. Returns the first issue's message, or null
  *  when the trimmed name passes. */
@@ -111,6 +130,8 @@ export interface CommandDeps extends ActionContext {
   committedThemeName: Accessor<string>;
   setPreviewThemeName: (name: string | undefined) => void;
   handleSetTheme: (name: string) => void;
+  // Icon — empty string clears.
+  handleSetIcon: (icon: string) => void;
   // Dialogs
   setAboutOpen: (open: boolean) => void;
   setDiagnosticInfoOpen: (open: boolean) => void;
@@ -293,6 +314,51 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
             description:
               "Pick a theme whose background is perceptually distinct from every live terminal",
           }),
+          // Icon picker — a curated 12-emoji quick row plus a free-form
+          // value input. Mirrors the "Set theme" group shape so users learn
+          // one picker pattern (the palette is Kolu's canonical picker).
+          {
+            kind: "group" as const,
+            name: "Set icon",
+            section: "active-terminal" as const,
+            description:
+              "Pin an emoji to this terminal for at-a-glance switching",
+            children: (): PaletteItem[] => [
+              ...ICON_QUICK_ROW.map(
+                ({ emoji, label }): PaletteAction => ({
+                  kind: "action",
+                  name: `${emoji}  ${label}`,
+                  onSelect: () => deps.handleSetIcon(emoji),
+                }),
+              ),
+              {
+                kind: "value",
+                name: "Custom emoji…",
+                prefill: () => "",
+                placeholder: "Type or paste any character",
+                children: [
+                  {
+                    kind: "label",
+                    name: "Press Enter to set as icon",
+                    data: "",
+                  },
+                ],
+                onSubmit: (typed) => {
+                  const trimmed = typed.trim();
+                  if (trimmed.length > 0) deps.handleSetIcon(trimmed);
+                },
+              },
+              ...(deps.activeMeta()?.icon
+                ? [
+                    {
+                      kind: "action" as const,
+                      name: "Clear icon",
+                      onSelect: () => deps.handleSetIcon(""),
+                    },
+                  ]
+                : []),
+            ],
+          },
         ]
       : []),
 

@@ -91,6 +91,6 @@ export const AMBIENT_TIPS: readonly Tip[] = [
   },
   {
     id: "amb-terminal-icon",
-    text: "Click the ＋ next to a tile's repo name to pin an emoji icon — it shows up in the workspace switcher, dock, and sub-panel tabs so terminals are differentiable at a glance",
+    text: `Click the ＋ next to a tile's repo name (or ${formatKeybind(ACTIONS.commandPalette.keybind)} → "Set icon") to pin an emoji — it shows up in the workspace switcher, dock, and sub-panel tabs so terminals are differentiable at a glance`,
   },
 ];

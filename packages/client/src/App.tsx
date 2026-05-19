@@ -17,7 +17,7 @@ import {
   on,
   Show,
 } from "solid-js";
-import { Toaster } from "solid-sonner";
+import { toast, Toaster } from "solid-sonner";
 import { match } from "ts-pattern";
 import ChromeBar from "./ChromeBar";
 import CloseConfirm, { type CloseConfirmTarget } from "./CloseConfirm";
@@ -174,6 +174,17 @@ const App: Component = () => {
     if (id) store.activate(id);
   }
 
+  /** Set or clear the active terminal's icon. Empty string clears.
+   *  Mirrors useThemeManager.setThemeName's direct-client-call shape. */
+  function handleSetIcon(icon: string) {
+    const id = store.activeId();
+    if (id === null) return;
+    void client.terminal.setIcon({ id, icon }).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to set icon: ${message}`);
+    });
+  }
+
   const arrange = useCanvasArrange({
     store,
     crud,
@@ -266,6 +277,7 @@ const App: Component = () => {
     committedThemeName,
     setPreviewThemeName,
     handleSetTheme,
+    handleSetIcon,
     setAboutOpen,
     setDiagnosticInfoOpen,
     handleCreateWorktree: (repoPath, name, initialCommand) =>
@@ -541,7 +553,11 @@ const App: Component = () => {
                     }
                     onCreate={() => openPaletteGroup("New terminal")}
                     renderTileTitle={(id) => (
-                      <TerminalMeta id={id} info={store.getDisplayInfo(id)} />
+                      <TerminalMeta
+                        id={id}
+                        info={store.getDisplayInfo(id)}
+                        onOpenIconPicker={() => openPaletteGroup("Set icon")}
+                      />
                     )}
                     renderTileTitleActions={(id) => (
                       <TileTitleActions
