@@ -89,6 +89,11 @@ export const GitBaseRefSchema = z.object({
 export type GitBaseRef = z.infer<typeof GitBaseRefSchema>;
 
 export const GitStatusInputSchema = z.object({
+  /** Host that owns the repoPath. `"local"` is the controller's
+   *  filesystem; any other value is an SSH alias. Required: two hosts
+   *  with the same `/home/srid/code/kolu` would otherwise collide on
+   *  the subscription key and watch each other's events. */
+  hostId: z.string(),
   repoPath: z.string(),
   mode: GitDiffModeSchema,
 });
@@ -101,6 +106,7 @@ export const GitStatusOutputSchema = z.object({
 export type GitStatusOutput = z.infer<typeof GitStatusOutputSchema>;
 
 export const GitDiffInputSchema = z.object({
+  hostId: z.string(),
   repoPath: z.string(),
   /** Path relative to the repo root. */
   filePath: z.string(),
@@ -141,6 +147,7 @@ export type GitDiffOutput = z.infer<typeof GitDiffOutputSchema>;
 // --- File tree browsing ---
 
 export const FsListAllInputSchema = z.object({
+  hostId: z.string(),
   /** Absolute path to the repo root. */
   repoPath: z.string(),
 });
@@ -152,6 +159,7 @@ export const FsListAllOutputSchema = z.object({
 export type FsListAllOutput = z.infer<typeof FsListAllOutputSchema>;
 
 export const FsReadFileInputSchema = z.object({
+  hostId: z.string(),
   /** Terminal that owns the URL handle for `kind: "binary"` outputs.
    *  Text reads ignore this — the field is on the input because the URL
    *  shape (`/api/terminals/<id>/file/...`) is constructed server-side

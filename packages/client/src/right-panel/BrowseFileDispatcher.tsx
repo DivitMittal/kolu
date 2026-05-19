@@ -18,6 +18,7 @@ import BrowsePreviewView from "./BrowsePreviewView";
 
 export type BrowseFileDispatcherProps = {
   terminalId: TerminalId;
+  hostId: string;
   repoPath: string;
   filePath: string;
   theme: "light" | "dark";
@@ -27,6 +28,7 @@ export type BrowseFileDispatcherProps = {
 const BrowseFileDispatcher: Component<BrowseFileDispatcherProps> = (props) => {
   const fileContent = app.streams.fsReadFile.use(
     () => ({
+      hostId: props.hostId,
       terminalId: props.terminalId,
       repoPath: props.repoPath,
       filePath: props.filePath,

@@ -112,17 +112,22 @@ interface PendingRequest {
   reject(err: Error): void;
 }
 
-/** Branch the auto-deploy command targets. Once the prototype merges,
- *  switch to `github:juspay/kolu#kolu-helper` so existing clones don't
- *  have to track a feature branch by name. */
+/** Default helper flake ref. Points at the shipped branch — `master` is
+ *  the right post-merge default; `KOLU_HELPER_FLAKE_REF` overrides for
+ *  development branches without touching this file. */
 const DEFAULT_HELPER_FLAKE_REF =
-  "github:juspay/kolu/feat/remote-terminal-prototype#kolu-helper";
+  process.env.KOLU_HELPER_FLAKE_REF ?? "github:juspay/kolu/master#kolu-helper";
 
 /** Default invocation kolu runs over SSH when the user hasn't set
  *  `KOLU_HELPER_REMOTE_CMD`. `bash -lc` makes the remote shell source
  *  the user's profile so `nix` lands on PATH for a non-interactive
  *  session. `--refresh` skips Nix's flake eval cache so the helper
- *  picks up new commits to the branch without an hour-long lag. */
+ *  picks up new commits without an hour-long lag.
+ *
+ *  Two override hatches: `KOLU_HELPER_REMOTE_CMD` replaces the entire
+ *  invocation (for non-Nix remotes, custom builds, docker, …);
+ *  `KOLU_HELPER_FLAKE_REF` swaps only the flake ref (for testing a
+ *  development branch against the released helper bootstrap). */
 const DEFAULT_HELPER_REMOTE_CMD = `bash -lc 'nix --extra-experimental-features "nix-command flakes" run --refresh ${DEFAULT_HELPER_FLAKE_REF} -- --serve'`;
 
 interface RemoteHostOpts {

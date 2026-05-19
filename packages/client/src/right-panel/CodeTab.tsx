@@ -164,11 +164,16 @@ const CodeTab: Component<{
   // value is already correct without writing through. slotKey effect now
   // only clears `searchQuery`, which is genuinely shared across slots.)
 
+  // `hostId` keys every Code-tab stream subscription so two hosts with the
+  // same on-disk repo path don't collide. `"local"` is the controller's
+  // filesystem; anything else is an SSH alias.
+  const hostId = () => props.meta?.hostId ?? "local";
+
   const status = app.streams.gitStatus.use(
     () => {
       const p = repoPath();
       const m = diffMode();
-      return p && m ? { repoPath: p, mode: m } : null;
+      return p && m ? { hostId: hostId(), repoPath: p, mode: m } : null;
     },
     {
       onError: (err) => toast.error(`Git status stream: ${err.message}`),
@@ -178,7 +183,9 @@ const CodeTab: Component<{
   const allPaths = app.streams.fsListAll.use(
     () => {
       const p = repoPath();
-      return p && view() === "browse" ? { repoPath: p } : null;
+      return p && view() === "browse"
+        ? { hostId: hostId(), repoPath: p }
+        : null;
     },
     {
       onError: (err) => toast.error(`File list stream: ${err.message}`),
@@ -193,7 +200,13 @@ const CodeTab: Component<{
       if (!p || !s || !m) return null;
       const file = status()?.files.find((f) => f.path === s);
       if (!file) return null;
-      return { repoPath: p, filePath: s, mode: m, oldPath: file.oldPath };
+      return {
+        hostId: hostId(),
+        repoPath: p,
+        filePath: s,
+        mode: m,
+        oldPath: file.oldPath,
+      };
     },
     {
       onError: (err) => toast.error(`Git diff stream: ${err.message}`),
@@ -667,6 +680,7 @@ const CodeTab: Component<{
                       return (
                         <BrowseFileDispatcher
                           terminalId={tid}
+                          hostId={hostId()}
                           repoPath={repo}
                           filePath={path}
                           theme={diffTheme()}

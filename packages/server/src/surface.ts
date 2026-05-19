@@ -64,26 +64,24 @@ import { log } from "./log.ts";
 import { publisher } from "./publisher.ts";
 import { cancelPendingAutosave, getSavedSession } from "./session.ts";
 import { store } from "./state.ts";
-import {
-  findTerminalByRepoPath,
-  getTerminal,
-  listTerminals,
-} from "./terminal-registry.ts";
+import { getTerminal, listTerminals } from "./terminal-registry.ts";
 
-/** Look up the `Host` that owns a given repoPath, OR `undefined` if the
- *  repo lives on the controller's local filesystem.
+/** Look up the `Host` for a given `hostId`. Returns `undefined` for the
+ *  local sentinel (`"local"`) so kolu-git's executor-aware code paths
+ *  hit the fast local watchers (`@parcel/watcher`, refcounted
+ *  `.git/HEAD` subscribe) instead of running the executor protocol
+ *  against `LocalHost`. Reviewer #2 on PR #929 caught the latter
+ *  regression — local Code tabs were installing per-consumer recursive
+ *  `fs.watch` because the orchestrator received a truthy executor.
  *
- *  Returning `undefined` for local — rather than `getHost(undefined)` =
- *  `LocalHost` — is load-bearing: kolu-git's executor-aware code paths
- *  treat any truthy executor as "remote" and skip the fast local watchers
- *  (`@parcel/watcher`, refcounted `.git/HEAD` subscribe). Reviewer #2 on
- *  PR #929 caught this — passing the local Host through made local Code
- *  tabs install per-consumer recursive `fs.watch` against the executor
- *  protocol instead of the shared parcel-watcher path. */
-function hostForRepoPath(repoPath: string): Host | undefined {
-  const entry = findTerminalByRepoPath(repoPath);
-  if (!entry?.meta.hostId) return undefined;
-  return getHost(entry.meta.hostId);
+ *  All git-stream inputs now carry `hostId`, so the previous
+ *  `findTerminalByRepoPath` fallback (which guessed at terminal
+ *  metadata) is no longer needed — and is structurally unsound: two
+ *  hosts with the same on-disk path would collide on the subscription
+ *  key. */
+function hostForHostId(hostId: string): Host | undefined {
+  if (hostId === "local") return undefined;
+  return getHost(hostId);
 }
 
 // `t` is the host router builder; both `surfaceRouter` and the raw oRPC
@@ -231,7 +229,7 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
               input.repoPath,
               input.mode,
               log,
-              hostForRepoPath(input.repoPath),
+              hostForHostId(input.hostId),
             ),
           ),
         install: (input, cb) =>
@@ -239,7 +237,7 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
             input.repoPath,
             cb,
             log,
-            hostForRepoPath(input.repoPath),
+            hostForHostId(input.hostId),
           ),
         isEqual: gitStatusOutputEqual,
       },
@@ -252,7 +250,7 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
               input.mode,
               log,
               input.oldPath,
-              hostForRepoPath(input.repoPath),
+              hostForHostId(input.hostId),
             ),
           ),
         install: (input, cb) =>
@@ -260,14 +258,14 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
             input.repoPath,
             cb,
             log,
-            hostForRepoPath(input.repoPath),
+            hostForHostId(input.hostId),
           ),
         isEqual: gitDiffOutputEqual,
       },
       fsListAll: {
         read: async (input) => ({
           paths: unwrapGit(
-            await listAll(input.repoPath, log, hostForRepoPath(input.repoPath)),
+            await listAll(input.repoPath, log, hostForHostId(input.hostId)),
           ),
         }),
         install: (input, cb) =>
@@ -275,13 +273,13 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
             input.repoPath,
             cb,
             log,
-            hostForRepoPath(input.repoPath),
+            hostForHostId(input.hostId),
           ),
         isEqual: fsListAllOutputEqual,
       },
       fsReadFile: {
         read: async (input): Promise<FsReadFileOutput> => {
-          const host = hostForRepoPath(input.repoPath);
+          const host = hostForHostId(input.hostId);
           if (isIframePreviewable(input.filePath)) {
             const mtimeMs = unwrapGit(
               await statFileMtimeMs(input.repoPath, input.filePath, log, host),
@@ -306,7 +304,7 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
             input.filePath,
             cb,
             log,
-            hostForRepoPath(input.repoPath),
+            hostForHostId(input.hostId),
           ),
         isEqual: fsReadFileOutputEqual,
       },

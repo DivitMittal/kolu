@@ -1,26 +1,14 @@
 /**
  * GitHub PR metadata provider — thin adapter around `kolu-github`.
  *
- * The integration owns everything gh-specific: `KOLU_GH_BIN` lookup, the
- * `gh pr view` spawn, branch-change dedup, the 30s polling loop, failure
- * classification and routing. This file just wires the watcher to the
- * server's `git:` channel and pushes resolved `PrResult` values into
- * terminal metadata via `updateServerLiveMetadata` — `pr` is a live
- * field, so PR-poll churn doesn't trigger session autosaves.
- *
- * ┌─ FUTURE: PrProvider extraction ──────────────────────────────────────┐
- * │ When Bitbucket (`bkt`) support lands (srid/agency#10), a sibling     │
- * │ `kolu-bkt` will export the same `subscribeBitbucketPr` shape. This   │
- * │ adapter dispatches by forge detection (origin remote URL — same      │
- * │ axis `/do`'s forge step uses). `PrResult` stays shared; each impl    │
- * │ owns its own classifier + pinned binary env var (`KOLU_GH_BIN`,      │
- * │ `KOLU_BKT_BIN`). Don't extract a common `PrProvider` interface       │
- * │ before bkt exists — its stderr taxonomy is what will tell you where  │
- * │ the seam goes.                                                       │
- * └──────────────────────────────────────────────────────────────────────┘
+ * Routes the `gh pr view` invocation through the terminal's executor —
+ * `localExecutor` for local terminals (gh comes off PATH via kolu's
+ * Nix wrapper) and the SSH `Host` for remote ones. One code path, two
+ * backends; no `KOLU_GH_BIN` fork.
  */
 
 import { subscribeGitHubPr } from "kolu-github";
+import { localExecutor } from "kolu-git/executor";
 import { getHost } from "../host/registry.ts";
 import { log } from "../log.ts";
 import { terminalChannels } from "../publisher.ts";
@@ -38,14 +26,11 @@ export function startGitHubPrProvider(
   });
   plog.debug("started");
 
-  // kolu-github's subscribeGitHubPr is host-aware: pass an executor
-  // (the terminal's Host) and `gh pr view` runs in the namespace of
-  // whichever machine actually has the repo. Local terminals pass
-  // undefined and get the legacy `KOLU_GH_BIN` + child_process path.
-  const host = getHost(entry.meta.hostId);
-  const executor = host && host.kind === "remote-ssh" ? host : undefined;
+  const host = entry.meta.hostId ? getHost(entry.meta.hostId) : undefined;
+  const executor = host ?? localExecutor;
 
   const watcher = subscribeGitHubPr(
+    executor,
     (pr) => {
       updateServerLiveMetadata(entry, terminalId, (m) => {
         m.pr = pr;
@@ -63,7 +48,6 @@ export function startGitHubPrProvider(
       );
     },
     plog,
-    executor,
   );
 
   const cleanup = terminalChannels.git(terminalId).consume({

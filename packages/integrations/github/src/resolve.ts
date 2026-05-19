@@ -4,46 +4,31 @@
  *  `kolu-common/pr` subpath, which re-exports schemas + display helpers but
  *  not this module. */
 
-import { execFile } from "node:child_process";
 /* Generic exec abstraction — kolu-git's `GitExecutor` is structurally
  * a strict superset, so kolu-server's `Host` and kolu-git's
  * `localExecutor` both satisfy it. Defined inline (rather than imported
  * from kolu-git) to keep this package leaf — kolu-github should not
- * grow a dependency on kolu-git just to share an interface name. */
-interface GhExecutor {
+ * grow a dependency on kolu-git just to share an interface name.
+ *
+ * One executor for both local and remote. The previous KOLU_GH_BIN
+ * fallback for local was a divergent code path — kolu's Nix wrapper
+ * already puts `gh` on PATH (and the `kolu-helper` derivation does the
+ * same on remote), so `executor.exec("gh", ...)` works against either
+ * backend without a fork. */
+export interface GhExecutor {
   exec(
     cmd: string,
     args: string[],
     opts?: { cwd?: string; timeoutMs?: number; maxBytes?: number },
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null }>;
 }
-import { promisify } from "node:util";
+
 import type { Logger } from "kolu-shared";
 import { classifyGhError, deriveCheckStatus, prResultEqual } from "./github.ts";
 import { GitHubPrStateSchema, type PrResult } from "./schemas.ts";
 
-const execFileAsync = promisify(execFile);
-
 const POLL_INTERVAL_MS = 30_000;
 const GH_TIMEOUT_MS = 5_000;
-
-/** Lazy lookup for the pinned `gh` binary path. Reads `KOLU_GH_BIN` set by
- *  the Nix wrapper / dev shell (see `nix/env.nix`). Throws on first call —
- *  not at module load — so importing this file into a browser bundle
- *  doesn't blow up on `process.env` access; the runtime error surfaces at
- *  the first resolve attempt, where it belongs. */
-let ghBinCached: string | null = null;
-function getGhBin(): string {
-  if (ghBinCached !== null) return ghBinCached;
-  const v = process.env.KOLU_GH_BIN;
-  if (!v) {
-    throw new Error(
-      "KOLU_GH_BIN is not set. Run kolu through the Nix wrapper or `nix develop`.",
-    );
-  }
-  ghBinCached = v;
-  return v;
-}
 
 /** Shape returned by `gh pr view --json ...`. */
 interface GhPrViewResult {
@@ -66,45 +51,26 @@ interface GhPrViewResult {
  *  (degraded-but-recoverable). */
 export async function resolveGitHubPr(
   repoRoot: string,
+  executor: GhExecutor,
   log?: Logger,
-  executor?: GhExecutor,
 ): Promise<PrResult> {
   try {
-    let stdout: string;
-    let stderr = "";
-    let exitCode: number | null = 0;
-    if (executor) {
-      // Remote path: route via the host's exec primitive. Use plain
-      // `gh` (rather than `KOLU_GH_BIN`'s nix-store path) because the
-      // pinned binary on the controller's side won't exist at the
-      // same path on the remote — the remote has its own gh.
-      const r = await executor.exec(
-        "gh",
-        ["pr", "view", "--json", "number,title,url,state,statusCheckRollup"],
-        { cwd: repoRoot, timeoutMs: GH_TIMEOUT_MS },
+    const r = await executor.exec(
+      "gh",
+      ["pr", "view", "--json", "number,title,url,state,statusCheckRollup"],
+      { cwd: repoRoot, timeoutMs: GH_TIMEOUT_MS },
+    );
+    if (r.exitCode !== 0) {
+      const e: Error & { stderr?: string; code?: number } = new Error(
+        r.stderr.trim() || `gh exited ${r.exitCode}`,
       );
-      stdout = r.stdout;
-      stderr = r.stderr;
-      exitCode = r.exitCode;
-      if (exitCode !== 0) {
-        const e: Error & { stderr?: string; code?: number } = new Error(
-          stderr.trim() || `gh exited ${exitCode}`,
-        );
-        e.stderr = stderr;
-        e.code = exitCode ?? undefined;
-        const result = classifyGhError(e);
-        if (log) logGhResolveFailure(e, result, log);
-        return result;
-      }
-    } else {
-      const r = await execFileAsync(
-        getGhBin(),
-        ["pr", "view", "--json", "number,title,url,state,statusCheckRollup"],
-        { cwd: repoRoot, timeout: GH_TIMEOUT_MS },
-      );
-      stdout = r.stdout;
+      e.stderr = r.stderr;
+      e.code = r.exitCode ?? undefined;
+      const result = classifyGhError(e);
+      if (log) logGhResolveFailure(e, result, log);
+      return result;
     }
-    const data = JSON.parse(stdout) as GhPrViewResult;
+    const data = JSON.parse(r.stdout) as GhPrViewResult;
     return {
       kind: "ok",
       value: {
@@ -171,9 +137,9 @@ export interface GitHubPrWatcher {
  *  Does not own: the git source, metadata publishing, terminal lifecycle —
  *  those stay with the caller. */
 export function subscribeGitHubPr(
+  executor: GhExecutor,
   onChange: (pr: PrResult) => void,
   log?: Logger,
-  executor?: GhExecutor,
 ): GitHubPrWatcher {
   let lastBranch: string | null = null;
   let lastRepoRoot: string | null = null;
@@ -187,7 +153,7 @@ export function subscribeGitHubPr(
   }
 
   async function fetchAndEmit(repoRoot: string): Promise<void> {
-    const pr = await resolveGitHubPr(repoRoot, log, executor);
+    const pr = await resolveGitHubPr(repoRoot, executor, log);
     emit(pr);
   }
 

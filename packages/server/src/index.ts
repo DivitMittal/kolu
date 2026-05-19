@@ -9,6 +9,7 @@ import { cli } from "cleye";
 import { Hono } from "hono";
 import { pinoLogger } from "hono-pino";
 import { DEFAULT_PORT } from "kolu-common/config";
+import { localExecutor } from "kolu-git/executor";
 import { WebSocketServer } from "ws";
 import pkg from "../package.json" with { type: "json" };
 import { getCacheControlHeader } from "./cacheControl.ts";
@@ -20,7 +21,7 @@ import {
   TERMINAL_FILE_ROUTE_BASE,
   TERMINAL_FILE_ROUTE_FILE_SEGMENT,
 } from "./iframePreviewRoute.ts";
-import { initHosts } from "./host/registry.ts";
+import { getHost, initHosts } from "./host/registry.ts";
 import { ensureKoluRoot, shutdownCleanup } from "./koluRoot.ts";
 import { log } from "./log.ts";
 import { pwaIdentityForHostname } from "./pwaIdentity.ts";
@@ -180,7 +181,16 @@ app.get(
     const repoRoot = term?.meta.git?.repoRoot;
     if (!repoRoot) return c.text("terminal has no repo", 404);
 
-    const res = await serveResolvedFile(resolvePreviewPath(repoRoot, rawTail));
+    // Pick the executor that owns this terminal's filesystem. Remote
+    // terminals route the read through the SSH host so a remote
+    // `~/code/foo/index.html` doesn't accidentally 404 (or worse,
+    // serve a local file at the same path) — Reviewer #3 on PR #929.
+    const host = term.meta.hostId ? getHost(term.meta.hostId) : undefined;
+    const executor = host ?? localExecutor;
+    const res = await serveResolvedFile(
+      resolvePreviewPath(repoRoot, rawTail),
+      executor,
+    );
     // `Buffer` (subclass of `Uint8Array<ArrayBufferLike>`) is a runtime-valid
     // `BodyInit` but the DOM-typed lib.dom.d.ts narrows `BodyInit` to
     // `Uint8Array<ArrayBuffer>` — the unions don't align in TS even though

@@ -15,9 +15,9 @@
  *  (`allow-scripts` only, no `allow-same-origin`) are the iframe element's
  *  responsibility — the route is plain HTTP. */
 
-import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { resolveUnder } from "kolu-git";
+import type { GitExecutor } from "kolu-git/executor";
 
 /** Base URL for the iframe-preview file route. Used by both
  *  `buildIframePreviewUrl` (server emits URLs in this shape) and the Hono
@@ -145,11 +145,22 @@ export interface ServeResult {
   body: Uint8Array | string;
 }
 
-/** Read the resolved file and assemble the HTTP response. Separated from
- *  `resolvePreviewPath` so the guard logic is testable without filesystem
- *  fixtures, and the I/O failure modes are testable without crafting URLs. */
+/** Cap on the iframe preview file size — same upper bound as the binary-
+ *  preview path uses for text reads. Larger files yield 413. */
+const PREVIEW_MAX_BYTES = 16 * 1024 * 1024;
+
+/** Read the resolved file via an executor and assemble the HTTP response.
+ *  Routing through the executor — instead of node's `fs.readFile` directly
+ *  — is what makes the iframe preview work for remote terminals: pass
+ *  `host.readFile` for SSH-host repos, `localExecutor.readFile` for the
+ *  controller's local fs. Same response shape, different backend.
+ *
+ *  Separated from `resolvePreviewPath` so the guard logic is testable
+ *  without filesystem fixtures, and the I/O failure modes are testable
+ *  without crafting URLs. */
 export async function serveResolvedFile(
   res: PathResolution,
+  executor: GitExecutor,
 ): Promise<ServeResult> {
   if (!res.ok) {
     return {
@@ -159,26 +170,29 @@ export async function serveResolvedFile(
     };
   }
   try {
-    const s = await stat(res.abs);
-    if (!s.isFile()) {
+    const { content, truncated } = await executor.readFile(res.abs, {
+      maxBytes: PREVIEW_MAX_BYTES,
+    });
+    if (truncated) {
       return {
-        status: 404,
+        status: 413,
         headers: { "Content-Type": "text/plain; charset=utf-8" },
-        body: "not a file",
+        body: "file too large for iframe preview",
       };
     }
-    const buf = await readFile(res.abs);
+    // `executor.readFile` returns UTF-8 — fine for `text/html`, `image/svg+xml`,
+    // etc. For genuinely-binary previewables (`.pdf`) the caller currently
+    // gets the bytes interpreted as UTF-8 round-trippably; remote previews
+    // of PDFs are a follow-up that would extend the executor to return raw
+    // bytes (or base64).
     return {
       status: 200,
       headers: {
         "Content-Type": res.mime,
         "X-Content-Type-Options": "nosniff",
-        // Browsers cache aggressively — the URL's `?v=<mtime>` query is the
-        // cache key on our side, so a same-URL request can safely hit the
-        // browser cache. mtime change → new URL → fresh fetch.
         "Cache-Control": "private, max-age=60",
       },
-      body: buf,
+      body: content,
     };
   } catch (e: unknown) {
     const code = (e as NodeJS.ErrnoException).code;
@@ -189,8 +203,6 @@ export async function serveResolvedFile(
         body: "not found",
       };
     }
-    // Unexpected I/O error (EACCES, EIO, …) — surface as 500 so it doesn't
-    // masquerade as a missing file.
     return {
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
