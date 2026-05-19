@@ -90,16 +90,11 @@ function storeFor(terminalId: string) {
 /** Drop the in-memory store wrapper for a terminal whose lifecycle has
  *  ended. The `makePersisted` storage entry stays — comments survive
  *  terminal recreation as long as the terminalId is reused (e.g. session
- *  restore). Call this from the terminal-deletion path to bound the
- *  in-memory Map; without it, every `useComments(tid)` call leaves a
- *  Map entry that lives for the page session.
+ *  restore).
  *
- *  NOTE: not yet wired to terminal deletion — the comments feature
- *  doesn't own the terminal lifecycle. Filed as a follow-up because
- *  the Map entries are tiny (a few function closures each) and the
- *  realistic upper bound is the number of terminals opened in one
- *  session, which is small. The API exists so wiring it later is a
- *  one-line change in the terminal-management code. */
+ *  Wired from `useTerminalMetadata` via `mapArray` + `onCleanup`: the
+ *  per-key reactive owner is disposed when a terminalId leaves the
+ *  live key set, which fires this release. */
 export function releaseTerminal(terminalId: string): void {
   storesByKey.delete(terminalId);
 }

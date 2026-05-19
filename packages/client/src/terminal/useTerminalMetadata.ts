@@ -19,8 +19,15 @@ import type {
   TerminalInfo,
   TerminalMetadata,
 } from "kolu-common/surface";
-import { type Accessor, createMemo } from "solid-js";
+import {
+  type Accessor,
+  createComputed,
+  createMemo,
+  mapArray,
+  onCleanup,
+} from "solid-js";
 import { toast } from "solid-sonner";
+import { releaseTerminal } from "../comments/useComments";
 import { app } from "../wire";
 import {
   buildTerminalDisplayInfos,
@@ -35,6 +42,16 @@ export function useTerminalMetadata(deps: {
     keys: () => deps.list()?.map((t) => t.id) ?? [],
     onError: (err) => toast.error(`Metadata error: ${err.message}`),
   });
+
+  // Free per-terminal comment-store entries when a terminal leaves the
+  // live key set. mapArray's per-key reactive owner is disposed on
+  // removal, firing onCleanup — bounds storesByKey to the active set
+  // without a separate diff effect.
+  createComputed(
+    mapArray(meta.keys, (id) => {
+      onCleanup(() => releaseTerminal(id));
+    }),
+  );
 
   function getMetadata(id: TerminalId): TerminalMetadata | undefined {
     return meta.byKey(id)?.();
