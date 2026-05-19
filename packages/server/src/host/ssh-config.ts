@@ -9,7 +9,11 @@
 import { existsSync, globSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import SSHConfig, { type Directive, type Line, type Section } from "ssh-config";
+import SSHConfigImport, {
+  type Directive,
+  type Line,
+  type Section,
+} from "ssh-config";
 
 /** SSH destination displayed in the remote-terminal picker. */
 export interface SshHostEntry {
@@ -26,6 +30,22 @@ interface ParseCtx {
 }
 
 const MAX_INCLUDE_DEPTH = 8;
+type ParsedSshConfig = ReturnType<typeof SSHConfigImport.parse>;
+
+type SshConfigRuntimeModule = typeof SSHConfigImport & {
+  SSHConfig?: typeof SSHConfigImport;
+  LineType?: { DIRECTIVE: number };
+};
+
+const sshConfigModule = SSHConfigImport as SshConfigRuntimeModule;
+// `ssh-config` is CommonJS. Vitest/tsx and Node's runtime loader expose
+// slightly different default shapes, so pin the constructor/constants once.
+const SSHConfig = sshConfigModule.SSHConfig ?? SSHConfigImport;
+const LineType = sshConfigModule.LineType ?? SSHConfig;
+
+function emptyConfig(): ParsedSshConfig {
+  return SSHConfig.parse("");
+}
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && "code" in err;
@@ -33,7 +53,7 @@ function isNodeError(err: unknown): err is NodeJS.ErrnoException {
 
 function isDirective(line: Line, param?: string): line is Directive {
   return (
-    line.type === SSHConfig.DIRECTIVE &&
+    line.type === LineType.DIRECTIVE &&
     "param" in line &&
     (param === undefined || line.param.toLowerCase() === param)
   );
@@ -57,17 +77,20 @@ function resolveIncludePaths(arg: string, ctx: ParseCtx): string[] {
   return globSync(expanded);
 }
 
-function parseFile(path: string): SSHConfig {
+function parseFile(path: string): ParsedSshConfig {
   try {
     return SSHConfig.parse(readFileSync(path, "utf8"));
   } catch (err) {
-    if (isNodeError(err) && err.code === "ENOENT") return new SSHConfig();
+    if (isNodeError(err) && err.code === "ENOENT") return emptyConfig();
     throw err;
   }
 }
 
-function expandIncludes(config: SSHConfig, ctx: ParseCtx): SSHConfig {
-  const expanded = new SSHConfig();
+function expandIncludes(
+  config: ParsedSshConfig,
+  ctx: ParseCtx,
+): ParsedSshConfig {
+  const expanded = emptyConfig();
   for (const line of config) {
     if (isDirective(line, "include")) {
       if (ctx.depth >= MAX_INCLUDE_DEPTH) continue;
@@ -96,7 +119,7 @@ function firstString(value: string | string[] | undefined): string | undefined {
   return value?.[0];
 }
 
-function hostEntry(config: SSHConfig, alias: string): SshHostEntry {
+function hostEntry(config: ParsedSshConfig, alias: string): SshHostEntry {
   const computed = config.compute(alias, { ignoreCase: true });
   const hostname = firstString(computed.hostname) ?? alias;
   const user = firstString(computed.user);
