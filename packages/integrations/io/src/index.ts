@@ -10,6 +10,8 @@ export {
   type WatchHandle,
 } from "./executor.ts";
 
+export { readRange, readTailLines, statSizeBytes } from "./file-tail.ts";
+
 export {
   subscribeExecutorWal,
   type ExecutorWalSubscriptionConfig,

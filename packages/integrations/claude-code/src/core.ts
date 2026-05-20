@@ -22,7 +22,12 @@
 
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { classifyByAwaiting } from "anyagent";
-import type { Executor } from "kolu-io";
+import {
+  readRange as executorReadRange,
+  readTailLines as executorReadTailLines,
+  statSizeBytes as executorStatSizeBytes,
+  type Executor,
+} from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { match } from "ts-pattern";
 import type { ClaudeCodeInfo, TaskProgress } from "./schemas.ts";
@@ -192,15 +197,8 @@ export async function findTranscriptPath(
 
 /**
  * Read the last N bytes of a JSONL transcript and split into lines
- * (oldest first). Delegates to anyagent's shared `readTailLines` for
- * the actual open/read — that helper closes the FD in a `try/finally`
- * (fixing the pre-extraction leak this function had on `readSync`
- * throw) and can surface hard errors via an `onError` callback.
- *
- * This caller opts into the legacy "silent on any failure" shape by
- * ignoring `onError` and flattening `null` (read failed) or an
- * absent file to `[]` — the transcript tailer treats all three modes
- * the same way (retry on the next `fs.watch` fire).
+ * (oldest first). Delegates bounded file IO to `kolu-io` so local and
+ * remote-host executors share one tail/range implementation.
  */
 export async function tailJsonlLines(
   filePath: string,
@@ -208,28 +206,7 @@ export async function tailJsonlLines(
   executor: Executor,
   log?: Logger,
 ): Promise<string[]> {
-  try {
-    const result = await executor.exec(
-      "tail",
-      ["-c", String(bytes), filePath],
-      {
-        timeoutMs: 10_000,
-        maxBytes: bytes + 4096,
-      },
-    );
-    if (result.exitCode !== 0) {
-      log?.debug({ stderr: result.stderr, filePath }, "claude tail failed");
-      return [];
-    }
-    const startsAtFileBeginning =
-      Buffer.byteLength(result.stdout, "utf8") < bytes;
-    const lines = result.stdout.split("\n");
-    const start = startsAtFileBeginning ? 0 : 1;
-    return lines.slice(start).filter((line) => line.length > 0);
-  } catch (err) {
-    log?.debug({ err, filePath }, "claude tail threw");
-    return [];
-  }
+  return executorReadTailLines(executor, filePath, bytes, log);
 }
 
 export async function fileSizeBytes(
@@ -237,21 +214,7 @@ export async function fileSizeBytes(
   executor: Executor,
   log?: Logger,
 ): Promise<number | null> {
-  try {
-    const result = await executor.exec("wc", ["-c", filePath], {
-      timeoutMs: 10_000,
-      maxBytes: 4096,
-    });
-    if (result.exitCode !== 0) {
-      log?.debug({ stderr: result.stderr, filePath }, "file size query failed");
-      return null;
-    }
-    const sizeText = /^\s*(\d+)/.exec(result.stdout)?.[1];
-    return sizeText ? Number.parseInt(sizeText, 10) : null;
-  } catch (err) {
-    log?.debug({ err, filePath }, "file size query threw");
-    return null;
-  }
+  return executorStatSizeBytes(executor, filePath, log);
 }
 
 export async function readFileChunk(
@@ -261,21 +224,7 @@ export async function readFileChunk(
   executor: Executor,
   log?: Logger,
 ): Promise<string | null> {
-  try {
-    const result = await executor.exec(
-      "dd",
-      [`if=${filePath}`, "bs=1", `skip=${offset}`, `count=${bytes}`],
-      { timeoutMs: 30_000, maxBytes: bytes + 4096 },
-    );
-    if (result.exitCode !== 0) {
-      log?.debug({ stderr: result.stderr, filePath }, "file chunk read failed");
-      return null;
-    }
-    return result.stdout;
-  } catch (err) {
-    log?.debug({ err, filePath, offset, bytes }, "file chunk read threw");
-    return null;
-  }
+  return executorReadRange(executor, filePath, offset, bytes, log);
 }
 
 // --- State derivation ---

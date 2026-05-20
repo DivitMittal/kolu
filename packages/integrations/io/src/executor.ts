@@ -8,7 +8,11 @@
 
 import { execFile } from "node:child_process";
 import { watch as fsWatch } from "node:fs";
-import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
+import {
+  open as fsOpen,
+  readFile as fsReadFile,
+  stat as fsStat,
+} from "node:fs/promises";
 import { promisify } from "node:util";
 
 export interface ExecResult {
@@ -38,6 +42,12 @@ export interface Executor {
     opts?: { maxBytes?: number },
   ): Promise<{ content: string; truncated: boolean }>;
   statMtimeMs(path: string): Promise<number>;
+  statSizeBytes(path: string): Promise<number>;
+  readRange(
+    path: string,
+    offset: number,
+    bytes: number,
+  ): Promise<{ content: string }>;
   watch(
     path: string,
     onChange: (relPath: string) => void,
@@ -99,6 +109,20 @@ export const localExecutor: Executor = {
   statMtimeMs: async (path) => {
     const s = await fsStat(path);
     return s.mtimeMs;
+  },
+  statSizeBytes: async (path) => {
+    const s = await fsStat(path);
+    return s.size;
+  },
+  readRange: async (path, offset, bytes) => {
+    const buf = Buffer.alloc(bytes);
+    const handle = await fsOpen(path, "r");
+    try {
+      const { bytesRead } = await handle.read(buf, 0, bytes, offset);
+      return { content: buf.subarray(0, bytesRead).toString("utf-8") };
+    } finally {
+      await handle.close();
+    }
   },
   watch: async (path, onChange, opts) => {
     const watcher = fsWatch(

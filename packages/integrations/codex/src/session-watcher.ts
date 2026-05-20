@@ -6,7 +6,7 @@
  */
 
 import { agentInfoEqual } from "anyagent";
-import type { Executor } from "kolu-io";
+import { readTailLines, statSizeBytes, type Executor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { createDebounceWatcher } from "kolu-shared/sqlite";
 import {
@@ -56,9 +56,9 @@ export function createCodexWatcher(
       return null;
     }
 
-    const size = await fileSizeBytes(
-      ctx.session.rolloutPath,
+    const size = await statSizeBytes(
       ctx.executor,
+      ctx.session.rolloutPath,
       log,
     );
     if (size === null) return null;
@@ -69,10 +69,10 @@ export function createCodexWatcher(
       state = cachedDerive.state;
       contextTokens = cachedDerive.contextTokens;
     } else {
-      const lines = await tailLines(
+      const lines = await readTailLines(
+        ctx.executor,
         ctx.session.rolloutPath,
         TAIL_BYTES,
-        ctx.executor,
         log,
       );
       const parsedState = parseRolloutState(lines);
@@ -130,63 +130,4 @@ export function createCodexWatcher(
     logCtx: { session: session.id },
     log,
   });
-}
-
-async function fileSizeBytes(
-  filePath: string,
-  executor: Executor,
-  log?: Logger,
-): Promise<number | null> {
-  try {
-    const result = await executor.exec("wc", ["-c", filePath], {
-      timeoutMs: 10_000,
-      maxBytes: 4096,
-    });
-    if (result.exitCode !== 0) {
-      log?.debug(
-        { stderr: result.stderr, filePath },
-        "codex rollout stat failed",
-      );
-      return null;
-    }
-    const sizeText = /^\s*(\d+)/.exec(result.stdout)?.[1];
-    return sizeText ? Number.parseInt(sizeText, 10) : null;
-  } catch (err) {
-    log?.debug({ err, filePath }, "codex rollout stat threw");
-    return null;
-  }
-}
-
-async function tailLines(
-  filePath: string,
-  bytes: number,
-  executor: Executor,
-  log?: Logger,
-): Promise<string[]> {
-  try {
-    const result = await executor.exec(
-      "tail",
-      ["-c", String(bytes), filePath],
-      {
-        timeoutMs: 10_000,
-        maxBytes: bytes + 4096,
-      },
-    );
-    if (result.exitCode !== 0) {
-      log?.debug(
-        { stderr: result.stderr, filePath },
-        "codex rollout read failed",
-      );
-      return [];
-    }
-    const startsAtFileBeginning =
-      Buffer.byteLength(result.stdout, "utf8") < bytes;
-    return result.stdout
-      .split("\n")
-      .slice(startsAtFileBeginning ? 0 : 1)
-      .filter((line) => line.length > 0);
-  } catch (err) {
-    log?.debug({ err, filePath }, "codex rollout read threw");
-    return [];
-  }
 }
