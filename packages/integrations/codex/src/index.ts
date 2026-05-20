@@ -17,7 +17,13 @@
 
 export type { Logger } from "kolu-shared";
 export { codexProvider } from "./agent-provider.ts";
-export { CODEX_DB_PATH, CODEX_DB_WAL_PATH, CODEX_DIR } from "./config.ts";
+export {
+  CODEX_DB_PATH,
+  CODEX_DB_WAL_PATH,
+  CODEX_DIR,
+  type CodexDirs,
+  resolveCodexDirs,
+} from "./config.ts";
 
 export {
   type CodexSession,
@@ -27,6 +33,7 @@ export {
   openDb,
   parseRolloutContextTokens,
   parseRolloutState,
+  readRolloutTail,
   REQUIRED_THREAD_COLUMNS,
   type ThreadMetadata,
 } from "./core.ts";

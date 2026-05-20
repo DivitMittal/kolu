@@ -8,7 +8,8 @@
  *   - `session-watcher.ts` — per-session lifecycle object built on `core` + WAL
  *   - `agent-provider.ts`  — `AgentProvider` instance the server consumes
  *   - `schemas.ts`         — zod schemas + types (browser-safe)
- *   - `config.ts`          — env-resolved DB/WAL paths
+ *   - `config.ts`          — env-resolved DB/WAL paths + executor-aware
+ *                            `resolveOpenCodeDirs` helper
  *
  * Peers import from their leaves; `index.ts` is a pure barrel so nothing
  * has to reach back through it. Breaks the index ↔ session-watcher ↔
@@ -17,7 +18,12 @@
 
 export type { Logger } from "kolu-shared";
 export { opencodeProvider } from "./agent-provider.ts";
-export { OPENCODE_DB_PATH, OPENCODE_DB_WAL_PATH } from "./config.ts";
+export {
+  OPENCODE_DB_PATH,
+  OPENCODE_DB_WAL_PATH,
+  type OpenCodeDirs,
+  resolveOpenCodeDirs,
+} from "./config.ts";
 
 export {
   type DerivedState,

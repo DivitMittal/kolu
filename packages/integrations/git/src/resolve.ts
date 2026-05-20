@@ -3,12 +3,15 @@
  *
  * Pure git operations with no server dependencies. The server's metadata
  * provider calls these functions and bridges results into its event system.
+ *
+ * All IO goes through {@link Executor}; defaults to `localExecutor` when
+ * no executor is provided so existing callers and tests are unchanged.
  */
 
 import fs from "node:fs";
 import path from "node:path";
+import { type Executor, localExecutor } from "kolu-io";
 import type { Logger } from "kolu-shared";
-import { simpleGit } from "simple-git";
 import { watchCwdForGitDir } from "./cwd-git-watcher.ts";
 import { err, type GitResult, ok } from "./errors.ts";
 import { watchGitHead } from "./head-watcher.ts";
@@ -24,20 +27,43 @@ export function hasGitDir(cwd: string): boolean {
   }
 }
 
+/** Run git via the executor and return stdout. Throws on non-zero exit. */
+async function gitOutput(
+  executor: Executor,
+  cwd: string,
+  args: string[],
+): Promise<string> {
+  const result = await executor.exec("git", args, { cwd });
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `git exited ${result.exitCode}`);
+  }
+  return result.stdout;
+}
+
+/** Canonicalize a path via the executor's `readlink -f` — matches
+ *  `fs.realpathSync` on local, works on remote without bouncing through
+ *  the local fs. */
+async function realpath(executor: Executor, p: string): Promise<string> {
+  const result = await executor.exec("readlink", ["-f", p]);
+  return result.exitCode === 0 ? result.stdout.trim() : p;
+}
+
 /** Resolve git context for a directory. Returns an error result if not in a
  *  git repo or if the git command fails. */
 export async function resolveGitInfo(
   cwd: string,
   log?: Logger,
+  executor: Executor = localExecutor,
 ): Promise<GitResult<GitInfo>> {
   try {
-    const git = simpleGit(cwd);
     // Bare repos (core.bare=true) have no work tree, so `--show-toplevel`
     // throws on them. Detect up front and return a GitInfo rooted at the
     // bare repo's own location — the palette consumer treats the result as
     // "a repo you can spawn a worktree from," which is exactly right.
     const isBare =
-      (await git.raw(["rev-parse", "--is-bare-repository"])).trim() === "true";
+      (
+        await gitOutput(executor, cwd, ["rev-parse", "--is-bare-repository"])
+      ).trim() === "true";
     if (isBare) {
       // Derive the repo location from `--git-dir`, not cwd. For a canonical
       // bare repo (`/tmp/foo` bare, cwd == bare dir) the two coincide. For
@@ -45,9 +71,10 @@ export async function resolveGitInfo(
       // (`/home/user/proj/.git` with sibling `proj/.worktrees/`), cwd can be
       // anywhere around `.git` — falling back to `basename(cwd)` would
       // report the wrong name (e.g. `.worktrees`).
-      const gitDirAbs = fs.realpathSync(
-        path.resolve(cwd, (await git.raw(["rev-parse", "--git-dir"])).trim()),
-      );
+      const gitDir = (
+        await gitOutput(executor, cwd, ["rev-parse", "--git-dir"])
+      ).trim();
+      const gitDirAbs = await realpath(executor, path.resolve(cwd, gitDir));
       const gitDirBase = path.basename(gitDirAbs);
       // Three shapes:
       //   /proj/.git        → root /proj,        name proj
@@ -60,10 +87,14 @@ export async function resolveGitInfo(
         : gitDirBase.replace(/\.git$/, "");
       let branch: string;
       try {
-        branch = (await git.raw(["symbolic-ref", "--short", "HEAD"])).trim();
+        branch = (
+          await gitOutput(executor, cwd, ["symbolic-ref", "--short", "HEAD"])
+        ).trim();
       } catch {
         // Detached HEAD in a bare repo (unusual but possible).
-        branch = (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
+        branch = (
+          await gitOutput(executor, cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+        ).trim();
       }
       return ok({
         repoRoot,
@@ -74,21 +105,26 @@ export async function resolveGitInfo(
         mainRepoRoot: repoRoot,
       });
     }
-    const repoRoot = (await git.revparse(["--show-toplevel"])).trim();
+    const repoRoot = (
+      await gitOutput(executor, cwd, ["rev-parse", "--show-toplevel"])
+    ).trim();
     let branch: string;
     try {
-      branch = (await git.raw(["symbolic-ref", "--short", "HEAD"])).trim();
+      branch = (
+        await gitOutput(executor, cwd, ["symbolic-ref", "--short", "HEAD"])
+      ).trim();
     } catch {
-      branch = (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
+      branch = (
+        await gitOutput(executor, cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+      ).trim();
     }
     // --git-common-dir returns the shared .git dir; for worktrees it points
     // back to the main repo's .git, letting us derive the real repo name.
-    // The path is relative to cwd (where simple-git runs), not repoRoot.
-    // realpathSync normalizes symlinks (e.g. /tmp → /private/tmp on macOS)
-    // so the comparison with repoRoot (which git already resolved) is reliable.
-    const gitCommonDir = (await git.revparse(["--git-common-dir"])).trim();
+    const gitCommonDir = (
+      await gitOutput(executor, cwd, ["rev-parse", "--git-common-dir"])
+    ).trim();
     const mainRepoRoot = path.dirname(
-      fs.realpathSync(path.resolve(cwd, gitCommonDir)),
+      await realpath(executor, path.resolve(cwd, gitCommonDir)),
     );
     const isWorktree = mainRepoRoot !== repoRoot;
     return ok({
@@ -149,6 +185,7 @@ export function subscribeGitInfo(
   initialCwd: string,
   onChange: (info: GitInfo | null) => void,
   log?: Logger,
+  executor: Executor = localExecutor,
 ): { setCwd(next: string): void; stop(): void } {
   let currentCwd = initialCwd;
   let currentInfo: GitInfo | null = null;
@@ -183,7 +220,7 @@ export function subscribeGitInfo(
 
   async function resolve(): Promise<void> {
     const cwdAtStart = currentCwd;
-    const result = await resolveGitInfo(cwdAtStart, log);
+    const result = await resolveGitInfo(cwdAtStart, log, executor);
     // Discard the result if the subscription was stopped during the await:
     // `ensureMode` would otherwise install a fresh watcher with no path to
     // retire it, and `onChange` would fire past the caller's stop barrier.

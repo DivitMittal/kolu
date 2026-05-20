@@ -3,8 +3,8 @@
  *
  * Module layout:
  *   - `core.ts`            — leaf helpers (session-file reading, transcript
- *                            tail, state derivation, fs.watch helpers, shared
- *                            SESSIONS_DIR watcher, SDK summary fetch)
+ *                            tail, state derivation, sessions-dir watch
+ *                            subscription, SDK summary fetch)
  *   - `session-watcher.ts` — per-session lifecycle object built on `core`
  *   - `agent-provider.ts`  — `AgentProvider` instance the server consumes
  *   - `schemas.ts`         — zod schemas + types (browser-safe)
@@ -27,14 +27,13 @@ export {
   findTranscriptPath,
   PROJECTS_DIR,
   readSessionFile,
+  resolveClaudeCodeDirs,
   SESSIONS_DIR,
   type SessionFile,
   SUMMARY_FETCH_ENABLED,
   subscribeSessionsDir,
   TAIL_BYTES,
   tailJsonlLines,
-  tryWatchDir,
-  watchOrWaitForDir,
 } from "./core.ts";
 export {
   type ClaudeCodeInfo,
@@ -46,7 +45,6 @@ export {
   createSessionWatcher,
   getPendingSummaryFetches,
   type SessionWatcher,
-  type WatcherLog,
 } from "./session-watcher.ts";
 
 export {

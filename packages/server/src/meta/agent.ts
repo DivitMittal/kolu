@@ -17,6 +17,7 @@ import type {
   AgentTerminalState,
   AgentWatcher,
 } from "anyagent";
+import { type Executor, localExecutor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import type { AgentInfo } from "kolu-common/surface";
 import { log } from "../log.ts";
@@ -147,11 +148,11 @@ function snapshotTerminalState(
 }
 
 /**
- * Per-provider activation state for the lazy external-change subscription.
- * Shared across every terminal that uses a given provider kind. Installed
- * at most once per process, the first time any terminal's state reports
- * `externalChanges.isPresent` — so a user who has never run the agent
- * pays zero watcher cost and logs no missing-directory errors (issue #698).
+ * Per-`{provider kind, executor}` activation state for the lazy
+ * external-change subscription. Memo-keying on the executor lets one
+ * remote host with several terminals install one watcher per agent kind
+ * (not one per terminal), while staying separate from the local
+ * controller's activation for the same kind.
  *
  * `reconcilers` is the fan-out set: every terminal whose own state has
  * ever reported "agent present" is in here, and a single external-change
@@ -165,7 +166,7 @@ interface ExternalChangesActivation {
   reconcilers: Set<() => void>;
   installed: boolean;
 }
-const activations = new Map<string, ExternalChangesActivation>();
+const activations = new Map<string, Map<Executor, ExternalChangesActivation>>();
 
 /** Preexec (`commandRun`) arrives while the shell still owns the foreground
  *  process group, so a synchronous reconcile reads `state.foregroundPid =
@@ -185,11 +186,19 @@ const activations = new Map<string, ExternalChangesActivation>();
  *  `resolveSession` reads (which hit SQLite for codex/opencode). */
 const COMMAND_RUN_RECONCILE_DELAYS_MS = [0, 75, 300, 1000] as const;
 
-function getActivation(kind: string): ExternalChangesActivation {
-  let entry = activations.get(kind);
+function getActivation(
+  kind: string,
+  executor: Executor,
+): ExternalChangesActivation {
+  let perExecutor = activations.get(kind);
+  if (!perExecutor) {
+    perExecutor = new Map();
+    activations.set(kind, perExecutor);
+  }
+  let entry = perExecutor.get(executor);
   if (!entry) {
     entry = { reconcilers: new Set(), installed: false };
-    activations.set(kind, entry);
+    perExecutor.set(executor, entry);
   }
   return entry;
 }
@@ -211,6 +220,11 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
 ): () => void {
   const plog = log.child({ provider: provider.kind, terminal: terminalId });
 
+  // F1+F2+F3 ships the contract; remote `Host` selection lands in F4.
+  // Until then every terminal uses the controller's local executor —
+  // identical to the pre-refactor direct-fs path.
+  const executor: Executor = localExecutor;
+
   let current: { watcher: AgentWatcher; key: string } | null = null;
   let registeredForExternal = false;
   let stopped = false;
@@ -218,39 +232,56 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
 
   plog.debug("started");
 
-  function reconcile() {
+  async function reconcile() {
+    if (stopped) return;
     const state = snapshotTerminalState(entry, terminalId, plog);
 
     // Lazy external-change registration. On the first reconcile where the
     // agent is foregrounded in *this* terminal, join the provider's
-    // fan-out set and — if we're the first across the whole process —
+    // fan-out set and — if we're the first for this {kind, executor} —
     // install the underlying watcher.
-    if (!registeredForExternal && provider.externalChanges?.isPresent(state)) {
-      const activation = getActivation(provider.kind);
-      activation.reconcilers.add(reconcile);
+    if (
+      !registeredForExternal &&
+      provider.externalChanges &&
+      (await provider.externalChanges.isPresent(state, executor))
+    ) {
+      if (stopped) return;
+      const activation = getActivation(provider.kind, executor);
+      activation.reconcilers.add(reconcileFireAndForget);
       registeredForExternal = true;
       if (!activation.installed) {
         activation.installed = true;
         const slog = log.child({ provider: provider.kind });
-        provider.externalChanges.install(
-          () => {
-            // Snapshot before iteration so a reconcile that registers or
-            // unregisters synchronously can't skip a peer for this event.
-            for (const fn of [...activation.reconcilers]) {
-              try {
-                fn();
-              } catch (err) {
-                slog.error({ err }, "reconcile threw on external change");
+        try {
+          await provider.externalChanges.install(
+            executor,
+            () => {
+              // Snapshot before iteration so a reconcile that registers or
+              // unregisters synchronously can't skip a peer for this event.
+              for (const fn of [...activation.reconcilers]) {
+                try {
+                  fn();
+                } catch (err) {
+                  slog.error({ err }, "reconcile threw on external change");
+                }
               }
-            }
-          },
-          (err) => slog.error({ err }, "external-change listener threw"),
-          slog,
-        );
+            },
+            (err) => slog.error({ err }, "external-change listener threw"),
+            slog,
+          );
+        } catch (err) {
+          slog.error({ err }, "external-change install failed");
+          activation.installed = false;
+        }
       }
     }
 
-    const next = provider.resolveSession(state, plog);
+    const next = await provider.resolveSession(state, executor, plog);
+    if (stopped) {
+      // The subscription was torn down during the await — discard the
+      // result so we don't install a watcher that has no path to retire.
+      return;
+    }
     const nextKey = next ? provider.sessionKey(next) : null;
     if ((current?.key ?? null) === nextKey) return;
 
@@ -273,6 +304,7 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
       key: nextKey,
       watcher: provider.createWatcher(
         next,
+        executor,
         (info) => {
           // Widen Info to AgentInfo — every concrete Info variant is a
           // member of the AgentInfo discriminated union by construction
@@ -287,6 +319,15 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
     };
   }
 
+  /** Fire-and-forget wrapper for places that need a sync `() => void` —
+   *  event-channel callbacks, the external-change fan-out set. Errors
+   *  inside `reconcile` are logged at the reconcile site, not swallowed. */
+  function reconcileFireAndForget(): void {
+    reconcile().catch((err) =>
+      plog.error({ err }, "reconcile threw asynchronously"),
+    );
+  }
+
   function clearCommandRunTimers() {
     for (const timer of commandRunTimers) clearTimeout(timer);
     commandRunTimers = [];
@@ -298,7 +339,7 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
    *  Early-out on success means a lucky-fast match pays for one
    *  reconcile instead of all four — each reconcile is a
    *  `resolveSession` call that hits SQLite for codex/opencode. */
-  function reconcileFromCommandRun(idx: number) {
+  async function reconcileFromCommandRun(idx: number) {
     // `stopped` guard is unique to this code path: title/cwd/commandRun
     // channel subscriptions are torn down synchronously by their
     // `consume()` cleanup, so they can't fire post-stop. The
@@ -309,10 +350,11 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
     // makes that runaway no-op.
     if (stopped) return;
     try {
-      reconcile();
+      await reconcile();
     } catch (err) {
       plog.error({ err }, "command-run reconcile failed");
     }
+    if (stopped) return;
     if (current !== null) return;
     const nextIdx = idx + 1;
     const next = COMMAND_RUN_RECONCILE_DELAYS_MS[nextIdx];
@@ -323,22 +365,24 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
     // index. The non-null assertion narrows for `next - cur`.
     const cur = COMMAND_RUN_RECONCILE_DELAYS_MS[idx]!;
     commandRunTimers.push(
-      setTimeout(() => reconcileFromCommandRun(nextIdx), next - cur),
+      setTimeout(() => {
+        void reconcileFromCommandRun(nextIdx);
+      }, next - cur),
     );
   }
 
   function scheduleCommandRunReconciles() {
     clearCommandRunTimers();
-    // First attempt (idx=0) fires synchronously — `DELAYS_MS[0] === 0`.
+    // First attempt (idx=0) fires immediately — `DELAYS_MS[0] === 0`.
     // Catches the lucky-fast case where the agent exec has already
     // landed by the time commandRun is published.
-    reconcileFromCommandRun(0);
+    void reconcileFromCommandRun(0);
   }
 
   // Title events — fired by OSC 2 preexec hook. Every shell command
   // boundary is a potential foreground-process change.
   const cleanupTitle = terminalChannels.title(terminalId).consume({
-    onEvent: () => reconcile(),
+    onEvent: () => reconcileFireAndForget(),
     onError: (err) => plog.error({ err }, "publisher subscription failed"),
   });
 
@@ -350,7 +394,7 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
   // the cwd has been published, so the codex provider sees a stale cwd
   // and `findSessionByDirectory` returns null.
   const cleanupCwd = terminalChannels.cwd(terminalId).consume({
-    onEvent: () => reconcile(),
+    onEvent: () => reconcileFireAndForget(),
     onError: (err) => plog.error({ err }, "publisher subscription failed"),
   });
 
@@ -368,7 +412,7 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
   });
 
   // Initial reconcile — covers terminals that already host a session.
-  reconcile();
+  reconcileFireAndForget();
 
   return () => {
     stopped = true;
@@ -377,7 +421,10 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
     cleanupCwd();
     cleanupCommandRun();
     if (registeredForExternal) {
-      activations.get(provider.kind)?.reconcilers.delete(reconcile);
+      activations
+        .get(provider.kind)
+        ?.get(executor)
+        ?.reconcilers.delete(reconcileFireAndForget);
     }
     current?.watcher.destroy();
     plog.debug("stopped");

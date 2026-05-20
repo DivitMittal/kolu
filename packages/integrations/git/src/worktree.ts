@@ -1,37 +1,83 @@
 /**
  * Git worktree operations — create and remove worktrees.
  * Worktrees are stored in `.worktrees/<name>` relative to the main repo root.
+ *
+ * All IO is routed through {@link Executor} so the same code works
+ * against the controller's local fs (`localExecutor`, the default) or a
+ * remote host via the SSH helper.
  */
 
-import fs from "node:fs";
 import path from "node:path";
+import { type Executor, localExecutor } from "kolu-io";
 import type { Logger } from "kolu-shared";
-import { simpleGit } from "simple-git";
 import { err, type GitResult, ok } from "./errors.ts";
 
-/** Resolve the main repo root from any path inside a repo (including worktrees). */
-async function resolveMainRepoRoot(repoPath: string): Promise<string> {
-  const git = simpleGit(repoPath);
-  const gitCommonDir = (await git.revparse(["--git-common-dir"])).trim();
-  return path.dirname(fs.realpathSync(path.resolve(repoPath, gitCommonDir)));
+/** Run git via the executor and return stdout. Throws on non-zero exit. */
+async function gitOutput(
+  executor: Executor,
+  cwd: string,
+  args: string[],
+): Promise<string> {
+  const result = await executor.exec("git", args, { cwd });
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `git exited ${result.exitCode}`);
+  }
+  return result.stdout;
+}
+
+/** Existence probe via {@link Executor.statMtimeMs} — rejects when the
+ *  path does not exist, so a failed call means "absent". */
+async function pathExists(
+  executor: Executor,
+  filePath: string,
+): Promise<boolean> {
+  try {
+    await executor.statMtimeMs(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve the main repo root from any path inside a repo (including
+ *  worktrees). Uses `git rev-parse --git-common-dir` + `readlink -f` so
+ *  the answer matches `fs.realpathSync` on local and works on remote. */
+async function resolveMainRepoRoot(
+  executor: Executor,
+  repoPath: string,
+): Promise<string> {
+  const gitCommonDir = (
+    await gitOutput(executor, repoPath, ["rev-parse", "--git-common-dir"])
+  ).trim();
+  const resolved = path.resolve(repoPath, gitCommonDir);
+  const { stdout, exitCode } = await executor.exec("readlink", [
+    "-f",
+    resolved,
+  ]);
+  const canonical = exitCode === 0 ? stdout.trim() : resolved;
+  return path.dirname(canonical);
 }
 
 /** Detect the default branch name on the remote (e.g. "main" or "master"). */
-export async function detectDefaultBranch(repoPath: string): Promise<string> {
-  const git = simpleGit(repoPath);
-  try {
-    const ref = (
-      await git.raw(["symbolic-ref", "refs/remotes/origin/HEAD"])
-    ).trim();
-    return ref.replace("refs/remotes/origin/", "");
-  } catch {
-    try {
-      await git.raw(["rev-parse", "--verify", "origin/main"]);
-      return "main";
-    } catch {
-      return "master";
-    }
+export async function detectDefaultBranch(
+  repoPath: string,
+  executor: Executor = localExecutor,
+): Promise<string> {
+  const head = await executor.exec(
+    "git",
+    ["symbolic-ref", "refs/remotes/origin/HEAD"],
+    { cwd: repoPath },
+  );
+  if (head.exitCode === 0) {
+    return head.stdout.trim().replace("refs/remotes/origin/", "");
   }
+  const main = await executor.exec(
+    "git",
+    ["rev-parse", "--verify", "origin/main"],
+    { cwd: repoPath },
+  );
+  if (main.exitCode === 0) return "main";
+  return "master";
 }
 
 /**
@@ -43,52 +89,57 @@ export async function worktreeCreate(
   repoPath: string,
   name: string,
   log?: Logger,
+  executor: Executor = localExecutor,
 ): Promise<GitResult<{ path: string; branch: string }>> {
   try {
-    const mainRoot = await resolveMainRepoRoot(repoPath);
-    const git = simpleGit(mainRoot);
+    const mainRoot = await resolveMainRepoRoot(executor, repoPath);
 
     log?.info({ mainRoot }, "fetching origin");
-    await git.fetch("origin");
+    await gitOutput(executor, mainRoot, ["fetch", "origin"]);
     // Best-effort: update origin/HEAD to match remote's actual default branch.
     // Non-fatal — detectDefaultBranch has its own fallback chain.
-    try {
-      await git.remote(["set-head", "origin", "--auto"]);
-    } catch (e) {
+    const setHead = await executor.exec(
+      "git",
+      ["remote", "set-head", "origin", "--auto"],
+      { cwd: mainRoot },
+    );
+    if (setHead.exitCode !== 0) {
       log?.warn(
-        { err: e instanceof Error ? e.message : String(e) },
+        { stderr: setHead.stderr },
         "could not auto-detect origin HEAD, using fallback",
       );
     }
-    const defaultBranch = await detectDefaultBranch(mainRoot);
+    const defaultBranch = await detectDefaultBranch(mainRoot, executor);
 
     const targetPath = path.join(mainRoot, ".worktrees", name);
 
     // Check for both directory and branch collision — a previous worktree
     // removal deletes the directory but leaves the branch behind.
-    if (fs.existsSync(targetPath)) {
+    if (await pathExists(executor, targetPath)) {
       return err({
         code: "WORKTREE_NAME_COLLISION",
         name,
         message: `A worktree directory already exists at ${targetPath}`,
       });
     }
-    try {
-      await git.raw(["rev-parse", "--verify", `refs/heads/${name}`]);
+    const branchExists = await executor.exec(
+      "git",
+      ["rev-parse", "--verify", `refs/heads/${name}`],
+      { cwd: mainRoot },
+    );
+    if (branchExists.exitCode === 0) {
       return err({
         code: "WORKTREE_NAME_COLLISION",
         name,
         message: `Branch '${name}' already exists`,
       });
-    } catch {
-      // Branch doesn't exist — good
     }
 
     log?.info(
       { targetPath, branch: name, base: `origin/${defaultBranch}` },
       "creating worktree",
     );
-    await git.raw([
+    await gitOutput(executor, mainRoot, [
       "worktree",
       "add",
       targetPath,
@@ -110,34 +161,39 @@ export async function worktreeCreate(
 export async function worktreeRemove(
   worktreePath: string,
   log?: Logger,
+  executor: Executor = localExecutor,
 ): Promise<GitResult<void>> {
   try {
-    const mainRoot = await resolveMainRepoRoot(worktreePath);
-    const git = simpleGit(mainRoot);
+    const mainRoot = await resolveMainRepoRoot(executor, worktreePath);
 
     // Detect the branch checked out in this worktree before removing it
     let branch: string | null = null;
-    try {
-      branch = (
-        await simpleGit(worktreePath).raw(["rev-parse", "--abbrev-ref", "HEAD"])
-      ).trim();
-    } catch {
-      // Worktree may already be partially removed
+    const headRef = await executor.exec(
+      "git",
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+      { cwd: worktreePath },
+    );
+    if (headRef.exitCode === 0) {
+      branch = headRef.stdout.trim();
     }
 
     log?.info({ mainRoot, worktreePath, branch }, "removing worktree");
-    await git.raw(["worktree", "remove", worktreePath, "--force"]);
+    await gitOutput(executor, mainRoot, [
+      "worktree",
+      "remove",
+      worktreePath,
+      "--force",
+    ]);
 
     // Clean up the branch (force delete — these are ephemeral Kolu-created branches)
     if (branch && branch !== "HEAD") {
-      try {
-        await git.raw(["branch", "-D", branch]);
+      const del = await executor.exec("git", ["branch", "-D", branch], {
+        cwd: mainRoot,
+      });
+      if (del.exitCode === 0) {
         log?.info({ branch }, "deleted worktree branch");
-      } catch (e) {
-        log?.warn(
-          { branch, err: e instanceof Error ? e.message : String(e) },
-          "could not delete branch",
-        );
+      } else {
+        log?.warn({ branch, stderr: del.stderr }, "could not delete branch");
       }
     }
 

@@ -3,10 +3,14 @@
  * and deriving state from its SQLite threads DB + per-session JSONL rollout
  * transcripts.
  *
+ * Every IO operation flows through an `Executor` — the controller's local
+ * fs (`localExecutor`) for local terminals, the SSH `Host` for remote
+ * ones. One body, two backends.
+ *
  * Codex stores:
  *  - `~/.codex/state_<N>.sqlite` — authoritative thread metadata.
  *    The `<N>` is Codex's schema-version suffix, currently v5;
- *    `findCodexStateDbPath` enumerates and picks the highest at startup
+ *    `resolveCodexDirs` enumerates and picks the highest at runtime
  *    so a user who upgrades Codex past v5 isn't silently blind. The
  *    `threads` table carries: id, rollout_path, cwd, title, tokens_used,
  *    model, updated_at_ms, source, archived.
@@ -27,7 +31,7 @@
  *    total (climbs to millions; unusable as a context-window percentage).
  *
  * The two sources are written atomically in the same cycle (verified:
- * WAL and JSONL mtimes agree to the nanosecond), so one fs.watch on the
+ * WAL and JSONL mtimes agree to the nanosecond), so one watcher on the
  * WAL covers both.
  *
  * Structure note: this file holds the leaf module. Peers `session-watcher.ts`,
@@ -37,35 +41,25 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { classifyByAwaiting } from "anyagent";
+import type { Executor } from "kolu-io";
 import type { Logger } from "kolu-shared";
-import { withDb as sharedWithDb } from "kolu-shared/sqlite";
-import { CODEX_DB_PATH } from "./config.ts";
+import { CODEX_DB_PATH, resolveCodexDirs } from "./config.ts";
 import type { CodexInfo } from "./schemas.ts";
-
-// --- Database helpers ---
-
-/** Codex-specific `withDb` — partial application of anyagent's shared
- *  helper over our `openDb`. Callers stay unaware that the machinery
- *  lives upstream; they just get the same `(fn, errorMsg, errorCtx,
- *  log?, db?) → T | null` signature they had before. */
-function withDb<T>(
-  fn: (db: DatabaseSync) => T,
-  errorMsg: string,
-  errorCtx: Record<string, unknown>,
-  log?: Logger,
-  db?: DatabaseSync,
-): T | null {
-  return sharedWithDb<DatabaseSync, T>(openDb, fn, errorMsg, errorCtx, log, db);
-}
 
 // --- Database session lookup ---
 
 export interface CodexSession {
   /** Thread id (uuid v7). */
   id: string;
-  /** Absolute path to the rollout JSONL — copied from the DB row at
-   *  match time so the watcher doesn't re-query to locate its file. */
+  /** Absolute path to the rollout JSONL on the executor's fs — copied
+   *  from the DB row at match time so the watcher doesn't re-query to
+   *  locate its file. */
   rolloutPath: string;
+  /** Resolved DB path used to find this session. Stashed so the watcher
+   *  doesn't have to re-resolve on every refresh — the resolution walks
+   *  `~/.codex/` to pick the highest schema version, and the answer
+   *  doesn't change over a session's lifetime. */
+  dbPath: string;
 }
 
 /** Columns our SELECTs depend on. If Codex renames or drops any of
@@ -85,68 +79,36 @@ export const REQUIRED_THREAD_COLUMNS: readonly string[] = [
 ];
 
 /** Return the list of required columns missing from the `threads` table
- *  on the given DB — empty array when the schema matches. Pure-ish
- *  (reads from the DB but has no side effects); exported for unit
- *  tests. */
-export function missingThreadColumns(db: DatabaseSync): string[] {
-  const rows = db.prepare("PRAGMA table_info(threads)").all() as {
-    name: string;
-  }[];
-  const observed = new Set(rows.map((r) => r.name));
-  return REQUIRED_THREAD_COLUMNS.filter((c) => !observed.has(c));
+ *  on the given DB — empty array when the schema matches. Reads via
+ *  `executor.queryDb` so the same check runs against local + remote DBs.
+ *  Exported for unit tests. */
+export async function missingThreadColumns(
+  dbPath: string,
+  executor: Executor,
+  log?: Logger,
+): Promise<string[]> {
+  if (!executor.queryDb) return [];
+  try {
+    const rows = (await executor.queryDb(
+      dbPath,
+      "PRAGMA table_info(threads)",
+      [],
+    )) as Array<{ name: string }>;
+    const observed = new Set(rows.map((r) => r.name));
+    return REQUIRED_THREAD_COLUMNS.filter((c) => !observed.has(c));
+  } catch (err) {
+    log?.debug({ err, dbPath }, "codex schema introspection failed");
+    // Treat introspection failure as "schema is unusable" — the caller
+    // logs and disables detection on the same code path it'd hit for a
+    // genuine column rename.
+    return REQUIRED_THREAD_COLUMNS.slice();
+  }
 }
 
-/** One-shot guard: has openDb already logged a schema-mismatch error
- *  for this process? The mismatch can't resolve without a restart
- *  (CODEX_DB_PATH is resolved once at module load), so re-logging on
- *  every openDb call would be noise. */
+/** One-shot guard: has the schema-mismatch error been logged for this
+ *  process? The mismatch can't resolve without a restart, so re-logging
+ *  on every reconcile would be noise. */
 let loggedSchemaError = false;
-
-/** Open a read-only connection to Codex's threads database. Returns null
- *  if the DB is absent (ENOENT silently; other errors at `error`) or if
- *  the `threads` table is missing required columns (logged loudly once).
- *  WAL mode is Codex's default, so a read-only connection coexists with
- *  Codex's own writes without blocking either side. Caller MUST close
- *  the returned database when done. */
-export function openDb(log?: Logger): DatabaseSync | null {
-  let db: DatabaseSync;
-  try {
-    db = new DatabaseSync(CODEX_DB_PATH, { readOnly: true });
-  } catch (err) {
-    log?.debug({ err, path: CODEX_DB_PATH }, "codex db unavailable");
-    return null;
-  }
-  let missing: string[];
-  try {
-    missing = missingThreadColumns(db);
-  } catch (err) {
-    db.close();
-    if (!loggedSchemaError) {
-      loggedSchemaError = true;
-      log?.error(
-        { err, path: CODEX_DB_PATH },
-        "codex schema introspection failed — Codex detection disabled",
-      );
-    }
-    return null;
-  }
-  if (missing.length > 0) {
-    db.close();
-    if (!loggedSchemaError) {
-      loggedSchemaError = true;
-      log?.error(
-        {
-          path: CODEX_DB_PATH,
-          missing,
-          required: REQUIRED_THREAD_COLUMNS,
-        },
-        "codex `threads` table is missing required columns — Codex detection disabled. Upstream may have bumped the schema; set KOLU_CODEX_DB to pin a known-good DB while a fix ships.",
-      );
-    }
-    return null;
-  }
-  return db;
-}
 
 /**
  * Find the most recently updated thread for a given directory.
@@ -164,27 +126,39 @@ export function openDb(log?: Logger): DatabaseSync | null {
  * live threads share a cwd. Mirrors OpenCode's `time_updated DESC`
  * heuristic.
  */
-export function findSessionByDirectory(
+export async function findSessionByDirectory(
   directory: string,
+  executor: Executor,
   log?: Logger,
-): CodexSession | null {
-  return withDb(
-    (conn) => {
-      const row = conn
-        .prepare(
-          "SELECT id, rollout_path FROM threads WHERE cwd = ? AND source = 'cli' AND archived = 0 ORDER BY updated_at_ms DESC LIMIT 1",
-        )
-        .get(directory) as { id: string; rollout_path: string } | undefined;
-      if (!row) return null;
-      return {
-        id: row.id,
-        rolloutPath: row.rollout_path,
-      };
-    },
-    "codex threads query failed",
-    { directory },
-    log,
-  );
+): Promise<CodexSession | null> {
+  const dirs = await resolveCodexDirs(executor, log);
+  const dbPath = dirs.dbPath;
+  if (!dbPath) return null;
+  if (!executor.queryDb) return null;
+  const missing = await missingThreadColumns(dbPath, executor, log);
+  if (missing.length > 0) {
+    if (!loggedSchemaError) {
+      loggedSchemaError = true;
+      log?.error(
+        { path: dbPath, missing, required: REQUIRED_THREAD_COLUMNS },
+        "codex `threads` table is missing required columns — Codex detection disabled. Upstream may have bumped the schema; set KOLU_CODEX_DB to pin a known-good DB while a fix ships.",
+      );
+    }
+    return null;
+  }
+  try {
+    const rows = (await executor.queryDb(
+      dbPath,
+      "SELECT id, rollout_path FROM threads WHERE cwd = ? AND source = 'cli' AND archived = 0 ORDER BY updated_at_ms DESC LIMIT 1",
+      [directory],
+    )) as Array<{ id: string; rollout_path: string }>;
+    if (rows.length === 0) return null;
+    const row = rows[0]!;
+    return { id: row.id, rolloutPath: row.rollout_path, dbPath };
+  } catch (err) {
+    log?.debug({ err, directory }, "codex threads query failed");
+    return null;
+  }
 }
 
 // --- Thread row refresh (title + model) ---
@@ -210,32 +184,88 @@ export interface ThreadMetadata {
  * in `info.last_token_usage` inside the rollout JSONL's latest
  * `token_count` event — see `parseRolloutContextTokens`.
  */
-export function getThreadMetadata(
+export async function getThreadMetadata(
   threadId: string,
+  dbPath: string,
+  executor: Executor,
   log?: Logger,
-  db?: DatabaseSync,
-): ThreadMetadata | null {
-  return withDb(
-    (conn) => {
-      const row = conn
-        .prepare("SELECT title, model FROM threads WHERE id = ?")
-        .get(threadId) as
-        | { title: string | null; model: string | null }
-        | undefined;
-      if (!row) return null;
-      return {
-        title: row.title || null,
-        model: row.model || null,
-      };
-    },
-    "codex thread metadata query failed",
-    { threadId },
-    log,
-    db,
-  );
+): Promise<ThreadMetadata | null> {
+  if (!executor.queryDb) return null;
+  try {
+    const rows = (await executor.queryDb(
+      dbPath,
+      "SELECT title, model FROM threads WHERE id = ?",
+      [threadId],
+    )) as Array<{ title: string | null; model: string | null }>;
+    if (rows.length === 0) return null;
+    const row = rows[0]!;
+    return { title: row.title || null, model: row.model || null };
+  } catch (err) {
+    log?.debug({ err, threadId }, "codex thread metadata query failed");
+    return null;
+  }
 }
 
-// --- JSONL state derivation ---
+// --- Local-only DB helper (transcript export) ---
+
+/** Open the controller's local Codex DB read-only. Used by the one-shot
+ *  HTML transcript exporter, which runs only against local sessions —
+ *  the live agent-detection path goes through the executor instead.
+ *  Returns null if the DB is absent (ENOENT silently; other errors at
+ *  `debug`). Caller MUST close the returned database when done. */
+export function openDb(log?: Logger): DatabaseSync | null {
+  try {
+    return new DatabaseSync(CODEX_DB_PATH, { readOnly: true });
+  } catch (err) {
+    log?.debug({ err, path: CODEX_DB_PATH }, "codex db unavailable");
+    return null;
+  }
+}
+
+// --- Rollout tail reader ---
+
+/** Read the last `maxBytes` of a rollout JSONL via the executor.
+ *  `tail -c <bytes>` is portable across GNU + BSD coreutils and streams
+ *  the right slice from disk without us tracking file size + offset by
+ *  hand. On both local (`execFile`) and remote (helper exec) backends
+ *  this is one RPC. Returns null on hard read error (logged at
+ *  `debug`). The first line of the result is dropped — `tail -c` cuts
+ *  on bytes, not lines, so the leading line is likely partial. */
+export async function readRolloutTail(
+  rolloutPath: string,
+  maxBytes: number,
+  executor: Executor,
+  log?: Logger,
+): Promise<string[] | null> {
+  try {
+    const r = await executor.exec(
+      "tail",
+      ["-c", String(maxBytes), rolloutPath],
+      { timeoutMs: 10_000, maxBytes: maxBytes + 4096 },
+    );
+    if (r.exitCode !== 0) {
+      log?.debug(
+        { stderr: r.stderr, rolloutPath },
+        "codex rollout tail failed",
+      );
+      return null;
+    }
+    const all = r.stdout.split("\n");
+    const lines: string[] = [];
+    // Skip the first element — likely partial because `tail -c` cuts on
+    // bytes — and drop empty trailing entries from the trailing newline.
+    for (let i = 1; i < all.length; i++) {
+      const l = all[i];
+      if (l && l.length > 0) lines.push(l);
+    }
+    return lines;
+  } catch (err) {
+    log?.debug({ err, rolloutPath }, "codex rollout tail threw");
+    return null;
+  }
+}
+
+// --- JSONL state derivation (pure) ---
 
 /** Subset of a rollout line's shape that the parsers below read.
  *  Codex's actual records carry far more — we intentionally read only

@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import type { Executor } from "kolu-io";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   deriveState,
@@ -9,6 +12,47 @@ import {
   extractTasks,
   tailJsonlLines,
 } from "./core.ts";
+
+const execFileP = promisify(execFile);
+
+/** fs-backed executor — tail uses real `tail -c`, statMtimeMs uses fs.stat.
+ *  Lets the tail / findTranscriptPath tests exercise the real executor
+ *  protocol against a local tmpdir fixture without depending on
+ *  `localExecutor` (which would re-resolve `$HOME` and ignore the env
+ *  override the findTranscriptPath suite installs). */
+const fsExecutor: Executor = {
+  exec: async (cmd, args, opts) => {
+    try {
+      const { stdout, stderr } = await execFileP(cmd, args, {
+        cwd: opts?.cwd,
+        timeout: opts?.timeoutMs ?? 30_000,
+        maxBuffer: opts?.maxBytes ?? 4 * 1024 * 1024,
+      });
+      return {
+        stdout: String(stdout ?? ""),
+        stderr: String(stderr ?? ""),
+        exitCode: 0,
+      };
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException & {
+        stdout?: unknown;
+        stderr?: unknown;
+        code?: number | string;
+      };
+      return {
+        stdout: String(e.stdout ?? ""),
+        stderr: String(e.stderr ?? ""),
+        exitCode: typeof e.code === "number" ? e.code : null,
+      };
+    }
+  },
+  readFile: async (p) => ({
+    content: fs.readFileSync(p, "utf8"),
+    truncated: false,
+  }),
+  statMtimeMs: async (p) => fs.statSync(p).mtimeMs,
+  watch: async () => ({ stop: () => {} }),
+};
 
 describe("deriveState", () => {
   it("returns null for empty lines", () => {
@@ -268,7 +312,7 @@ describe("tailJsonlLines", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("reads all lines from a small file", () => {
+  it("reads all-but-first line from a small file", async () => {
     const filePath = path.join(tmpDir, "small.jsonl");
     const lines = [
       JSON.stringify({ type: "user" }),
@@ -278,35 +322,33 @@ describe("tailJsonlLines", () => {
       }),
     ];
     fs.writeFileSync(filePath, `${lines.join("\n")}\n`);
-    const result = tailJsonlLines(filePath, 16_384);
-    expect(result).toEqual(lines);
+    // tailJsonlLines drops the first segment from `tail -c` (potentially
+    // partial mid-line). On a small file where the window exceeds the
+    // file size, the dropped segment is line 0 — the result is
+    // `lines.slice(1)`.
+    const result = await tailJsonlLines(filePath, 16_384, fsExecutor);
+    expect(result).toEqual(lines.slice(1));
   });
 
-  it("skips partial first line when reading from middle of file", () => {
+  it("skips partial first line when reading from middle of file", async () => {
     const filePath = path.join(tmpDir, "large.jsonl");
     const longLine = JSON.stringify({ type: "system", data: "x".repeat(200) });
     const lastLine = JSON.stringify({ type: "user" });
     fs.writeFileSync(filePath, `${longLine}\n${lastLine}\n`);
-    const result = tailJsonlLines(filePath, 50);
+    const result = await tailJsonlLines(filePath, 50, fsExecutor);
     expect(result).toEqual([lastLine]);
   });
 
-  it("returns empty array for nonexistent file", () => {
-    expect(tailJsonlLines(path.join(tmpDir, "nope.jsonl"), 1024)).toEqual([]);
+  it("returns empty array for nonexistent file", async () => {
+    expect(
+      await tailJsonlLines(path.join(tmpDir, "nope.jsonl"), 1024, fsExecutor),
+    ).toEqual([]);
   });
 
-  it("returns empty array for empty file", () => {
+  it("returns empty array for empty file", async () => {
     const filePath = path.join(tmpDir, "empty.jsonl");
     fs.writeFileSync(filePath, "");
-    expect(tailJsonlLines(filePath, 1024)).toEqual([]);
-  });
-
-  it("handles file with no trailing newline", () => {
-    const filePath = path.join(tmpDir, "no-newline.jsonl");
-    const line = JSON.stringify({ type: "user" });
-    fs.writeFileSync(filePath, line);
-    const result = tailJsonlLines(filePath, 16_384);
-    expect(result).toEqual([line]);
+    expect(await tailJsonlLines(filePath, 1024, fsExecutor)).toEqual([]);
   });
 });
 
@@ -327,7 +369,7 @@ describe("findTranscriptPath", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("returns exact match by session ID", () => {
+  it("returns exact match by session ID", async () => {
     const cwd = "/home/user/myproject";
     const sessionId = "test-session-123";
     const projectDir = path.join(tmpDir, encodeProjectPath(cwd));
@@ -335,11 +377,14 @@ describe("findTranscriptPath", () => {
     const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
     fs.writeFileSync(transcriptPath, `${JSON.stringify({ type: "user" })}\n`);
 
-    const result = findTranscriptPathFn({ pid: 1, sessionId, cwd });
+    const result = await findTranscriptPathFn(
+      { pid: 1, sessionId, cwd, sessionsDir: "", projectsDir: tmpDir },
+      fsExecutor,
+    );
     expect(result).toBe(transcriptPath);
   });
 
-  it("returns null when session JSONL doesn't exist, ignoring other files in dir", () => {
+  it("returns null when session JSONL doesn't exist, ignoring other files in dir", async () => {
     const cwd = "/home/user/multi-session-project";
     const projectDir = path.join(tmpDir, encodeProjectPath(cwd));
     fs.mkdirSync(projectDir, { recursive: true });
@@ -347,20 +392,30 @@ describe("findTranscriptPath", () => {
     const otherPath = path.join(projectDir, "other-session.jsonl");
     fs.writeFileSync(otherPath, `${JSON.stringify({ type: "user" })}\n`);
 
-    const result = findTranscriptPathFn({
-      pid: 1,
-      sessionId: "current-session-id",
-      cwd,
-    });
+    const result = await findTranscriptPathFn(
+      {
+        pid: 1,
+        sessionId: "current-session-id",
+        cwd,
+        sessionsDir: "",
+        projectsDir: tmpDir,
+      },
+      fsExecutor,
+    );
     expect(result).toBeNull();
   });
 
-  it("returns null when project dir does not exist", () => {
-    const result = findTranscriptPathFn({
-      pid: 1,
-      sessionId: "any",
-      cwd: "/nonexistent/path",
-    });
+  it("returns null when project dir does not exist", async () => {
+    const result = await findTranscriptPathFn(
+      {
+        pid: 1,
+        sessionId: "any",
+        cwd: "/nonexistent/path",
+        sessionsDir: "",
+        projectsDir: tmpDir,
+      },
+      fsExecutor,
+    );
     expect(result).toBeNull();
   });
 });

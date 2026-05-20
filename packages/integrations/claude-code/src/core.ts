@@ -1,16 +1,15 @@
 /**
- * Claude Code core — pure functions and IO helpers for detecting
- * Claude Code sessions and deriving state from JSONL transcripts.
+ * Claude Code core — pure functions and executor-routed IO helpers for
+ * detecting Claude Code sessions and deriving state from JSONL transcripts.
  *
- * No dependency on server internals (no updateServerMetadata, no TerminalProcess).
- * The server's provider imports these and wires them into the metadata system.
+ * Every IO operation flows through an `Executor` — the controller's local
+ * fs (`localExecutor`) for local terminals, the SSH `Host` for remote ones.
+ * Same code, two backends.
  *
- * Detection: reads ~/.claude/sessions/{pid}.json to find sessions, then
- * tails the JSONL transcript in ~/.claude/projects/{encoded-cwd}/ to
+ * Detection: reads `~/.claude/sessions/{pid}.json` via `executor.readFile`
+ * to find sessions, then tails the JSONL transcript in
+ * `~/.claude/projects/{encoded-cwd}/` via `executor.exec("tail", ...)` to
  * derive state (thinking, tool_use, waiting).
- *
- * Event-driven watchers (fs.watch) are also exported for the server to
- * compose into its provider lifecycle.
  *
  * Structure note: this file holds the leaf module. Peers `session-watcher.ts`
  * and `agent-provider.ts` import from here; `index.ts` is a pure barrel
@@ -20,24 +19,38 @@
  * barrel simultaneously.
  */
 
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { classifyByAwaiting } from "anyagent";
-import { type Logger, readTailLines } from "kolu-shared";
+import type { Executor } from "kolu-io";
+import type { Logger } from "kolu-shared";
 import { match } from "ts-pattern";
 import type { ClaudeCodeInfo, TaskProgress } from "./schemas.ts";
 
 // --- Configuration ---
 
-/** Configurable via env for testing. */
+/** Rel-paths under `$HOME` for the claude-code state directories. The
+ *  `resolveClaudeCodeDirs` helper joins these with the executor's `$HOME`
+ *  (so remote terminals get the *remote* HOME, not the controller's). */
+const SESSIONS_REL = ".claude/sessions";
+const PROJECTS_REL = ".claude/projects";
+
+/** Test-time overrides — only consulted when the executor is the
+ *  controller's local one (these env vars are process-scoped to kolu;
+ *  remote helpers don't observe them). */
+const LOCAL_SESSIONS_DIR_OVERRIDE = process.env.KOLU_CLAUDE_SESSIONS_DIR;
+const LOCAL_PROJECTS_DIR_OVERRIDE = process.env.KOLU_CLAUDE_PROJECTS_DIR;
+
+/** Back-compat: legacy local-only constants. Computed once at import using
+ *  the controller's own `$HOME` / env overrides. Kept for any consumer that
+ *  still wants the controller-local path without going through an executor
+ *  (e.g. the one-shot transcript loader in `transcript.ts`). New code
+ *  should call `resolveClaudeCodeDirs(executor)` instead. */
 export const SESSIONS_DIR =
-  process.env.KOLU_CLAUDE_SESSIONS_DIR ??
-  path.join(os.homedir(), ".claude", "sessions");
+  LOCAL_SESSIONS_DIR_OVERRIDE ?? path.join(os.homedir(), SESSIONS_REL);
 export const PROJECTS_DIR =
-  process.env.KOLU_CLAUDE_PROJECTS_DIR ??
-  path.join(os.homedir(), ".claude", "projects");
+  LOCAL_PROJECTS_DIR_OVERRIDE ?? path.join(os.homedir(), PROJECTS_REL);
 
 /** True when the e2e harness has redirected the projects/sessions dirs at
  *  test fixtures. The Claude Agent SDK has no equivalent override and would
@@ -45,8 +58,8 @@ export const PROJECTS_DIR =
  *  inotify pressure that has been observed to race with the mock harness
  *  on Linux. Skip summary fetching entirely under test. */
 export const SUMMARY_FETCH_ENABLED =
-  process.env.KOLU_CLAUDE_PROJECTS_DIR === undefined &&
-  process.env.KOLU_CLAUDE_SESSIONS_DIR === undefined;
+  LOCAL_SESSIONS_DIR_OVERRIDE === undefined &&
+  LOCAL_PROJECTS_DIR_OVERRIDE === undefined;
 
 /** Tail window for `tailJsonlLines` — must exceed the largest single JSONL
  *  entry so that at least one complete line is present after dropping the
@@ -68,26 +81,70 @@ export const SUMMARY_FETCH_ENABLED =
  *  (mux's pattern), not another bump. */
 export const TAIL_BYTES = 256 * 1024;
 
+/** Resolve the SESSIONS_DIR / PROJECTS_DIR pair on this executor's
+ *  filesystem. Honors the env overrides only for the controller's local
+ *  process (the env vars are process-scoped, so remote helpers can't see
+ *  them anyway). For everything else, resolves `$HOME` via
+ *  `printenv HOME` and joins with the rel-paths.
+ *
+ *  Returns null when `$HOME` couldn't be resolved on the remote — callers
+ *  treat that the same as "claude has never run here". */
+export async function resolveClaudeCodeDirs(
+  executor: Executor,
+  log?: Logger,
+): Promise<{ sessionsDir: string; projectsDir: string } | null> {
+  if (LOCAL_SESSIONS_DIR_OVERRIDE && LOCAL_PROJECTS_DIR_OVERRIDE) {
+    return {
+      sessionsDir: LOCAL_SESSIONS_DIR_OVERRIDE,
+      projectsDir: LOCAL_PROJECTS_DIR_OVERRIDE,
+    };
+  }
+  try {
+    const r = await executor.exec("printenv", ["HOME"], { timeoutMs: 5_000 });
+    if (r.exitCode !== 0) return null;
+    const home = r.stdout.trim();
+    if (!home) return null;
+    return {
+      sessionsDir: `${home}/${SESSIONS_REL}`,
+      projectsDir: `${home}/${PROJECTS_REL}`,
+    };
+  } catch (err) {
+    log?.debug({ err }, "resolveClaudeCodeDirs failed");
+    return null;
+  }
+}
+
 // --- Session file reading ---
 
 export interface SessionFile {
   pid: number;
   sessionId: string;
   cwd: string;
+  /** Resolved sessions dir + projects dir on the executor's fs — stashed
+   *  so downstream functions don't re-resolve. */
+  sessionsDir: string;
+  projectsDir: string;
 }
 
 /**
- * Read a Claude session file by pid. Returns null if the file doesn't
- * exist (the common case — most pids are not claude-code sessions) or
- * if the file is unreadable / malformed / missing required fields.
+ * Read a Claude session file by pid via the executor. Returns null if the
+ * file doesn't exist (the common case — most pids are not claude-code
+ * sessions) or if the file is unreadable / malformed / missing required
+ * fields.
  */
-export function readSessionFile(
+export async function readSessionFile(
   pid: number,
-  log?: { debug: (obj: Record<string, unknown>, msg: string) => void },
-): SessionFile | null {
+  executor: Executor,
+  log?: Logger,
+): Promise<SessionFile | null> {
+  const dirs = await resolveClaudeCodeDirs(executor, log);
+  if (!dirs) return null;
   let raw: string;
   try {
-    raw = fs.readFileSync(path.join(SESSIONS_DIR, `${pid}.json`), "utf8");
+    const r = await executor.readFile(`${dirs.sessionsDir}/${pid}.json`, {
+      maxBytes: 64 * 1024,
+    });
+    raw = r.content;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       log?.debug({ err, pid }, "claude session file unreadable");
@@ -104,7 +161,13 @@ export function readSessionFile(
       log?.debug({ pid, parsed }, "claude session file shape unexpected");
       return null;
     }
-    return parsed as SessionFile;
+    return {
+      pid: parsed.pid,
+      sessionId: parsed.sessionId,
+      cwd: parsed.cwd,
+      sessionsDir: dirs.sessionsDir,
+      projectsDir: dirs.projectsDir,
+    };
   } catch (err) {
     log?.debug({ err, pid }, "claude session file parse failed");
     return null;
@@ -132,39 +195,60 @@ export function encodeProjectPath(cwd: string): string {
  * dir leads to attaching to a stale previous-session transcript while the
  * current session's file is still being created. Better to wait.
  */
-export function findTranscriptPath(session: SessionFile): string | null {
-  const projectDir = path.join(PROJECTS_DIR, encodeProjectPath(session.cwd));
-  const exactPath = path.join(projectDir, `${session.sessionId}.jsonl`);
+export async function findTranscriptPath(
+  session: SessionFile,
+  executor: Executor,
+): Promise<string | null> {
+  const projectDir = `${session.projectsDir}/${encodeProjectPath(session.cwd)}`;
+  const exactPath = `${projectDir}/${session.sessionId}.jsonl`;
   try {
-    fs.accessSync(exactPath);
+    await executor.statMtimeMs(exactPath);
     return exactPath;
   } catch {
     return null;
   }
 }
 
-// --- JSONL reading ---
+// --- JSONL tail reader ---
 
 /**
- * Read the last N bytes of a JSONL transcript and split into lines
- * (oldest first). Delegates to anyagent's shared `readTailLines` for
- * the actual open/read — that helper closes the FD in a `try/finally`
- * (fixing the pre-extraction leak this function had on `readSync`
- * throw) and can surface hard errors via an `onError` callback.
- *
- * This caller opts into the legacy "silent on any failure" shape by
- * ignoring `onError` and flattening `null` (read failed) or an
- * absent file to `[]` — the transcript tailer treats all three modes
- * the same way (retry on the next `fs.watch` fire).
+ * Read the last N bytes of a JSONL transcript via the executor. Uses
+ * `tail -c <bytes>` which is portable across GNU + BSD coreutils and
+ * cheap on both local (execFile) and remote (helper exec). The first
+ * line is dropped because the byte cut likely sliced mid-line — the
+ * 256 KB window plus modern Claude entry sizes (20–55 KB typical) means
+ * the dropped line is virtually always either the start of the file (on
+ * a small file) or a partial entry (on a larger one).
  */
-export function tailJsonlLines(filePath: string, bytes: number): string[] {
-  let size: number;
+export async function tailJsonlLines(
+  filePath: string,
+  bytes: number,
+  executor: Executor,
+  log?: Logger,
+): Promise<string[]> {
   try {
-    size = fs.statSync(filePath).size;
-  } catch {
+    const r = await executor.exec("tail", ["-c", String(bytes), filePath], {
+      timeoutMs: 10_000,
+      maxBytes: bytes + 4096,
+    });
+    if (r.exitCode !== 0) {
+      log?.debug({ stderr: r.stderr, filePath }, "claude tail failed");
+      return [];
+    }
+    const all = r.stdout.split("\n");
+    const out: string[] = [];
+    // Drop the first (potentially partial) segment; the remaining
+    // segments are complete lines (or the trailing empty after the
+    // final newline). Empty strings filter out.
+    for (let i = 1; i < all.length; i++) {
+      const l = all[i];
+      if (l && l.length > 0) out.push(l);
+    }
+    return out;
+  } catch (err) {
+    log?.debug({ err, filePath }, "claude tail threw");
     return [];
   }
-  return readTailLines({ path: filePath, size, maxBytes: bytes }) ?? [];
 }
 
 // --- State derivation ---
@@ -399,158 +483,63 @@ export function deriveTaskProgress(
   return { total: tasks.size, completed };
 }
 
-// --- fs.watch helpers ---
+// --- Sessions-dir subscription ---
 
 /**
- * Try to watch a directory. Returns a cleanup function on success, null
- * if watch failed. ENOENT (directory doesn't exist yet) is expected and
- * silent; other errors (EACCES, EMFILE, etc.) surface at debug so they're
- * discoverable without spamming the log.
- */
-export function tryWatchDir(
-  dir: string,
-  onChange: () => void,
-  log?: Logger,
-): (() => void) | null {
-  try {
-    const w = fs.watch(dir, () => onChange());
-    log?.info({ dir }, "claude-code: dir watcher installed");
-    return () => {
-      w.close();
-      log?.info({ dir }, "claude-code: dir watcher retired");
-    };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log?.debug({ err, dir }, "fs.watch failed");
-    }
-    return null;
-  }
-}
-
-/**
- * Watch a directory that may not yet exist. If direct watch fails, falls
- * back to watching the immediate parent (one level only) and re-attaches
- * to the target as soon as it appears. Returns a cleanup function.
+ * Subscribe to changes in the sessions dir for an executor. Used by
+ * `externalChanges.install` so the orchestrator can re-resolve sessions
+ * when a new `~/.claude/sessions/{pid}.json` appears (or disappears).
  *
- * Used for both SESSIONS_DIR (absent on fresh systems until first claude
- * run) and the per-session project dir under PROJECTS_DIR (created lazily
- * when claude writes its first transcript).
- */
-export function watchOrWaitForDir(
-  dir: string,
-  onChange: () => void,
-  log?: Logger,
-): () => void {
-  const direct = tryWatchDir(dir, onChange, log);
-  if (direct) return direct;
-
-  let child: (() => void) | null = null;
-  let parentWatcher: fs.FSWatcher | null = null;
-  const parent = path.dirname(dir);
-  try {
-    parentWatcher = fs.watch(parent, () => {
-      if (child) return;
-      const attached = tryWatchDir(dir, onChange, log);
-      if (!attached) return;
-      child = attached;
-      parentWatcher?.close();
-      parentWatcher = null;
-      log?.info({ dir, parent }, "claude-code: parent-dir watcher retired");
-      // Kick — dir may already contain files (race: created between our
-      // first attempt and the parent event).
-      onChange();
-    });
-    log?.info({ dir, parent }, "claude-code: parent-dir watcher installed");
-  } catch (err) {
-    log?.debug({ err, dir }, "fs.watch parent fallback failed");
-  }
-  return () => {
-    if (parentWatcher) {
-      parentWatcher.close();
-      log?.info({ dir, parent }, "claude-code: parent-dir watcher retired");
-    }
-    child?.();
-  };
-}
-
-// --- Shared SESSIONS_DIR watcher ---
-//
-// Every consumer of this package that wants to react to session
-// file appearance/disappearance needs a watch on SESSIONS_DIR. Rather
-// than have each caller install its own fs.watch (so N consumers = N
-// duplicate watchers + N duplicate dispatches per event), this module
-// refcounts a single watcher: first subscriber lazily installs it,
-// last unsubscribe tears it down.
-//
-// `sharedSessionsDir` is a single nullable structure (not a
-// {watcher, listeners} pair) so the "active iff non-empty" invariant
-// is mechanical — there's no way for the two halves to disagree.
-//
-// Per-listener `onError` is required (not optional) so fault isolation
-// is a type-system obligation, not a convention. If one listener's
-// callback throws, its own onError runs, and iteration continues to
-// the next listener unaffected.
-
-interface SessionsDirListener {
-  cb: () => void;
-  onError: (err: unknown) => void;
-}
-
-let sharedSessionsDir: {
-  cleanup: () => void;
-  listeners: Set<SessionsDirListener>;
-} | null = null;
-
-/**
- * Subscribe to changes in `SESSIONS_DIR`. Returns an unsubscribe
- * function. The underlying `fs.watch` is shared across all
- * subscribers — refcounted, installed on first subscribe, torn down
- * on last unsubscribe.
+ * The old refcounted shared-watcher dance is gone — the orchestrator
+ * memoizes external-change installs by `{kind, executor}`, so a single
+ * `executor.watch` per executor is enough. The first non-existent-dir
+ * failure is logged at debug and returns a no-op handle; the
+ * orchestrator gates `install` behind `isPresent`, so we should only
+ * reach this when the dir exists.
  *
- * `onError` receives any exception thrown by `onChange` and runs
- * in place of breaking the iteration over peer listeners. Callers
- * must provide one (silent swallowing would hide bugs) — pass a
- * logger call like `(err) => log.warn({ err }, "...")`.
+ * `onError` receives any exception thrown by `onChange` so that a
+ * faulty listener doesn't break the underlying watch.
  */
-export function subscribeSessionsDir(
+export async function subscribeSessionsDir(
+  executor: Executor,
   onChange: () => void,
   onError: (err: unknown) => void,
   log?: Logger,
-): () => void {
-  if (!sharedSessionsDir) {
-    const listeners = new Set<SessionsDirListener>();
-    const cleanup = watchOrWaitForDir(
-      SESSIONS_DIR,
+): Promise<{ stop(): void }> {
+  const dirs = await resolveClaudeCodeDirs(executor, log);
+  if (!dirs) return { stop: () => {} };
+  try {
+    const handle = await executor.watch(
+      dirs.sessionsDir,
       () => {
-        // Snapshot before iteration so a listener that subscribes or
-        // unsubscribes synchronously can't skip a peer for this event.
-        for (const l of [...listeners]) {
-          try {
-            l.cb();
-          } catch (err) {
-            l.onError(err);
-          }
+        try {
+          onChange();
+        } catch (err) {
+          onError(err);
         }
       },
-      log,
+      { recursive: false },
     );
-    sharedSessionsDir = { cleanup, listeners };
+    log?.info(
+      { dir: dirs.sessionsDir },
+      "claude-code: sessions dir watcher installed",
+    );
+    return handle;
+  } catch (err) {
+    log?.debug(
+      { err, dir: dirs.sessionsDir },
+      "claude sessions dir watch failed",
+    );
+    return { stop: () => {} };
   }
-  const listener: SessionsDirListener = { cb: onChange, onError };
-  sharedSessionsDir.listeners.add(listener);
-  return () => {
-    if (!sharedSessionsDir) return;
-    sharedSessionsDir.listeners.delete(listener);
-    if (sharedSessionsDir.listeners.size === 0) {
-      sharedSessionsDir.cleanup();
-      sharedSessionsDir = null;
-    }
-  };
 }
 
 // --- Summary fetching ---
 
-/** Fetch the display summary from the Claude Agent SDK. Returns null on failure. */
+/** Fetch the display summary from the Claude Agent SDK. Returns null on
+ *  failure. Local-only — the SDK reads the controller's own ~/.claude,
+ *  not a remote helper's. Remote sessions don't get summaries through
+ *  this path; the watcher's title field is the fallback. */
 export async function fetchSessionSummary(
   sessionId: string,
   cwd: string,
