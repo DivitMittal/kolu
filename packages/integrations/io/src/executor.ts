@@ -143,15 +143,33 @@ export const localExecutor: Executor = {
     });
   },
   queryDb: async (path, sql, params) => {
-    // node:sqlite is built-in to Node ≥22 — dynamic import keeps the
-    // dependency out of consumers that never call queryDb.
-    const sqlite = await import("node:sqlite");
-    const db = new sqlite.DatabaseSync(path, { readOnly: true });
-    try {
-      const stmt = db.prepare(sql);
-      return stmt.all(...(params ?? [])) as Array<Record<string, unknown>>;
-    } finally {
-      db.close();
-    }
+    const db = await getCachedDb(path);
+    const stmt = db.prepare(sql);
+    return stmt.all(...(params ?? [])) as Array<Record<string, unknown>>;
   },
 };
+
+/** Process-lifetime cache of read-only `DatabaseSync` handles keyed by
+ *  path. Opening a SQLite connection is on the order of half a
+ *  millisecond, but a session-watcher fans out 4 queries per WAL event
+ *  for opencode / 3 for codex — at the watcher's 150 ms debounce that's
+ *  thousands of open/close cycles per minute on a busy session. The
+ *  pre-Executor code hoisted one `DatabaseSync` across the watcher's
+ *  lifetime; routing every query through `queryDb` would otherwise
+ *  silently regress that. The cache is bounded by the small set of
+ *  unique paths queried in practice (one per agent, plus tests), and
+ *  read-only handles are safe to share across async tasks. */
+const dbCache = new Map<string, import("node:sqlite").DatabaseSync>();
+
+async function getCachedDb(
+  path: string,
+): Promise<import("node:sqlite").DatabaseSync> {
+  let db = dbCache.get(path);
+  if (db) return db;
+  // node:sqlite is built-in to Node ≥22 — dynamic import keeps the
+  // dependency out of consumers that never call queryDb.
+  const sqlite = await import("node:sqlite");
+  db = new sqlite.DatabaseSync(path, { readOnly: true });
+  dbCache.set(path, db);
+  return db;
+}
