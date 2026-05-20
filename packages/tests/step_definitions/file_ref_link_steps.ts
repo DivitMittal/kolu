@@ -6,6 +6,44 @@ import type { KoluWorld } from "../support/world.ts";
 
 type RefClickPoint = { x: number; y: number } | null;
 
+let readyCounter = 0;
+
+async function waitForBufferOccurrences(
+  world: KoluWorld,
+  text: string,
+  minCount: number,
+): Promise<void> {
+  await world.page.waitForFunction(
+    ({ sel, target, count }) => {
+      const content = window.__readXtermBuffer?.(sel, 0) ?? "";
+      let seen = 0;
+      let at = 0;
+      while ((at = content.indexOf(target, at)) !== -1) {
+        seen += 1;
+        if (seen >= count) return true;
+        at += target.length;
+      }
+      return false;
+    },
+    { sel: ACTIVE_TERMINAL, target: text, count: minCount },
+    { timeout: POLL_TIMEOUT },
+  );
+}
+
+async function waitForShellQueue(world: KoluWorld): Promise<void> {
+  readyCounter += 1;
+  const marker = `__kolu_file_ref_ready_${Date.now()}_${readyCounter}__`;
+  await world.page.evaluate((sel) => {
+    const container = document.querySelector(sel) as
+      | (HTMLElement & { __xterm?: { focus: () => void } })
+      | null;
+    container?.__xterm?.focus();
+  }, ACTIVE_TERMINAL);
+  await world.terminalRun(`printf '\\n${marker}\\n'`);
+  await waitForBufferOccurrences(world, marker, 2);
+  await world.waitForFrame();
+}
+
 /** Locate a clickable file-ref in the active terminal and compute
  *  pixel coordinates from the **public** xterm API
  *  (`term.cols/rows` + the `.xterm-screen` bounding rect). The
@@ -63,6 +101,11 @@ When(
     // Buffer poll first so the regex match window has a chance to
     // include the just-echoed text.
     await waitForBufferContains(this.page, refText);
+    // `I run` only types into the PTY and presses Enter; under Darwin CI
+    // load, this click could race ahead of queued repo setup commands.
+    // Queue a marker after the feature's echo command and wait for the
+    // marker output (second occurrence) before clicking the link.
+    await waitForShellQueue(this);
     const point = await pollFor({
       observe: () => findRefClickPoint(this, refText),
       isDone: (p) => p !== null,
