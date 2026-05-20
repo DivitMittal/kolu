@@ -37,7 +37,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { classifyByAwaiting } from "anyagent";
-import type { Executor } from "kolu-io";
+import { executorHomeDir, isNotFoundError, type Executor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { CODEX_DB_PATH } from "./config.ts";
 import type { CodexInfo } from "./schemas.ts";
@@ -89,7 +89,7 @@ export function openDb(log?: Logger): DatabaseSync | null {
   try {
     return new DatabaseSync(CODEX_DB_PATH, { readOnly: true });
   } catch (err) {
-    log?.debug({ err, path: CODEX_DB_PATH }, "codex db unavailable");
+    log?.error({ err, path: CODEX_DB_PATH }, "codex db unavailable");
     return null;
   }
 }
@@ -119,12 +119,9 @@ export async function resolveCodexPaths(
   }
   let dir = process.env.KOLU_CODEX_DIR;
   if (!dir) {
-    const home = await executor.exec("printenv", ["HOME"], {
-      timeoutMs: 5_000,
-      maxBytes: 4096,
-    });
-    if (home.exitCode !== 0 || !home.stdout.trim()) return null;
-    dir = `${home.stdout.trim()}/.codex`;
+    const home = await executorHomeDir(executor, log);
+    if (!home) return null;
+    dir = `${home}/.codex`;
   }
   let bestVersion = -1;
   let bestFile: string | null = null;
@@ -143,9 +140,16 @@ export async function resolveCodexPaths(
           bestFile = name;
         }
       }
+    } else if (/no such file or directory/i.test(ls.stderr)) {
+      log?.debug({ dir }, "codex dir absent");
+    } else {
+      log?.error(
+        { dir, stderr: ls.stderr, exitCode: ls.exitCode },
+        "codex state db enumeration failed",
+      );
     }
   } catch (err) {
-    log?.debug({ err, dir }, "codex state db enumeration failed");
+    log?.error({ err, dir }, "codex state db enumeration failed");
   }
   const dbPath = `${dir}/${bestFile ?? "state_5.sqlite"}`;
   return { dir, dbPath, walPath: `${dbPath}-wal` };
@@ -161,10 +165,20 @@ async function queryDb(
   log?: Logger,
 ): Promise<Array<Record<string, unknown>> | null> {
   try {
+    await executor.statMtimeMs(dbPath);
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      log?.debug({ dbPath, ...errorCtx }, "codex db absent");
+      return null;
+    }
+    log?.error({ err, dbPath, ...errorCtx }, "codex db stat failed");
+    throw err;
+  }
+  try {
     return await executor.queryDb(dbPath, sql, params);
   } catch (err) {
-    log?.debug({ err, dbPath, ...errorCtx }, errorMsg);
-    return null;
+    log?.error({ err, dbPath, ...errorCtx }, errorMsg);
+    throw err;
   }
 }
 
@@ -473,6 +487,8 @@ export function parseRolloutContextTokens(lines: string[]): number | null {
     try {
       entry = JSON.parse(raw) as RolloutLine;
     } catch {
+      // Ignore malformed tail fragments; the next complete JSONL read
+      // will include a full record if the write was still in progress.
       continue;
     }
     if (entry.type !== "event_msg") continue;

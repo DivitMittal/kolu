@@ -26,7 +26,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { classifyByAwaiting } from "anyagent";
-import type { Executor } from "kolu-io";
+import { executorHomeDir, isNotFoundError, type Executor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { withDb as sharedWithDb } from "kolu-shared/sqlite";
 import { match } from "ts-pattern";
@@ -65,6 +65,7 @@ export interface OpenCodePaths {
 
 export async function resolveOpenCodePaths(
   executor: Executor,
+  log?: Logger,
 ): Promise<OpenCodePaths | null> {
   if (process.env.KOLU_OPENCODE_DB) {
     return {
@@ -72,12 +73,9 @@ export async function resolveOpenCodePaths(
       walPath: `${process.env.KOLU_OPENCODE_DB}-wal`,
     };
   }
-  const home = await executor.exec("printenv", ["HOME"], {
-    timeoutMs: 5_000,
-    maxBytes: 4096,
-  });
-  if (home.exitCode !== 0 || !home.stdout.trim()) return null;
-  const dbPath = `${home.stdout.trim()}/.local/share/opencode/opencode.db`;
+  const home = await executorHomeDir(executor, log);
+  if (!home) return null;
+  const dbPath = `${home}/.local/share/opencode/opencode.db`;
   return { dbPath, walPath: `${dbPath}-wal` };
 }
 
@@ -91,10 +89,20 @@ async function queryDb(
   log?: Logger,
 ): Promise<Array<Record<string, unknown>> | null> {
   try {
+    await executor.statMtimeMs(dbPath);
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      log?.debug({ dbPath, ...errorCtx }, "opencode db absent");
+      return null;
+    }
+    log?.error({ err, dbPath, ...errorCtx }, "opencode db stat failed");
+    throw err;
+  }
+  try {
     return await executor.queryDb(dbPath, sql, params);
   } catch (err) {
-    log?.debug({ err, dbPath, ...errorCtx }, errorMsg);
-    return null;
+    log?.error({ err, dbPath, ...errorCtx }, errorMsg);
+    throw err;
   }
 }
 
@@ -164,11 +172,12 @@ function contextTokensFromData(
 
 function deriveStateFromRow(
   row: Record<string, unknown> | undefined,
+  log?: Logger,
 ): DerivedState | null {
   if (!row || typeof row.id !== "string" || typeof row.data !== "string") {
     return null;
   }
-  const parsed = parseMessageState(row.data);
+  const parsed = parseMessageState(row.data, log, row.id);
   return parsed ? { ...parsed, messageId: row.id } : null;
 }
 
@@ -178,7 +187,7 @@ export function openDb(log?: Logger): DatabaseSync | null {
   try {
     return new DatabaseSync(OPENCODE_DB_PATH, { readOnly: true });
   } catch (err) {
-    log?.debug({ err, path: OPENCODE_DB_PATH }, "opencode db unavailable");
+    log?.error({ err, path: OPENCODE_DB_PATH }, "opencode db unavailable");
     return null;
   }
 }
@@ -196,7 +205,7 @@ export async function findSessionByDirectory(
   executor: Executor,
   log?: Logger,
 ): Promise<OpenCodeSession | null> {
-  const paths = await resolveOpenCodePaths(executor);
+  const paths = await resolveOpenCodePaths(executor, log);
   if (!paths) return null;
   const rows = await queryDb(
     executor,
@@ -415,7 +424,7 @@ export function deriveSessionState(
       const row = conn.prepare(LATEST_MESSAGE_SQL).get(sessionId) as
         | { id: string; data: string }
         | undefined;
-      return deriveStateFromRow(row);
+      return deriveStateFromRow(row, log);
     },
     "opencode message query failed",
     { sessionId },
@@ -483,6 +492,7 @@ export async function runningToolsBucketFromRunner(
 export async function deriveSessionStateFromRunner(
   sessionId: string,
   runner: OpenCodeQueryRunner,
+  log?: Logger,
 ): Promise<DerivedState | null> {
   const rows = await runner.queryRows(
     LATEST_MESSAGE_SQL,
@@ -490,16 +500,21 @@ export async function deriveSessionStateFromRunner(
     "opencode message query failed",
     { sessionId },
   );
-  return deriveStateFromRow(rows?.[0]);
+  return deriveStateFromRow(rows?.[0], log);
 }
 
 /** Parse a `message.data` JSON blob into derived state.
  *  Exported for unit testing. */
-export function parseMessageState(data: string): ParsedMessageState | null {
+export function parseMessageState(
+  data: string,
+  log?: Logger,
+  messageId?: string,
+): ParsedMessageState | null {
   let parsed: MessageData;
   try {
     parsed = JSON.parse(data) as MessageData;
-  } catch {
+  } catch (err) {
+    log?.error({ err, messageId }, "opencode message.data parse failed");
     return null;
   }
 

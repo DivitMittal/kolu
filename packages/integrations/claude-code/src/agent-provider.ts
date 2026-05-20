@@ -22,6 +22,7 @@
  */
 
 import { type AgentProvider, matchesAgent } from "anyagent";
+import { isNotFoundError } from "kolu-io";
 import {
   readSessionFile,
   resolveClaudeDirs,
@@ -48,14 +49,22 @@ export const claudeCodeProvider: AgentProvider<SessionFile, ClaudeCodeInfo> = {
   },
 
   externalChanges: {
-    async isPresent(state, executor) {
+    async isPresent(state, executor, log) {
       if (matchesAgent(state, "claude")) return true;
-      const dirs = await resolveClaudeDirs(executor);
+      const dirs = await resolveClaudeDirs(executor, log);
       if (!dirs) return false;
       try {
         await executor.statMtimeMs(dirs.sessionsDir);
         return true;
-      } catch {
+      } catch (err) {
+        if (isNotFoundError(err)) {
+          log.debug({ dir: dirs.sessionsDir }, "claude sessions dir absent");
+        } else {
+          log.error(
+            { err, dir: dirs.sessionsDir },
+            "claude sessions dir stat failed",
+          );
+        }
         return false;
       }
     },

@@ -33,7 +33,13 @@ export {
 } from "./resolve.ts";
 
 // Diff review
-export { getDiff, getStatus, parseNameStatus } from "./review.ts";
+export {
+  getDiff,
+  getStatus,
+  parseLocalStatusZ,
+  parseNameStatus,
+  parseNameStatusZ,
+} from "./review.ts";
 // Path security
 export { resolveUnder } from "./safe-path.ts";
 // Schemas

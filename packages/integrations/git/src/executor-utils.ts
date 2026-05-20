@@ -1,5 +1,6 @@
 import path from "node:path";
-import type { Executor } from "kolu-io";
+import { isNotFoundError, type Executor } from "kolu-io";
+import type { Logger } from "kolu-shared";
 
 export async function gitOutput(
   executor: Executor,
@@ -24,11 +25,15 @@ export async function gitOutput(
 export async function pathExists(
   executor: Executor,
   path: string,
+  log?: Logger,
 ): Promise<boolean> {
   try {
     await executor.statMtimeMs(path);
     return true;
-  } catch {
+  } catch (err) {
+    if (!isNotFoundError(err)) {
+      log?.error({ err, path }, "path stat failed");
+    }
     return false;
   }
 }

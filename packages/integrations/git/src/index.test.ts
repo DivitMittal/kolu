@@ -8,7 +8,9 @@ import {
   getDiff,
   getStatus,
   gitInfoEqual,
+  parseLocalStatusZ,
   parseNameStatus,
+  parseNameStatusZ,
   resolveGitInfo,
   resolveUnder,
   subscribeGitInfo,
@@ -303,6 +305,39 @@ describe("parseNameStatus", () => {
     expect(parseNameStatus(raw)).toEqual([
       { path: "bar.ts", status: "A" },
       { path: "foo.ts", status: "M" },
+    ]);
+  });
+});
+
+describe("parseNameStatusZ", () => {
+  it("parses literal tabs and newlines in paths", () => {
+    const raw = "M\0src/b-has\ttab.ts\0A\0src/a-has\nnewline.ts\0";
+    expect(parseNameStatusZ(raw)).toEqual([
+      { path: "src/a-has\nnewline.ts", status: "A" },
+      { path: "src/b-has\ttab.ts", status: "M" },
+    ]);
+  });
+
+  it("extracts old and new paths from NUL-delimited renames", () => {
+    const raw = "R100\0old\tpath.ts\0new\npath.ts\0";
+    expect(parseNameStatusZ(raw)).toEqual([
+      { path: "new\npath.ts", status: "R", oldPath: "old\tpath.ts" },
+    ]);
+  });
+});
+
+describe("parseLocalStatusZ", () => {
+  it("parses local rename records with status-z path order", () => {
+    const raw = "R  new name.ts\0old name.ts\0";
+    expect(parseLocalStatusZ(raw)).toEqual([
+      { path: "new name.ts", status: "R", oldPath: "old name.ts" },
+    ]);
+  });
+
+  it("parses untracked paths without quoted-string decoding", () => {
+    const raw = "?? src/has\ttab.ts\0";
+    expect(parseLocalStatusZ(raw)).toEqual([
+      { path: "src/has\ttab.ts", status: "?" },
     ]);
   });
 });

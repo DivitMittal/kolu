@@ -23,10 +23,13 @@
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { classifyByAwaiting } from "anyagent";
 import {
+  executorHomeDir,
+  isNotFoundError,
   readRange as executorReadRange,
   readTailLines as executorReadTailLines,
   statSizeBytes as executorStatSizeBytes,
   type Executor,
+  watchExistingDirOrAncestor,
 } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { match } from "ts-pattern";
@@ -83,21 +86,13 @@ export async function resolveClaudeDirs(
       projectsDir: LOCAL_PROJECTS_DIR_OVERRIDE,
     };
   }
-  try {
-    const result = await executor.exec("printenv", ["HOME"], {
-      timeoutMs: 5_000,
-    });
-    if (result.exitCode !== 0) return null;
-    const home = result.stdout.trim();
-    if (!home) return null;
-    return {
-      sessionsDir: `${home}/${SESSIONS_REL}`,
-      projectsDir: `${home}/${PROJECTS_REL}`,
-    };
-  } catch (err) {
-    log?.debug({ err }, "claude dir resolution failed");
-    return null;
-  }
+  const home = await executorHomeDir(executor, log);
+  return home
+    ? {
+        sessionsDir: `${home}/${SESSIONS_REL}`,
+        projectsDir: `${home}/${PROJECTS_REL}`,
+      }
+    : null;
 }
 
 // --- Session file reading ---
@@ -130,8 +125,10 @@ export async function readSessionFile(
       })
     ).content;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log?.debug({ err, pid }, "claude session file unreadable");
+    if (isNotFoundError(err)) {
+      log?.debug({ pid }, "claude session file absent");
+    } else {
+      log?.error({ err, pid }, "claude session file unreadable");
     }
     return null;
   }
@@ -142,7 +139,7 @@ export async function readSessionFile(
       typeof parsed.sessionId !== "string" ||
       typeof parsed.cwd !== "string"
     ) {
-      log?.debug({ pid, parsed }, "claude session file shape unexpected");
+      log?.error({ pid, parsed }, "claude session file shape unexpected");
       return null;
     }
     return {
@@ -153,7 +150,7 @@ export async function readSessionFile(
       projectsDir: dirs.projectsDir,
     };
   } catch (err) {
-    log?.debug({ err, pid }, "claude session file parse failed");
+    log?.error({ err, pid }, "claude session file parse failed");
     return null;
   }
 }
@@ -182,13 +179,19 @@ export function encodeProjectPath(cwd: string): string {
 export async function findTranscriptPath(
   session: SessionFile,
   executor: Executor,
+  log?: Logger,
 ): Promise<string | null> {
   const projectDir = `${session.projectsDir}/${encodeProjectPath(session.cwd)}`;
   const exactPath = `${projectDir}/${session.sessionId}.jsonl`;
   try {
     await executor.statMtimeMs(exactPath);
     return exactPath;
-  } catch {
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      log?.debug({ path: exactPath }, "claude transcript absent");
+    } else {
+      log?.error({ err, path: exactPath }, "claude transcript stat failed");
+    }
     return null;
   }
 }
@@ -205,7 +208,7 @@ export async function tailJsonlLines(
   bytes: number,
   executor: Executor,
   log?: Logger,
-): Promise<string[]> {
+): Promise<string[] | null> {
   return executorReadTailLines(executor, filePath, bytes, log);
 }
 
@@ -393,6 +396,8 @@ export function extractTasks(
     try {
       entry = JSON.parse(line);
     } catch {
+      // Ignore malformed tail fragments; the next complete JSONL read
+      // will include a full record if the write was still in progress.
       continue;
     }
 
@@ -471,25 +476,15 @@ export async function subscribeSessionsDir(
 ): Promise<{ stop(): void }> {
   const dirs = await resolveClaudeDirs(executor, log);
   if (!dirs) return { stop: () => {} };
-  try {
-    return await executor.watch(
-      dirs.sessionsDir,
-      () => {
-        try {
-          onChange();
-        } catch (err) {
-          onError(err);
-        }
-      },
-      { recursive: false },
-    );
-  } catch (err) {
-    log?.debug(
-      { err, dir: dirs.sessionsDir },
-      "claude sessions dir watch failed",
-    );
-    return { stop: () => {} };
-  }
+  return watchExistingDirOrAncestor({
+    executor,
+    dir: dirs.sessionsDir,
+    label: "claude-code: sessions",
+    logCtx: { dir: dirs.sessionsDir },
+    onChange,
+    onError,
+    log,
+  });
 }
 
 // --- Summary fetching ---

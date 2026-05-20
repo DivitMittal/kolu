@@ -16,6 +16,7 @@
  */
 
 import { type AgentProvider, matchesAgent } from "anyagent";
+import { isNotFoundError } from "kolu-io";
 import {
   type CodexSession,
   findSessionByDirectory,
@@ -42,14 +43,19 @@ export const codexProvider: AgentProvider<CodexSession, CodexInfo> = {
   },
 
   externalChanges: {
-    async isPresent(state, executor) {
+    async isPresent(state, executor, log) {
       if (matchesAgent(state, "codex")) return true;
-      const paths = await resolveCodexPaths(executor);
+      const paths = await resolveCodexPaths(executor, log);
       if (!paths) return false;
       try {
         await executor.statMtimeMs(paths.dir);
         return true;
-      } catch {
+      } catch (err) {
+        if (isNotFoundError(err)) {
+          log.debug({ dir: paths.dir }, "codex dir absent");
+        } else {
+          log.error({ err, dir: paths.dir }, "codex dir stat failed");
+        }
         return false;
       }
     },

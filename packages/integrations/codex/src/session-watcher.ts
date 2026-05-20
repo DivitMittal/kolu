@@ -75,6 +75,7 @@ export function createCodexWatcher(
         TAIL_BYTES,
         log,
       );
+      if (lines === null) return null;
       const parsedState = parseRolloutState(lines);
       if (parsedState === null) {
         log?.debug(

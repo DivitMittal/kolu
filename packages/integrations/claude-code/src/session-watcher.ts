@@ -10,7 +10,11 @@
  */
 
 import { agentInfoEqual } from "anyagent";
-import type { Executor } from "kolu-io";
+import {
+  type Executor,
+  type WatchHandle,
+  watchExistingDirOrAncestor,
+} from "kolu-io";
 import {
   deriveState,
   deriveTaskProgress,
@@ -25,6 +29,7 @@ import {
   tailJsonlLines,
 } from "./core.ts";
 import type { ClaudeCodeInfo } from "./schemas.ts";
+import { match } from "ts-pattern";
 
 // --- Tuning constants ---
 
@@ -48,8 +53,11 @@ const TASK_SCAN_CHUNK_BYTES = 1024 * 1024;
 /** Transcript-watching state machine — mutually exclusive states. */
 type TranscriptWatching =
   | { kind: "none" }
-  | { kind: "waiting"; dirWatcher: { stop(): void } }
-  | { kind: "watching"; path: string; fileWatcher: { stop(): void } };
+  | { kind: "waiting"; dirWatcher: WatchHandle }
+  | { kind: "attaching"; path: string; dirWatcher: WatchHandle }
+  | { kind: "watching"; path: string; fileWatcher: WatchHandle };
+
+type RefreshState = { kind: "idle" } | { kind: "running"; pending: boolean };
 
 // --- Logger interface ---
 
@@ -109,27 +117,24 @@ export function createSessionWatcher(
   // Trailing-edge debounce timer for transcript fs.watch events.
   // Null when idle. Cleared on destroy.
   let transcriptDebounceTimer: NodeJS.Timeout | null = null;
-  let refreshInFlight = false;
-  let refreshPending = false;
+  let refreshState: RefreshState = { kind: "idle" };
   const summaryFetcher = summaryFetcherForExecutor(executor);
 
   let destroyed = false;
 
   function teardownTranscriptWatching() {
-    switch (transcriptWatching.kind) {
-      case "none":
-        break;
-      case "waiting":
-        transcriptWatching.dirWatcher.stop();
-        break;
-      case "watching":
-        transcriptWatching.fileWatcher.stop();
+    match(transcriptWatching)
+      .with({ kind: "none" }, () => undefined)
+      .with({ kind: "waiting" }, ({ dirWatcher }) => dirWatcher.stop())
+      .with({ kind: "attaching" }, ({ dirWatcher }) => dirWatcher.stop())
+      .with({ kind: "watching" }, ({ path, fileWatcher }) => {
+        fileWatcher.stop();
         plog.info(
-          { path: transcriptWatching.path, session: session.sessionId },
+          { path, session: session.sessionId },
           "claude-code: transcript watcher retired",
         );
-        break;
-    }
+      })
+      .exhaustive();
     transcriptWatching = { kind: "none" };
   }
 
@@ -147,7 +152,7 @@ export function createSessionWatcher(
     }, TRANSCRIPT_DEBOUNCE_MS);
   }
 
-  async function attachTranscriptWatcher(tp: string) {
+  async function attachTranscriptWatcher(tp: string, dirWatcher?: WatchHandle) {
     try {
       const fileWatcher = await executor.watch(
         tp,
@@ -158,6 +163,7 @@ export function createSessionWatcher(
         fileWatcher.stop();
         return;
       }
+      dirWatcher?.stop();
       transcriptWatching = { kind: "watching", path: tp, fileWatcher };
       plog.info(
         { path: tp, session: session.sessionId },
@@ -166,12 +172,15 @@ export function createSessionWatcher(
       void onTranscriptMaybeChanged();
     } catch (err) {
       plog.error({ err, path: tp }, "failed to watch transcript");
-      transcriptWatching = { kind: "none" };
+      transcriptWatching =
+        dirWatcher && !destroyed
+          ? { kind: "waiting", dirWatcher }
+          : { kind: "none" };
     }
   }
 
   async function setupTranscriptWatching() {
-    const tp = await findTranscriptPath(session, executor);
+    const tp = await findTranscriptPath(session, executor, plog);
     if (destroyed) return;
     if (tp) {
       plog.debug({ path: tp }, "transcript found");
@@ -183,41 +192,48 @@ export function createSessionWatcher(
       "transcript not found yet (JSONL created after first message)",
     );
     const projectDir = `${session.projectsDir}/${encodeProjectPath(session.cwd)}`;
-    try {
-      const dirWatcher = await executor.watch(
-        projectDir,
-        () => void onProjectDirChanged(),
-        { recursive: false },
-      );
-      if (destroyed) {
-        dirWatcher.stop();
-        return;
-      }
-      transcriptWatching = { kind: "waiting", dirWatcher };
-    } catch (err) {
-      plog.debug({ err, projectDir }, "project dir watch failed");
+    const dirWatcher = await watchExistingDirOrAncestor({
+      executor,
+      dir: projectDir,
+      label: "claude-code: project",
+      logCtx: { projectDir, session: session.sessionId },
+      onChange: () => void onProjectDirChanged(),
+      onError: (err) =>
+        plog.error({ err, projectDir }, "project dir watcher failed"),
+      log: plog,
+    });
+    if (destroyed) {
+      dirWatcher.stop();
+      return;
     }
+    transcriptWatching = { kind: "waiting", dirWatcher };
   }
 
   async function onProjectDirChanged() {
     if (destroyed) return;
-    if (transcriptWatching.kind !== "waiting") return;
-    const tp = await findTranscriptPath(session, executor);
+    const state = transcriptWatching;
+    if (state.kind !== "waiting") return;
+    const tp = await findTranscriptPath(session, executor, plog);
     if (destroyed) return;
     if (!tp) return;
+    if (transcriptWatching !== state) return;
     plog.debug({ path: tp }, "transcript appeared");
-    transcriptWatching.dirWatcher.stop();
-    await attachTranscriptWatcher(tp);
+    transcriptWatching = {
+      kind: "attaching",
+      path: tp,
+      dirWatcher: state.dirWatcher,
+    };
+    await attachTranscriptWatcher(tp, state.dirWatcher);
   }
 
   async function onTranscriptMaybeChanged() {
     if (destroyed) return;
     if (transcriptWatching.kind !== "watching") return;
-    if (refreshInFlight) {
-      refreshPending = true;
+    if (refreshState.kind === "running") {
+      refreshState = { kind: "running", pending: true };
       return;
     }
-    refreshInFlight = true;
+    refreshState = { kind: "running", pending: false };
 
     try {
       const lines = await tailJsonlLines(
@@ -226,6 +242,7 @@ export function createSessionWatcher(
         executor,
         plog,
       );
+      if (lines === null) return;
       if (destroyed) return;
       const derived = deriveState(lines);
       if (!derived) {
@@ -262,9 +279,10 @@ export function createSessionWatcher(
       // (transcript-change handler) doesn't block on the network fetch.
       void refreshSummary();
     } finally {
-      refreshInFlight = false;
-      if (refreshPending && !destroyed) {
-        refreshPending = false;
+      const rerun =
+        refreshState.kind === "running" && refreshState.pending === true;
+      refreshState = { kind: "idle" };
+      if (rerun && !destroyed) {
         setTimeout(() => void onTranscriptMaybeChanged(), 0);
       }
     }
@@ -352,7 +370,7 @@ export function createSessionWatcher(
       lastInfo = updated;
       onUpdate(updated);
     } catch (err) {
-      plog.debug({ err, session: session.sessionId }, "getSessionInfo failed");
+      plog.error({ err, session: session.sessionId }, "getSessionInfo failed");
     } finally {
       pendingSummaryFetches--;
     }

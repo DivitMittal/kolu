@@ -159,15 +159,18 @@ function snapshotTerminalState(
  * ever reported "agent present" is in here, and a single external-change
  * event dispatches to all of them. Terminals that never hosted the agent
  * never join the set and never see a spurious reconcile. Entries are
- * removed on terminal teardown; the installed watcher itself stays up
- * for the remainder of the process (the underlying singleton matches
- * that lifetime anyway — there is no useful uninstall).
+ * removed on terminal teardown; the installed watcher is stopped when
+ * the final registered terminal goes away.
  */
-interface ExternalChangesActivation {
-  reconcilers: Set<() => void>;
-  handle: { stop(): void } | null;
-  installing: boolean;
-}
+type ExternalReconciler = () => void;
+type ExternalChangesActivation =
+  | { kind: "idle"; reconcilers: Set<ExternalReconciler> }
+  | { kind: "installing"; reconcilers: Set<ExternalReconciler> }
+  | {
+      kind: "installed";
+      reconcilers: Set<ExternalReconciler>;
+      handle: { stop(): void };
+    };
 const activations = new Map<string, ExternalChangesActivation>();
 
 /** Preexec (`commandRun`) arrives while the shell still owns the foreground
@@ -199,10 +202,86 @@ function getActivation(
   const key = activationKey(kind, executor);
   let entry = activations.get(key);
   if (!entry) {
-    entry = { reconcilers: new Set(), handle: null, installing: false };
+    entry = { kind: "idle", reconcilers: new Set() };
     activations.set(key, entry);
   }
   return entry;
+}
+
+function removeExternalReconciler(
+  key: string,
+  reconciler: ExternalReconciler,
+): void {
+  const activation = activations.get(key);
+  if (!activation) return;
+  activation.reconcilers.delete(reconciler);
+  if (activation.reconcilers.size > 0) return;
+  if (activation.kind === "installed") activation.handle.stop();
+  activations.delete(key);
+}
+
+function installExternalChanges<Session, Info extends AgentInfoShape>(
+  provider: AgentProvider<Session, Info>,
+  executor: Executor,
+  activation: Extract<ExternalChangesActivation, { kind: "idle" }>,
+): void {
+  const externalChanges = provider.externalChanges;
+  if (!externalChanges) return;
+  const key = activationKey(provider.kind, executor);
+  const installing: Extract<ExternalChangesActivation, { kind: "installing" }> =
+    {
+      kind: "installing",
+      reconcilers: activation.reconcilers,
+    };
+  activations.set(key, installing);
+  const slog = log.child({ provider: provider.kind });
+
+  void externalChanges
+    .install(
+      executor,
+      () => {
+        // Snapshot before iteration so a reconcile that registers or
+        // unregisters synchronously can't skip a peer for this event.
+        for (const fn of [...installing.reconcilers]) {
+          try {
+            fn();
+          } catch (err) {
+            slog.error({ err }, "reconcile threw on external change");
+          }
+        }
+      },
+      (err) => slog.error({ err }, "external-change listener threw"),
+      slog,
+    )
+    .then((handle) => {
+      const current = activations.get(key);
+      if (current !== installing) {
+        handle.stop();
+        return;
+      }
+      if (current.reconcilers.size === 0) {
+        handle.stop();
+        activations.delete(key);
+        return;
+      }
+      activations.set(key, {
+        kind: "installed",
+        reconcilers: current.reconcilers,
+        handle,
+      });
+    })
+    .catch((err) => {
+      slog.error({ err }, "external-change watcher install failed");
+      if (activations.get(key) !== installing) return;
+      if (installing.reconcilers.size === 0) {
+        activations.delete(key);
+      } else {
+        activations.set(key, {
+          kind: "idle",
+          reconcilers: installing.reconcilers,
+        });
+      }
+    });
 }
 
 /**
@@ -245,6 +324,7 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
       const isPresent = await provider.externalChanges.isPresent(
         state,
         executor,
+        plog,
       );
       if (stopped || seq !== reconcileSeq) return;
       if (isPresent) {
@@ -256,35 +336,8 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
         };
         activation.reconcilers.add(externalReconciler);
         registeredForExternal = true;
-        if (!activation.handle && !activation.installing) {
-          activation.installing = true;
-          const slog = log.child({ provider: provider.kind });
-          void provider.externalChanges
-            .install(
-              executor,
-              () => {
-                // Snapshot before iteration so a reconcile that registers or
-                // unregisters synchronously can't skip a peer for this event.
-                for (const fn of [...activation.reconcilers]) {
-                  try {
-                    fn();
-                  } catch (err) {
-                    slog.error({ err }, "reconcile threw on external change");
-                  }
-                }
-              },
-              (err) => slog.error({ err }, "external-change listener threw"),
-              slog,
-            )
-            .then((handle) => {
-              activation.handle = handle;
-            })
-            .catch((err) => {
-              slog.error({ err }, "external-change watcher install failed");
-            })
-            .finally(() => {
-              activation.installing = false;
-            });
+        if (activation.kind === "idle") {
+          installExternalChanges(provider, executor, activation);
         }
       }
     }
@@ -426,12 +479,7 @@ export function startAgentProvider<Session, Info extends AgentInfoShape>(
     cleanupCommandRun();
     if (registeredForExternal && externalReconciler) {
       const key = activationKey(provider.kind, executor);
-      const activation = activations.get(key);
-      activation?.reconcilers.delete(externalReconciler);
-      if (activation && activation.reconcilers.size === 0) {
-        activation.handle?.stop();
-        activations.delete(key);
-      }
+      removeExternalReconciler(key, externalReconciler);
     }
     current?.watcher.destroy();
     plog.debug("stopped");

@@ -124,9 +124,7 @@ export interface AgentProvider<Session, Info extends AgentInfoShape> {
    *  Until then, zero watchers fire for this provider — a fresh machine
    *  where the user has never run this agent pays no watcher cost and
    *  logs no missing-directory errors. Once installed, the subscription
-   *  lives for the remainder of the process; there is no uninstall,
-   *  matching how the underlying singletons (Codex's WAL watcher,
-   *  Claude's SESSIONS_DIR watcher) already work. */
+   *  is shared until the last registered terminal unregisters. */
   externalChanges?: {
     /** True if this agent is (or might soon be) relevant on this machine
      *  — either because the foreground process is (or looks like) this
@@ -137,7 +135,11 @@ export interface AgentProvider<Session, Info extends AgentInfoShape> {
      *  `resolveSession` to have succeeded — for Codex, the foreground
      *  process is `codex` before any DB row exists, and the WAL watcher
      *  is what catches the row's appearance. */
-    isPresent(state: AgentTerminalState, executor: Executor): Promise<boolean>;
+    isPresent(
+      state: AgentTerminalState,
+      executor: Executor,
+      log: Logger,
+    ): Promise<boolean>;
     /** Install the process-wide watcher and wire its events to `onChange`.
      *  Called at most once per process. `onError` receives exceptions
      *  thrown by `onChange`. */

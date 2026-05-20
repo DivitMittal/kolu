@@ -8,11 +8,7 @@
 
 import { execFile } from "node:child_process";
 import { watch as fsWatch } from "node:fs";
-import {
-  open as fsOpen,
-  readFile as fsReadFile,
-  stat as fsStat,
-} from "node:fs/promises";
+import { open as fsOpen, stat as fsStat } from "node:fs/promises";
 import { promisify } from "node:util";
 
 export interface ExecResult {
@@ -97,14 +93,21 @@ export const localExecutor: Executor = {
     }),
   readFile: async (path, opts) => {
     const max = opts?.maxBytes ?? 1_048_576;
-    const buf = await fsReadFile(path);
-    if (buf.length > max) {
+    const bytesToRead = Math.max(0, max) + 1;
+    const buf = Buffer.alloc(bytesToRead);
+    const handle = await fsOpen(path, "r");
+    try {
+      const { bytesRead } = await handle.read(buf, 0, bytesToRead, 0);
+      const truncated = bytesRead > max;
       return {
-        content: buf.subarray(0, max).toString("utf-8"),
-        truncated: true,
+        content: buf
+          .subarray(0, truncated ? Math.max(0, max) : bytesRead)
+          .toString("utf-8"),
+        truncated,
       };
+    } finally {
+      await handle.close();
     }
-    return { content: buf.toString("utf-8"), truncated: false };
   },
   statMtimeMs: async (path) => {
     const s = await fsStat(path);

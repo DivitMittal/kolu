@@ -11,6 +11,8 @@ export {
 } from "./executor.ts";
 
 export { readRange, readTailLines, statSizeBytes } from "./file-tail.ts";
+export { isNotFoundError } from "./errors.ts";
+export { executorHomeDir } from "./home.ts";
 
 export {
   subscribeExecutorWal,
@@ -29,3 +31,8 @@ export {
   type DirFilenameWatcher,
   type DirFilenameWatcherConfig,
 } from "./refcounted-dir-watcher.ts";
+
+export {
+  watchExistingDirOrAncestor,
+  type WatchExistingDirConfig,
+} from "./watch-dir.ts";

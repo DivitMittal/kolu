@@ -40,6 +40,7 @@ export function createOpenCodeWatcher(
     const derived = await deriveSessionStateFromRunner(
       ctx.session.id,
       ctx.runner,
+      log,
     );
     if (!derived) {
       log?.debug(

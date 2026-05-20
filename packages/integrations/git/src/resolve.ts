@@ -191,7 +191,7 @@ function gitWatchStrategy(executor: Executor): GitWatchStrategy {
             else handle = h;
           })
           .catch((err) =>
-            log?.warn({ err, cwd }, "git: executor watch failed"),
+            log?.error({ err, cwd }, "git: executor watch failed"),
           );
         return () => {
           cancelled = true;

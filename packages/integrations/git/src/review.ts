@@ -58,6 +58,7 @@ async function resolveBase(
       `${ref}^{commit}`,
     ]);
   } catch {
+    // Expected when the repo has not fetched its default remote branch yet.
     return err({
       code: "BASE_BRANCH_NOT_FOUND",
       ref,
@@ -97,6 +98,62 @@ export function parseNameStatus(raw: string): GitChangedFile[] {
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+function nulTokens(raw: string): string[] {
+  return raw.split("\0").filter((token) => token.length > 0);
+}
+
+/**
+ * Parse `git diff --name-status -z` output. The NUL form avoids Git's
+ * quoted-path encoding entirely, so paths with tabs, newlines, and quotes
+ * arrive as literal path bytes decoded by Node.
+ */
+export function parseNameStatusZ(raw: string): GitChangedFile[] {
+  const files: GitChangedFile[] = [];
+  const tokens = nulTokens(raw);
+  for (let i = 0; i < tokens.length; ) {
+    const statusToken = tokens[i++] ?? "";
+    const letter = statusToken[0] ?? "";
+    const isRenameOrCopy = letter === "R" || letter === "C";
+    const oldPath = isRenameOrCopy ? tokens[i++] : undefined;
+    const filePath = tokens[i++];
+    if (!filePath) continue;
+    const status = toChangeStatus(letter);
+    files.push({ path: filePath, status, ...(oldPath && { oldPath }) });
+  }
+  return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * Parse `git status --porcelain=v1 -z`. Rename/copy entries use
+ * `XY new\0old\0`, unlike human porcelain's `old -> new` text.
+ */
+export function parseLocalStatusZ(raw: string): GitChangedFile[] {
+  const seen = new Map<string, GitChangedFile>();
+  const tokens = nulTokens(raw);
+  for (let i = 0; i < tokens.length; ) {
+    const record = tokens[i++] ?? "";
+    if (record.length < 4) continue;
+    const index = record[0] ?? " ";
+    const working = record[1] ?? " ";
+    const firstPath = record.slice(3);
+    const renamedOrCopied =
+      index === "R" || index === "C" || working === "R" || working === "C";
+    const oldPath = renamedOrCopied ? tokens[i++] : undefined;
+    const letter =
+      index === "?" && working === "?"
+        ? "?"
+        : working !== " "
+          ? working
+          : index;
+    seen.set(firstPath, {
+      path: firstPath,
+      status: toChangeStatus(letter),
+      ...(oldPath && { oldPath }),
+    });
+  }
+  return [...seen.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
 /**
  * Working-tree status vs HEAD — the local-mode file list. Returns one
  * entry per modified, added, deleted, renamed, copied, conflicted, or
@@ -109,31 +166,10 @@ async function getLocalStatus(
   const raw = await gitOutput(executor, repoPath, [
     "status",
     "--porcelain=v1",
+    "-z",
     "--untracked-files=all",
   ]);
-  const seen = new Map<string, GitChangedFile>();
-  for (const line of raw.split("\n")) {
-    if (!line) continue;
-    const index = line[0] ?? " ";
-    const working = line[1] ?? " ";
-    const rest = line.slice(3);
-    const rename = rest.includes(" -> ") ? rest.split(" -> ") : null;
-    const oldPath = rename?.[0];
-    const filePath = rename?.[1] ?? rest;
-    if (!filePath) continue;
-    const letter =
-      index === "?" && working === "?"
-        ? "?"
-        : working !== " "
-          ? working
-          : index;
-    seen.set(filePath, {
-      path: filePath,
-      status: toChangeStatus(letter),
-      ...(oldPath && { oldPath }),
-    });
-  }
-  return [...seen.values()].sort((a, b) => a.path.localeCompare(b.path));
+  return parseLocalStatusZ(raw);
 }
 
 /**
@@ -159,9 +195,10 @@ export async function getStatus(
     const raw = await gitOutput(executor, repoPath, [
       "diff",
       "--name-status",
+      "-z",
       baseResult.value.sha,
     ]);
-    return ok({ files: parseNameStatus(raw), base: baseResult.value });
+    return ok({ files: parseNameStatusZ(raw), base: baseResult.value });
   } catch (e) {
     log?.error(
       { err: e instanceof Error ? e.message : String(e), repoPath, mode },

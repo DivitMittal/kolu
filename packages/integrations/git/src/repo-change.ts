@@ -253,7 +253,7 @@ function watchExecutorRoot(
       else handle = h;
     })
     .catch((err) =>
-      log?.warn({ err, ...logFields }, `${logLabel} watch install failed`),
+      log?.error({ err, ...logFields }, `${logLabel} watch install failed`),
     );
 
   return () => {

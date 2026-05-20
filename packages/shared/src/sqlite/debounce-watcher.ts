@@ -70,6 +70,8 @@ export interface DebounceWatcher<Session> {
   destroy(): void;
 }
 
+type RefreshState = { kind: "idle" } | { kind: "running"; pending: boolean };
+
 export function createDebounceWatcher<
   Session,
   Info,
@@ -80,26 +82,28 @@ export function createDebounceWatcher<
   let destroyed = false;
   let debounceTimer: NodeJS.Timeout | null = null;
   let lastInfo: Info | null = null;
-  let refreshInFlight = false;
-  let refreshPending = false;
+  let refreshState: RefreshState = { kind: "idle" };
 
   async function performRefresh(): Promise<void> {
     if (destroyed || !config.db) return;
-    if (refreshInFlight) {
-      refreshPending = true;
+    if (refreshState.kind === "running") {
+      refreshState = { kind: "running", pending: true };
       return;
     }
-    refreshInFlight = true;
+    refreshState = { kind: "running", pending: false };
     try {
       const info = await config.refresh(config.db);
       if (destroyed || info === null) return;
       if (config.isEqual(lastInfo, info)) return;
       lastInfo = info;
       config.onChange(info);
+    } catch (err) {
+      config.log?.error({ err, ...config.logCtx }, "watcher refresh failed");
     } finally {
-      refreshInFlight = false;
-      if (refreshPending && !destroyed) {
-        refreshPending = false;
+      const rerun =
+        refreshState.kind === "running" && refreshState.pending === true;
+      refreshState = { kind: "idle" };
+      if (rerun && !destroyed) {
         setTimeout(() => void performRefresh(), 0);
       }
     }
