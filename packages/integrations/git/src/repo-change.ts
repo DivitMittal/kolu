@@ -38,6 +38,8 @@ interface SharedComposed {
 
 const repoChangeWatchers = new Map<string, SharedComposed>();
 const fileChangeWatchers = new Map<string, SharedComposed>();
+const executorRepoChangeWatchers = new Map<string, SharedComposed>();
+const executorFileChangeWatchers = new Map<string, SharedComposed>();
 
 /** Build a composed watcher backed by N upstream `subscribe` functions.
  *  Each upstream callback fires `tick()`, which trailing-edge-debounces
@@ -108,15 +110,30 @@ export function subscribeRepoChange(
   executor?: Executor,
 ): () => void {
   if (executor) {
-    return subscribeExecutorChange(
-      executor,
-      repoRoot,
-      () => true,
-      onChange,
-      "git: executor repo-change",
-      { repoRoot },
-      log,
-    );
+    const key = `${executor.id}\x00${repoRoot}`;
+    let entry = executorRepoChangeWatchers.get(key);
+    if (!entry) {
+      entry = compose(
+        [
+          (cb) =>
+            watchExecutorRoot(
+              executor,
+              repoRoot,
+              () => true,
+              cb,
+              "git: executor repo-change",
+              { repoRoot, executor: executor.id },
+              log,
+            ),
+        ],
+        () => executorRepoChangeWatchers.delete(key),
+        "git: executor repo-change",
+        { repoRoot, executor: executor.id },
+        log,
+      );
+      executorRepoChangeWatchers.set(key, entry);
+    }
+    return entry.subscribe(onChange);
   }
 
   let entry = repoChangeWatchers.get(repoRoot);
@@ -156,16 +173,33 @@ export function subscribeFileChange(
   executor?: Executor,
 ): () => void {
   if (executor) {
-    return subscribeExecutorChange(
-      executor,
-      repoRoot,
-      (relPath) =>
-        relPath === "" || relPath === filePath || relPath.startsWith(".git"),
-      onChange,
-      "git: executor file-change",
-      { repoRoot, filePath },
-      log,
-    );
+    const key = `${executor.id}\x00${repoRoot}\x00${filePath}`;
+    let entry = executorFileChangeWatchers.get(key);
+    if (!entry) {
+      entry = compose(
+        [
+          (cb) =>
+            watchExecutorRoot(
+              executor,
+              repoRoot,
+              (relPath) =>
+                relPath === "" ||
+                relPath === filePath ||
+                relPath.startsWith(".git"),
+              cb,
+              "git: executor file-change",
+              { repoRoot, filePath, executor: executor.id },
+              log,
+            ),
+        ],
+        () => executorFileChangeWatchers.delete(key),
+        "git: executor file-change",
+        { repoRoot, filePath, executor: executor.id },
+        log,
+      );
+      executorFileChangeWatchers.set(key, entry);
+    }
+    return entry.subscribe(onChange);
   }
 
   const key = `${repoRoot}\x00${filePath}`;
@@ -186,7 +220,7 @@ export function subscribeFileChange(
   return entry.subscribe(onChange);
 }
 
-function subscribeExecutorChange(
+function watchExecutorRoot(
   executor: Executor,
   root: string,
   accepts: (relPath: string) => boolean,
@@ -195,21 +229,12 @@ function subscribeExecutorChange(
   logFields: Record<string, unknown>,
   log?: Logger,
 ): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let handle: { stop(): void } | null = null;
   let stopped = false;
 
   const tick = (relPath: string): void => {
     if (!accepts(relPath)) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      timer = undefined;
-      try {
-        onChange();
-      } catch (err) {
-        log?.error({ err, ...logFields }, `${logLabel} listener threw`);
-      }
-    }, WATCHER_DEBOUNCE_MS);
+    onChange();
   };
 
   void executor
@@ -217,7 +242,6 @@ function subscribeExecutorChange(
     .then((h) => {
       if (stopped) h.stop();
       else handle = h;
-      log?.info(logFields, `${logLabel} watcher installed`);
     })
     .catch((err) =>
       log?.warn({ err, ...logFields }, `${logLabel} watch install failed`),
@@ -225,20 +249,18 @@ function subscribeExecutorChange(
 
   return () => {
     stopped = true;
-    if (timer) clearTimeout(timer);
     handle?.stop();
-    log?.info(logFields, `${logLabel} watcher retired`);
   };
 }
 
 /** Test-only — number of distinct (repoRoot) entries holding active
  *  shared `subscribeRepoChange` listener sets. */
 export function _sharedRepoChangeCount(): number {
-  return repoChangeWatchers.size;
+  return repoChangeWatchers.size + executorRepoChangeWatchers.size;
 }
 
 /** Test-only — number of distinct (repoRoot, filePath) entries holding
  *  active shared `subscribeFileChange` listener sets. */
 export function _sharedFileChangeCount(): number {
-  return fileChangeWatchers.size;
+  return fileChangeWatchers.size + executorFileChangeWatchers.size;
 }
