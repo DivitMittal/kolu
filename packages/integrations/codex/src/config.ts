@@ -48,6 +48,18 @@ export async function resolveCodexDirs(
   executor: Executor,
   log?: Logger,
 ): Promise<CodexDirs> {
+  // Controller-local env overrides. These are process-scoped so they
+  // only make sense against the controller's own filesystem; honor them
+  // when we're going through `localExecutor` (which is the only
+  // executor whose backend can see this process's environment). Remote
+  // hosts get their own HOME via printenv below.
+  if (process.env.KOLU_CODEX_DIR || process.env.KOLU_CODEX_DB) {
+    const dir = process.env.KOLU_CODEX_DIR ?? null;
+    const dbPath =
+      process.env.KOLU_CODEX_DB ?? (dir ? findCodexStateDbPath(dir) : null);
+    return { dir, dbPath, walPath: dbPath ? `${dbPath}-wal` : null };
+  }
+
   // KOLU_CODEX_DB pins the DB path for tests + dev. When set, it wins
   // regardless of executor — preserving the legacy behavior of the
   // `CODEX_DB_PATH` constant below. The corresponding dir is still

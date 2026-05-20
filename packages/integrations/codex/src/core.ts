@@ -267,8 +267,9 @@ export function openDb(log?: Logger): DatabaseSync | null {
  *  the right slice from disk without us tracking file size + offset by
  *  hand. On both local (`execFile`) and remote (helper exec) backends
  *  this is one RPC. Returns null on hard read error (logged at
- *  `debug`). The first line of the result is dropped — `tail -c` cuts
- *  on bytes, not lines, so the leading line is likely partial. */
+ *  `debug`). The first line is dropped *only* when the cut actually
+ *  sliced mid-file — for small files where stdout fits inside the
+ *  window, the leading line is a real first record and is preserved. */
 export async function readRolloutTail(
   rolloutPath: string,
   maxBytes: number,
@@ -289,10 +290,11 @@ export async function readRolloutTail(
       return null;
     }
     const all = r.stdout.split("\n");
+    const slicedMidLine =
+      Buffer.byteLength(r.stdout, "utf-8") >= maxBytes && all.length > 1;
+    const startIdx = slicedMidLine ? 1 : 0;
     const lines: string[] = [];
-    // Skip the first element — likely partial because `tail -c` cuts on
-    // bytes — and drop empty trailing entries from the trailing newline.
-    for (let i = 1; i < all.length; i++) {
+    for (let i = startIdx; i < all.length; i++) {
       const l = all[i];
       if (l && l.length > 0) lines.push(l);
     }
