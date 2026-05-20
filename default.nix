@@ -155,7 +155,22 @@ let
       --set KOLU_CLIENT_DIST "${koluStamped}/packages/client/dist" \
       --set KOLU_GH_BIN "${koluEnv.KOLU_GH_BIN}" \
       --set KOLU_HELPER_STORE_PATH "${kolu-helper}" \
-      --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs pkgs.git pkgs.gh pkgs.nix pkgs.openssh ]} \
+      --prefix PATH : ${pkgs.lib.makeBinPath [
+        pkgs.nodejs
+        pkgs.git
+        pkgs.gh
+        pkgs.nix
+        pkgs.openssh
+        # `executor.exec` shells out to `printenv` (HOME lookup), `tail -c`
+        # (JSONL tails for claude-code + codex), `sh -c` + `ls` (codex DB
+        # enumeration), `readlink -f` (worktree path canonicalization).
+        # Without coreutils + bash on PATH these all silently fail with
+        # ENOENT → `exitCode: null` → providers return null and agent
+        # detection is dead in the production wrapper. E2E inherits the
+        # dev-shell PATH so the regression hides until the user deploys.
+        pkgs.coreutils
+        pkgs.bash
+      ]} \
       --run 'if [ -n "''${KOLU_DIAG_DIR:-}" ]; then
                KOLU_DIAG_DIR="$KOLU_DIAG_DIR/$(date +%Y%m%dT%H%M%S)-$$"
                if ! mkdir -p "$KOLU_DIAG_DIR" || ! cd "$KOLU_DIAG_DIR"; then
@@ -200,7 +215,18 @@ let
     mkdir -p $out/bin
     makeWrapper ${pkgs.tsx}/bin/tsx $out/bin/kolu-helper \
       --add-flags "${koluStamped}/packages/helper/src/index.ts" \
-      --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs pkgs.gh pkgs.git ]}
+      --prefix PATH : ${pkgs.lib.makeBinPath [
+        pkgs.nodejs
+        pkgs.gh
+        pkgs.git
+        # The helper IS the executor for remote terminals — same
+        # coreutils/bash dependency as the controller (printenv, tail,
+        # sh -c, ls, readlink -f). Without these, remote agent detection
+        # silently breaks on cross-host kolu just like local agent
+        # detection did on the production controller wrapper.
+        pkgs.coreutils
+        pkgs.bash
+      ]}
   '';
 in
 {

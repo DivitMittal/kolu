@@ -31,6 +31,7 @@ import { initSessionAutoSave } from "./session.ts";
 import { configureNixShellEnv } from "./shell.ts";
 import { getTerminal } from "./terminal-registry.ts";
 import { snapshotSession } from "./terminals.ts";
+import { probeExecutorTools } from "./runtimeToolProbe.ts";
 import { resolveTlsOptions } from "./tls.ts";
 
 const argv = cli({
@@ -81,6 +82,11 @@ ensureKoluRoot();
 initHosts();
 initSessionAutoSave(snapshotSession);
 if (argv.flags.verbose) log.level = "debug";
+// Fire-and-forget: surfaces missing coreutils/bash on the wrapper PATH so
+// the production-deploy regression where `executor.exec("printenv", …)`
+// returns ENOENT and agent detection silently breaks fails loudly on
+// boot. Doesn't block listen.
+void probeExecutorTools(log);
 
 const app = new Hono();
 

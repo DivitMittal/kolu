@@ -82,6 +82,22 @@ if ! node -e '
 fi
 echo "/api/health returned 200"
 
+# Assert the runtime tool probe succeeded. The production wrapper must
+# carry coreutils + bash on PATH or every `executor.exec(...)` call fails
+# with ENOENT and agent detection silently breaks (this regression slipped
+# past e2e because tests run via `tsx` and inherit the dev-shell PATH).
+if grep -q "executor tools missing" "$log"; then
+    echo "executor tools missing on the wrapper PATH — agent detection would be broken" >&2
+    grep -A 5 "executor tools missing" "$log" >&2
+    exit 1
+fi
+if ! grep -q "executor tools ready" "$log"; then
+    echo "executor tools probe didn't log a verdict — the probe may not have run" >&2
+    cat "$log" >&2
+    exit 1
+fi
+echo "executor tools probe: ready"
+
 # Graceful shutdown: SIGTERM, expect exit 0.
 kill -TERM "$pid"
 ec=0
