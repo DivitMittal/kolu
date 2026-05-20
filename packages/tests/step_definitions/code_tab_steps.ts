@@ -1,4 +1,5 @@
 import { Given, Then, When } from "@cucumber/cucumber";
+import { waitForBufferContains } from "../support/buffer.ts";
 import { pollFor } from "../support/poll.ts";
 import { type KoluWorld, POLL_TIMEOUT } from "../support/world.ts";
 
@@ -601,6 +602,7 @@ Then(
 type CodeTabMode = "local" | "branch" | "browse";
 
 const MODE_TMP_COUNTER: { n: number } = { n: 0 };
+const RUN_SHELL_COUNTER: { n: number } = { n: 0 };
 function modeFixturePaths(mode: CodeTabMode): { work: string; origin: string } {
   // Fresh per-scenario directories so Examples rows don't collide.
   MODE_TMP_COUNTER.n += 1;
@@ -616,7 +618,23 @@ async function runShell(world: KoluWorld, cmd: string) {
   // step at terminal_steps.ts:30. The polymorphic mode-setup steps
   // compose several of these in sequence so authors of new outlines
   // don't have to interleave shell setup steps explicitly.
-  await world.terminalRun(cmd);
+  RUN_SHELL_COUNTER.n += 1;
+  const marker = `__kolu_codetab_done_${Date.now()}_${RUN_SHELL_COUNTER.n}__`;
+  const statusVar = "__kolu_codetab_status";
+  await world.terminalRun(
+    `${statusVar}=0; ${cmd} || ${statusVar}=$?; printf '\\n%s:%s\\n' ${shellQuote(marker)} "$${statusVar}"`,
+  );
+  const buffer = await waitForBufferContains(world.page, `${marker}:`);
+  const status = buffer
+    .split("\n")
+    .find((line) => line.includes(`${marker}:`))
+    ?.split(`${marker}:`)[1]
+    ?.match(/^\d+/)?.[0];
+  if (status !== "0") {
+    throw new Error(
+      `Code tab fixture command failed (${status ?? "unknown"}): ${cmd}`,
+    );
+  }
   await world.waitForFrame();
 }
 
