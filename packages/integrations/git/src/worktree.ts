@@ -11,19 +11,7 @@ import path from "node:path";
 import { type Executor, localExecutor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { err, type GitResult, ok } from "./errors.ts";
-
-/** Run git via the executor and return stdout. Throws on non-zero exit. */
-async function gitOutput(
-  executor: Executor,
-  cwd: string,
-  args: string[],
-): Promise<string> {
-  const result = await executor.exec("git", args, { cwd });
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr.trim() || `git exited ${result.exitCode}`);
-  }
-  return result.stdout;
-}
+import { gitOutput } from "./git-exec.ts";
 
 /** Existence probe via {@link Executor.statMtimeMs} — rejects when the
  *  path does not exist, so a failed call means "absent". */

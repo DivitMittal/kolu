@@ -22,6 +22,7 @@
 import { type Executor, localExecutor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { err, type GitResult, ok } from "./errors.ts";
+import { gitOutput as gitExec } from "./git-exec.ts";
 import { resolveUnder } from "./safe-path.ts";
 import {
   type GitBaseRef,
@@ -41,24 +42,14 @@ function toChangeStatus(letter: string): GitChangeStatus {
   return parsed.success ? parsed.data : "?";
 }
 
-/** Run git via the executor and return stdout.
- *
+/** review.ts uses the `allowExitOne` variant of {@link gitExec} because
  *  `git diff --no-index` exits 1 when paths differ — that's its
- *  successful signal, not an error. Treat exit-1-with-stdout as success
- *  so callers don't have to special-case the diff path. */
-async function gitOutput(
+ *  successful signal, not an error. */
+const gitOutput = (
   executor: Executor,
   cwd: string,
   args: string[],
-): Promise<string> {
-  const result = await executor.exec("git", args, {
-    cwd,
-    maxBytes: 128 * 1024 * 1024,
-  });
-  if (result.exitCode === 0) return result.stdout;
-  if (result.exitCode === 1 && result.stdout.length > 0) return result.stdout;
-  throw new Error(result.stderr.trim() || `git exited ${result.exitCode}`);
-}
+): Promise<string> => gitExec(executor, cwd, args, { allowExitOne: true });
 
 /** Resolve the base ref for branch mode: `origin/<defaultBranch>` and the
  *  merge-base SHA between it and HEAD. */

@@ -14,6 +14,7 @@ import { type Executor, localExecutor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { watchCwdForGitDir } from "./cwd-git-watcher.ts";
 import { err, type GitResult, ok } from "./errors.ts";
+import { gitOutput } from "./git-exec.ts";
 import { watchGitHead } from "./head-watcher.ts";
 import type { GitInfo } from "./schemas.ts";
 
@@ -25,19 +26,6 @@ export function hasGitDir(cwd: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Run git via the executor and return stdout. Throws on non-zero exit. */
-async function gitOutput(
-  executor: Executor,
-  cwd: string,
-  args: string[],
-): Promise<string> {
-  const result = await executor.exec("git", args, { cwd });
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr.trim() || `git exited ${result.exitCode}`);
-  }
-  return result.stdout;
 }
 
 /** Canonicalize a path via the executor's `readlink -f` — matches
