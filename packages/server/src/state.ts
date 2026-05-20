@@ -410,9 +410,13 @@ export const store = new Conf<PersistedState>({
       })) as typeof session.terminals;
       store.set("session", { ...session, terminals });
     },
-    // SavedTerminal.hostId added for remote terminals. Optional, so legacy
-    // local terminals need no value transformation; bump recorded for the
-    // migration ladder.
+    // SavedTerminal.hostId added for remote terminals and SavedTerminal.intent
+    // added for optional multiline-markdown annotations. Optional fields need
+    // no backfill; absent values continue to read as unset. themeName was also
+    // tightened from `.optional()` to `.min(1).optional()` in the same schema
+    // bump; legacy sessions that had `themeName: ""` would now fail
+    // validation, but no path produced that shape — the theme setter always
+    // wrote a non-empty value or omitted the key.
     "1.22.0": () => {},
   },
 });

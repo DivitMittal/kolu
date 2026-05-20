@@ -136,6 +136,7 @@ export function useTerminalCrud(deps: {
         canvasLayout: initial?.canvasLayout,
         subPanel: initial?.subPanel,
         lastActivityAt: initial?.lastActivityAt,
+        intent: initial?.intent,
       });
       if (hostId) {
         toast.success(`Connected to SSH host ${hostId}`, {

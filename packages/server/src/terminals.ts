@@ -162,6 +162,7 @@ export async function createTerminal(
   if (initial?.subPanel) meta.subPanel = initial.subPanel;
   if (initial?.lastActivityAt !== undefined)
     meta.lastActivityAt = initial.lastActivityAt;
+  if (initial?.intent) meta.intent = initial.intent;
   const entry: TerminalProcess = {
     info: { id, pid: handle.pid },
     meta,
@@ -270,6 +271,16 @@ export function setTerminalTheme(id: TerminalId, themeName: string): void {
       m.themeName = themeName;
     });
   }
+}
+
+/** Set or clear a terminal's freeform intent annotation. Empty string clears. */
+export function setTerminalIntent(id: TerminalId, intent: string): void {
+  const entry = getTerminal(id);
+  if (!entry) return;
+  const next = intent.length > 0 ? intent : undefined;
+  updateClientMetadata(entry, id, (m) => {
+    m.intent = next;
+  });
 }
 
 /** Kill and remove all terminals. Used by tests to reset server state between scenarios. */

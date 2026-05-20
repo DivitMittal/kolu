@@ -17,7 +17,7 @@ import {
   on,
   Show,
 } from "solid-js";
-import { Toaster } from "solid-sonner";
+import { toast, Toaster } from "solid-sonner";
 import { match } from "ts-pattern";
 import ChromeBar from "./ChromeBar";
 import CloseConfirm, { type CloseConfirmTarget } from "./CloseConfirm";
@@ -32,6 +32,8 @@ import TerminalCanvas from "./canvas/TerminalCanvas";
 import TileTitleActions from "./canvas/TileTitleActions";
 import { createCommands } from "./commands";
 import DiagnosticInfo from "./DiagnosticInfo";
+import IntentEditorDialog from "./intent/IntentEditorDialog";
+import { useIntentEditor } from "./intent/useIntentEditor";
 import EmptyState from "./EmptyState";
 import { exportScrollbackAsPdf } from "./exportScrollbackAsPdf";
 import { exportSessionAsHtml } from "./exportSessionAsHtml";
@@ -48,6 +50,7 @@ import { serverProcessId, wsStatus } from "./rpc/rpc";
 import TransportOverlay from "./rpc/TransportOverlay";
 import ShortcutsHelp from "./ShortcutsHelp";
 import { screenshotTerminal } from "./screenshotTerminal";
+import TipBanner from "./settings/TipBanner";
 import { useColorScheme } from "./settings/useColorScheme";
 import { useTips } from "./settings/useTips";
 import { useStaleCheck } from "./terminal/staleness";
@@ -174,6 +177,21 @@ const App: Component = () => {
     if (id) store.activate(id);
   }
 
+  // Intent editor singleton — bound to store accessors + RPC. The dialog
+  // is mounted at the App root; the chip in TerminalMeta and the palette
+  // command both call `intentEditor.openTerminal(id)` to surface it.
+  const intentEditor = useIntentEditor({
+    activeId: store.activeId,
+    getTerminalIntent: (id) => store.getMetadata(id)?.intent,
+    setTerminalIntent: (id, intent) => {
+      void client.terminal
+        .setIntent({ id, intent })
+        .catch((err: Error) =>
+          toast.error(`Failed to save intent: ${err.message}`),
+        );
+    },
+  });
+
   const arrange = useCanvasArrange({
     store,
     crud,
@@ -267,6 +285,7 @@ const App: Component = () => {
     committedThemeName,
     setPreviewThemeName,
     handleSetTheme,
+    handleEditActiveIntent: intentEditor.openActive,
     setAboutOpen,
     setDiagnosticInfoOpen,
     handleCreateWorktree: (repoPath, name, initialCommand) =>
@@ -367,6 +386,7 @@ const App: Component = () => {
       </Show>
       <TransportOverlay />
       <WebcamOverlay />
+      <TipBanner />
       <Toaster
         position="bottom-right"
         theme={colorScheme()}
@@ -542,7 +562,10 @@ const App: Component = () => {
                     }
                     onCreate={() => openPaletteGroup("New terminal")}
                     renderTileTitle={(id) => (
-                      <TerminalMeta info={store.getDisplayInfo(id)} />
+                      <TerminalMeta
+                        info={store.getDisplayInfo(id)}
+                        onOpenIntent={() => intentEditor.openTerminal(id)}
+                      />
                     )}
                     renderTileTitleActions={(id) => (
                       <TileTitleActions
@@ -561,6 +584,15 @@ const App: Component = () => {
           </Show>
         </Show>
       </div>
+      <IntentEditorDialog
+        open={intentEditor.open()}
+        title={intentEditor.title()}
+        value={intentEditor.value()}
+        allowClear={intentEditor.allowClear()}
+        onOpenChange={intentEditor.onOpenChange}
+        onSave={intentEditor.save}
+        onClear={intentEditor.clear}
+      />
     </div>
   );
 };
