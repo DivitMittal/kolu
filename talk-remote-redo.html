@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Remote terminals over SSH — design plan</title>
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --muted: #5a5a5a;
+    --line: #d8d8d8;
+    --bg: #fbfbf9;
+    --hl: #fff6c8;
+    --bad: #b13b3b;
+    --good: #2e7a3a;
+    --code-bg: #f1efe9;
+    --fn-bg: #eef3f6;
+    --fn-border: #7a98ac;
+  }
+  html { background: var(--bg); color: var(--fg); }
+  body {
+    font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 880px;
+    margin: 2rem auto;
+    padding: 0 1.25rem 4rem;
+  }
+  h1 { font-size: 1.55rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .25rem; }
+  h3 { font-size: .92rem; margin: 1.2rem 0 .35rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  p, ul, ol { margin: .5rem 0; }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: .25rem 0; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .cite { color: var(--muted); font-size: 11.5px; }
+  .cite code { background: transparent; padding: 0; }
+  .tldr {
+    background: var(--hl);
+    border-left: 3px solid #d0a800;
+    padding: .75rem 1rem;
+    margin: 1rem 0 1.5rem;
+    border-radius: 0 4px 4px 0;
+  }
+  table { border-collapse: collapse; width: 100%; margin: .5rem 0; font-size: 13px; }
+  th, td { text-align: left; padding: .4rem .55rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #f3f1ea; font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .diagram {
+    background: #fff;
+    border: 1px solid var(--line);
+    padding: .85rem 1rem;
+    border-radius: 5px;
+    font: 12.5px/1.5 ui-monospace, Menlo, monospace;
+    white-space: pre;
+    overflow-x: auto;
+    margin: .6rem 0;
+  }
+  .verdict { font-weight: 600; }
+  .verdict.good { color: var(--good); }
+  .verdict.bad { color: var(--bad); }
+  .check { color: var(--good); font-weight: 600; }
+  .cross { color: var(--bad); font-weight: 600; }
+  .footnote {
+    background: var(--fn-bg);
+    border-left: 3px solid var(--fn-border);
+    padding: .45rem .7rem;
+    margin: .5rem 0;
+    font-size: 12.5px;
+    border-radius: 0 4px 4px 0;
+    color: #2c4a5c;
+  }
+  .footnote .label {
+    display: inline-block;
+    font-weight: 600;
+    color: var(--fn-border);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-size: 10.5px;
+    margin-right: .35rem;
+  }
+  .new-pkg { background: #fff4dc; }
+  .new-dir { background: #e8f1e0; }
+  .modified  { background: #f3f3f3; }
+  .refactor { background: #e6f0fa; }
+</style>
+</head>
+<body>
+
+<h1>Remote terminals over SSH — design plan</h1>
+<p class="cite">Starting point: <code>master</code> @ <code>b8c955b2</code>. Goal: a new terminal in Kolu can run its PTY on any host in your <code>~/.ssh/config</code>, with branch chip / agent badge / Code-tab parity to local terminals; SSH drops survive via a daemon on the remote side. Plan is captured end-to-end — no deferred follow-ups. Reviewed through Hickey + Lowy; numbers verified against master.</p>
+
+<div class="tldr">
+<strong>TL;DR.</strong> Two standalone refactor PRs (R1, R2) land first to master — each delivers value independent of the remote-terminal feature. They extract two existing master primitives into library-shaped packages. Then eight feature phases (F1-F8) build the remote-terminal capability on the cleaner base. <strong>Every refactor is in the plan, none deferred.</strong> Each refactor PR landing makes the rest of the plan smaller and structurally cleaner.
+</div>
+
+<h2>Standalone refactor PRs — land first</h2>
+
+<p>These two refactors deliver value to <code>master</code> independent of any remote-terminal context. Each is small, pure-refactor, reviewable on its own merits. Filed as separate GitHub issues so they can land independently.</p>
+
+<table>
+  <thead><tr><th>PR</th><th>Issue</th><th>What it extracts</th><th>From</th><th>To</th><th>Size</th></tr></thead>
+  <tbody>
+    <tr class="refactor">
+      <td><strong>R1</strong> <span class="check">✓ merged</span></td>
+      <td><a href="https://github.com/juspay/kolu/issues/942">#942</a> · <a href="https://github.com/juspay/kolu/pull/944">PR #944</a></td>
+      <td><code>shared-dir-filename-watcher.ts</code> — described in its own header as "Generic refcounted shared <code>fs.watch</code> watcher keyed by directory."</td>
+      <td><code>packages/integrations/git/src/</code></td>
+      <td>New <code>packages/integrations/io/</code></td>
+      <td class="num">+144/−26 <span class="cite">(actual)</span></td>
+    </tr>
+    <tr class="refactor">
+      <td><strong>R2</strong></td>
+      <td><a href="https://github.com/juspay/kolu/issues/943">#943</a></td>
+      <td><code>pty.ts</code> (241 lines: <code>spawnPty</code>, <code>getScreenText</code>, <code>PtyHandle</code>) + <code>shell.ts</code> (326 lines: OSC injection functions, rcfile builder). The <code>koluShellDir</code> coupling parameterised away — caller passes rc-file directory.</td>
+      <td><code>packages/server/src/</code></td>
+      <td>New <code>packages/integrations/pty/</code></td>
+      <td class="num">~+650/−570</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Why these stand on their own merits</h3>
+
+<ul>
+  <li><strong>R1's target file is already labeled generic.</strong> Verified: <code>shared-dir-filename-watcher.ts:1-15</code> says verbatim "Generic refcounted shared <code>fs.watch</code> watcher keyed by directory." A generic primitive living inside a git integration is the wrong home regardless of whether we ship remote terminals.</li>
+  <li><strong>R2's target files have no kolu-specific logic.</strong> Verified by reading <code>pty.ts</code> + <code>shell.ts</code>: <code>spawnPty</code> wraps node-pty, <code>getScreenText</code> wraps xterm-headless, <code>OSC7_FN</code>/<code>OSC2_PREEXEC_FN</code> emit standard sequences. Only kolu-coupling is <code>koluShellDir</code> (path the rcfile writer uses) — eliminable via parameter.</li>
+  <li><strong>Each refactor reduces the surface of the feature plan that follows.</strong> Once <code>integrations/io/</code> exists (R1), F1 just <em>extends</em> it rather than creating it from scratch. Once <code>integrations/pty/</code> exists (R2), the question "where do host implementations live?" has a clean answer — <code>integrations/host/</code> can be its own package because the deps it needs are public.</li>
+</ul>
+
+<div class="footnote"><span class="label">PR #929 note</span> PR #929 lifts the OSC parsing concern into a new <code>osc-parser.ts</code> (102 lines, new code). On master that file doesn't exist — OSC parsing is implicit inside <code>pty.ts</code>'s xterm-headless usage. The OSC parser is needed for the remote-PTY path (parsing bytes streamed back over RPC) but isn't part of R2's pure-refactor scope; it's new code that lands as part of <code>integrations/pty/</code> in F5 alongside <code>RemoteHost</code>.</div>
+
+<h2>How master gets simpler as refactors land</h2>
+
+<table>
+  <thead><tr><th>State</th><th>Master after this PR</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Today</strong></td>
+      <td>Generic primitives buried inside feature packages. <code>shared-dir-filename-watcher.ts</code> lives in <code>kolu-git</code>. <code>pty.ts</code> + <code>shell.ts</code> live in <code>kolu-server</code>. No <code>integrations/io/</code>; no <code>integrations/pty/</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>After R1</strong></td>
+      <td><code>integrations/io/</code> exists as a package owning the refcounted dir-watcher. <code>kolu-git</code>'s watchers import it. One existing concept moved to its proper home.</td>
+    </tr>
+    <tr>
+      <td><strong>After R2</strong></td>
+      <td><code>integrations/pty/</code> exists owning <code>PtyHandle</code>, <code>spawnPty</code>, <code>getScreenText</code>, OSC injection rcfile builder. <code>kolu-server</code>'s existing PTY consumers (<code>terminals.ts</code>, <code>terminal-registry.ts</code>) import from there. PTY handling is now library-shaped.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>After R1 + R2 land, the remote-terminal feature plan (F1-F8 below) starts from a base where every package boundary it needs already exists.</strong> No new top-level packages get created inside feature PRs — only new files inside the already-extracted homes, plus two more new packages (<code>integrations/host/</code>, <code>integrations/remote/</code>) that don't conflict with anything in master.</p>
+
+<h2>Package overview (after all phases land)</h2>
+
+<table>
+  <thead><tr><th>Package / directory</th><th>Status</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr class="new-pkg">
+      <td><code>packages/integrations/io/</code></td>
+      <td>NEW pkg (R1 + F1)</td>
+      <td>Generic IO primitives. R1 lands the refcounted dir-watcher. F1 adds <code>Executor</code> interface, <code>localExecutor</code>, and <code>Host</code> interface (extends Executor). Library-shaped: zero kolu-specific imports.</td>
+    </tr>
+    <tr class="new-pkg">
+      <td><code>packages/integrations/pty/</code></td>
+      <td>NEW pkg (R2 + F5)</td>
+      <td>PTY primitives. R2 lands <code>PtyHandle</code>, <code>spawnPty</code>, <code>getScreenText</code>, OSC injection rcfile builder. F5 adds the byte-stream OSC parser (new code for RemoteHost's needs). Library-shaped.</td>
+    </tr>
+    <tr class="new-pkg">
+      <td><code>packages/integrations/host/</code></td>
+      <td>NEW pkg (F4-F5)</td>
+      <td>Host implementations + registry. <code>LocalHost</code> (uses <code>integrations/pty/</code>'s <code>spawnPty</code> + <code>integrations/io/</code>'s refcounted watch + <code>localExecutor</code>). <code>RemoteHost</code> (uses <code>integrations/remote/</code>'s RPC client + <code>integrations/pty/</code>'s OSC parser). Lives outside server because its deps are now public.</td>
+    </tr>
+    <tr class="new-pkg">
+      <td><code>packages/integrations/remote/</code></td>
+      <td>NEW pkg (F5 + F7)</td>
+      <td>SSH-backed remote transport. F5 lands the helper daemon binary (<code>kolu-remote-server</code>), wire-protocol Zod schemas, JSON-RPC client over SSH stdio, <code>~/.ssh/config</code> parser. F7 adds daemon mode + ring buffer + reconnect-replay. Library-shaped.</td>
+    </tr>
+    <tr class="modified">
+      <td><code>packages/integrations/git/</code></td>
+      <td>MODIFIED (R1 + F2)</td>
+      <td>R1: existing watchers import refcounted primitive from <code>io/</code>. F2: public functions gain optional <code>executor?: Executor = localExecutor</code>, drop <code>simple-git</code>, switch to <code>executor.exec("git", …)</code>.</td>
+    </tr>
+    <tr class="modified">
+      <td><code>packages/integrations/anyagent/</code></td>
+      <td>MODIFIED (F3)</td>
+      <td>The shared <code>AgentProvider</code> contract gains <code>executor</code> param on IO-bearing methods. Imports <code>Executor</code> from <code>io/</code> directly.</td>
+    </tr>
+    <tr class="modified">
+      <td><code>packages/integrations/{claude-code,opencode,codex}/</code></td>
+      <td>MODIFIED (F3, 3 PRs)</td>
+      <td>Provider impls switch from direct <code>fs.*</code> / <code>node:sqlite</code> / <code>fs.watch</code> to <code>await executor.*</code>. Default <code>localExecutor</code> preserves behaviour.</td>
+    </tr>
+    <tr class="modified">
+      <td><code>packages/server/</code></td>
+      <td>MODIFIED (R2 + F4-F6)</td>
+      <td>R2: <code>terminals.ts</code> / <code>terminal-registry.ts</code> / etc. update PTY imports to <code>integrations/pty/</code>. F4: <code>terminals.ts</code> calls <code>host.spawnPty()</code> via <code>integrations/host/</code>'s registry. F5: <code>host.list</code> RPC. F6: <code>meta/git.ts</code> + <code>meta/agent.ts</code> pick executor per-terminal.</td>
+    </tr>
+    <tr class="modified">
+      <td><code>packages/common/</code></td>
+      <td>MODIFIED (F4-F5)</td>
+      <td>RPC contract adds <code>HostSummary</code>, <code>host.list</code>, <code>hostId</code> on <code>TerminalCreateInput</code>. Persisted-metadata schema bumps for <code>hostId</code> default.</td>
+    </tr>
+    <tr class="modified">
+      <td><code>packages/client/</code></td>
+      <td>MODIFIED (F5, F8)</td>
+      <td>F5: host axis in "New terminal" palette + <code>hostId</code> threading. F8: SSH chip, "Connecting…" placeholder, eager tile rendering.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Legend (used to colour-code rows above and phase rows below)</h3>
+<table>
+  <tbody>
+    <tr><td><span class="refactor" style="padding:0 .35rem;">refactor PR</span></td><td>Pure refactor; no functional change; stands on its own.</td></tr>
+    <tr><td><span class="new-pkg" style="padding:0 .35rem;">new package</span></td><td>Created from scratch — no precedent in <code>master</code>.</td></tr>
+    <tr><td><span class="new-dir" style="padding:0 .35rem;">new subdir</span></td><td>New directory inside an existing package.</td></tr>
+    <tr><td><span class="modified" style="padding:0 .35rem;">modified</span></td><td>Existing files gain optional <code>executor?</code> param or update import paths; no logic change.</td></tr>
+  </tbody>
+</table>
+
+<h2>What we're building (the user-visible feature)</h2>
+
+<ul>
+  <li>"New terminal" palette can target a remote host from <code>~/.ssh/config</code>. The PTY runs there; bytes flow over SSH.</li>
+  <li>Branch chip, worktree create/remove, Code-tab file read all reflect the remote machine's state.</li>
+  <li>Agent badges (Claude Code, Codex, OpenCode) detect and live-update against the agent process running remotely.</li>
+  <li>Helper survives SSH drops: PTYs and their scrollback live in a daemon; reconnect replays missed output.</li>
+  <li>Terminal metadata persists <code>hostId</code>; session restore re-spawns on the original host. Sub-terminals inherit the parent's host.</li>
+</ul>
+
+<h2>Target package layout (after all phases)</h2>
+
+<div class="diagram">┌─ packages/integrations/io/  ──────────────────┐    NEW (R1 + F1)
+│  src/refcounted-dir-watcher.ts  (R1)          │    Library-shaped:
+│  src/executor.ts                (F1)          │    zero kolu deps.
+│    Executor interface, localExecutor          │
+│  src/host.ts                    (F1)          │
+│    Host interface extends Executor            │
+└────────────────────┬──────────────────────────┘
+                     │
+       ┌─────────────┼─────────────┬─────────────────┐
+       ▼             ▼             ▼                 ▼
+┌─ pty/  (R2+F5)─┐  ┌─ git ─┐  ┌─ anyagent ─┐  ┌─ host/ (F4+F5) ─┐
+│ PtyHandle      │  │ exec  │  │ Executor   │  │  LocalHost      │
+│ spawnPty       │  │ param │  │ in iface   │  │  RemoteHost     │
+│ getScreenText  │  └───────┘  ├─ claude-c  │  │  registry       │
+│ shell rcfile   │             ├─ opencode  │  └────┬────────────┘
+│ osc-parser(F5) │             └─ codex     │       │
+└────┬───────────┘                                  │
+     │                                              ▼
+     │                                ┌─ remote/ (F5+F7) ────┐
+     │                                │  bin/kolu-remote-server     │
+     │                                │  src/protocol.ts     │
+     │                                │  src/rpc-client.ts   │
+     │                                │  src/ssh-config.ts   │
+     │                                │  src/ring-buffer.ts  │
+     │                                └──────────────────────┘
+     ▼
+┌─ packages/server/  ─┐    MODIFIED throughout — terminal lifecycle
+│   terminals.ts      │    + meta orchestrator + RPC contract.
+│   meta/{git,agent}  │    Stops owning pty.ts / shell.ts (R2),
+│   router.ts         │    delegates host abstraction to integrations/host/.
+└─────────────────────┘</div>
+
+<h2>How kolu-specific are the new packages?</h2>
+
+<p>Boundary discipline check (verified by reading PR #929's equivalent files):</p>
+
+<table>
+  <thead><tr><th>Package</th><th>Kolu-specific?</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>integrations/io/</code></td><td><span class="check">No</span></td><td>Refcounted dir-watcher + Executor + Host interface. Only deps: node stdlib. Could be a standalone npm library.</td></tr>
+    <tr><td><code>integrations/pty/</code></td><td><span class="check">No</span></td><td>Wraps node-pty, xterm-headless. OSC sequences are standardized. rc-file directory is a parameter, not a hardcoded path. Could be a standalone npm library.</td></tr>
+    <tr><td><code>integrations/host/</code></td><td>Minimal</td><td>The branding (host registry's <code>"local"</code> sentinel) is incidental. Implementations are just glue between <code>io/</code>, <code>pty/</code>, and <code>remote/</code>. Could be standalone.</td></tr>
+    <tr><td><code>integrations/remote/</code></td><td>Branding only</td><td>Remote-side binary named <code>kolu-remote-server</code> (mirrors Zed's <code>zed-remote-server</code>; VSCode uses <code>code-server</code>), data dir <code>~/.kolu-remote-server/</code> — two top-of-file constants. Functional surface is generic "remote IO + PTY over SSH-stdio JSON-RPC."</td></tr>
+  </tbody>
+</table>
+
+<p><strong>All four new packages have zero imports from <code>kolu-shared</code>, <code>kolu-common</code>, or any kolu-named package.</strong> Logger handled via a structural interface or pino directly. Constants inline.</p>
+
+<h2>The <code>Executor</code> abstraction (added in F1)</h2>
+
+<div class="diagram">// packages/integrations/io/src/executor.ts
+
+export interface ExecResult { stdout: string; stderr: string; exitCode: number | null; }
+export interface WatchHandle { stop(): void; }
+
+export interface Executor {
+  exec(cmd: string, args: string[], opts?: { cwd?: string; timeoutMs?: number; maxBytes?: number; })
+    : Promise&lt;ExecResult&gt;;
+  readFile(path: string, opts?: { maxBytes?: number; })
+    : Promise&lt;{ content: string; truncated: boolean }&gt;;
+  statMtimeMs(path: string): Promise&lt;number&gt;;
+  watch(path: string, onChange: (rel: string) =&gt; void, opts?: { recursive?: boolean; })
+    : Promise&lt;WatchHandle&gt;;
+  queryDb?(path: string, sql: string, params?: ReadonlyArray&lt;string|number|null&gt;)
+    : Promise&lt;Array&lt;Record&lt;string, unknown&gt;&gt;&gt;;
+}
+
+export const localExecutor: Executor = { /* execFile + fs + node:sqlite */ };</div>
+
+<h2>The <code>Host</code> abstraction (added in F1)</h2>
+
+<div class="diagram">// packages/integrations/io/src/host.ts
+
+import type { Executor } from "./executor.ts";
+import type { PtyHandle, SpawnPtyOpts } from "kolu-integrations-pty";
+
+export interface Host extends Executor {           // ← extends, not duplicates
+  readonly id: string;                             // "local" | SSH alias
+  readonly label: string;
+  readonly kind: "local" | "remote-ssh";
+  spawnPty(log: Logger, opts: SpawnPtyOpts): Promise&lt;PtyHandle&gt;;
+  shutdown(): Promise&lt;void&gt;;
+}</div>
+
+<p><code>PtyHandle</code> comes from <code>integrations/pty/</code> (extracted in R2). Logger type is a structural interface (<code>{ info, debug, warn, error, child }</code>) — no kolu import.</p>
+
+<h2>Feature phasing (F1-F8, after R1 + R2 land)</h2>
+
+<table>
+  <thead><tr><th>Phase</th><th>Scope</th><th>Functional change?</th><th>Size</th><th>Files</th></tr></thead>
+  <tbody>
+    <tr class="modified">
+      <td><strong>F1</strong></td>
+      <td>Extend <code>integrations/io/</code> (created by R1) with <code>Executor</code> interface + <code>localExecutor</code> + <code>Host</code> interface. No new consumers yet.</td>
+      <td class="check">None — additions not imported anywhere</td>
+      <td class="num">~+250</td>
+      <td>3 new files inside existing pkg</td>
+    </tr>
+    <tr class="modified">
+      <td><strong>F2</strong></td>
+      <td>Refactor <code>kolu-git</code> public functions to take <code>executor?: Executor = localExecutor</code>. Drop <code>simple-git</code>; switch git invocations to <code>executor.exec("git", …)</code>. Switch bare <code>fs.*</code> to <code>executor.*</code>.</td>
+      <td class="check">None — default preserves behaviour</td>
+      <td class="num">~+700/−590</td>
+      <td>6 modified</td>
+    </tr>
+    <tr class="modified">
+      <td><strong>F3</strong><br><span class="cite">3 PRs</span></td>
+      <td>Refactor agent providers: <code>AgentProvider</code> contract in <code>anyagent</code> gains <code>executor</code> param. Each of claude-code / codex / opencode rewrites <code>core.ts</code> + <code>session-watcher.ts</code> to <code>await executor.*</code>.</td>
+      <td class="check">None per PR</td>
+      <td class="num">~+400/−500<br><span class="cite">per provider PR</span></td>
+      <td>~5-7 per PR</td>
+    </tr>
+    <tr class="new-pkg">
+      <td><strong>F4</strong></td>
+      <td>Create <code>packages/integrations/host/</code>: <code>LocalHost</code> (composes <code>localExecutor</code> + <code>integrations/pty/spawnPty</code> + <code>integrations/io/refcounted-dir-watcher</code>), placeholder for <code>RemoteHost</code>, <code>registry</code>. Modify server's <code>terminals.ts</code> to use the registry; <code>createTerminal</code> takes optional <code>hostId</code> defaulting to <code>"local"</code>. Persisted metadata schema bumps to include <code>hostId</code>.</td>
+      <td class="cross">Internal restructure only — UI unchanged</td>
+      <td class="num">~+500 new<br>~+70 modified</td>
+      <td>4 new + 3 modified</td>
+    </tr>
+    <tr class="new-pkg">
+      <td><strong>F5</strong></td>
+      <td>Create <code>packages/integrations/remote/</code> (helper binary, protocol schemas, SSH-stdio RPC client, ssh-config parser). Implement <code>RemoteHost</code> in <code>integrations/host/</code>, plumbing remote PTY bytes through a new byte-stream OSC parser added to <code>integrations/pty/</code>. Wire <code>readSshHosts()</code> into registry. Add <code>host.list</code> RPC + host axis in palette.</td>
+      <td class="check">User-visible: remote PTYs work. No metadata parity yet.</td>
+      <td class="num">~+1,800<br><span class="cite">mostly new pkg</span></td>
+      <td>~10 (8 new in remote/, 2 new in host/+pty/, ~3 modified)</td>
+    </tr>
+    <tr class="modified">
+      <td><strong>F6a-d</strong><br><span class="cite">4 PRs</span></td>
+      <td>Light up metadata for remote, one provider at a time. Each is just: in the relevant <code>meta/*.ts</code> file, pass <code>host</code> as the executor when the terminal is remote. F6b adds the per-<code>(kind, executor)</code> activation registry.</td>
+      <td class="check">Branch chip → claude → opencode → codex, one per PR</td>
+      <td class="num"><strong>~+20-150 per PR</strong></td>
+      <td>1-2 per PR (just <code>meta/</code> files)</td>
+    </tr>
+    <tr class="modified">
+      <td><strong>F7</strong></td>
+      <td>Reliability: helper becomes a daemon (Unix socket, <code>setsid</code>, lock file). Per-PTY ring buffer with sequence numbers. <code>attach(sinceSeq)</code> RPC replays missed output across SSH reconnects. All inside <code>integrations/remote/</code>.</td>
+      <td class="check">SSH-drop resilience</td>
+      <td class="num">~+650</td>
+      <td>2-3, all in <code>integrations/remote/</code></td>
+    </tr>
+    <tr class="modified">
+      <td><strong>F8</strong></td>
+      <td>UX polish: SSH chip on remote tiles, "Connecting to <code>&lt;host&gt;</code>…" placeholder, eager tile rendering.</td>
+      <td class="check">Cosmetic</td>
+      <td class="num">~+200</td>
+      <td>4 in <code>client/</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Two refactor PRs (R1, R2) + eight feature phases split across fourteen feature PRs (F1, F2, F3×3, F4, F5, F6×4, F7, F8). The first six feature PRs (through F4) ship no user-visible change; reviewers verify "tests still pass." The remaining eight each add one visible capability.</p>
+
+<h2>F6 in detail — the per-provider light-up</h2>
+
+<p>F6 is the user-visible "remote terminals now show branch / agent state" work. Each sub-PR is tiny because F2/F3 already taught kolu-git and the agent providers to accept an <code>executor</code>; F6 only adds the orchestrator deciding to pass the host as the executor.</p>
+
+<table>
+  <thead><tr><th>Sub</th><th>Provider</th><th>Where</th><th>Size</th></tr></thead>
+  <tbody>
+    <tr><td>F6a</td><td>kolu-git</td><td><code>meta/git.ts</code></td><td class="num">~+20</td></tr>
+    <tr><td>F6b</td><td>claude-code (adds activation registry)</td><td><code>meta/agent.ts</code></td><td class="num">~+150</td></tr>
+    <tr><td>F6c</td><td>opencode</td><td><code>meta/agent.ts</code> (register opencode)</td><td class="num">~+30</td></tr>
+    <tr><td>F6d</td><td>codex</td><td><code>meta/agent.ts</code> (register codex + WAL <code>externalChanges</code>)</td><td class="num">~+50</td></tr>
+  </tbody>
+</table>
+
+<h3>Per-method audit — which provider methods need <code>executor</code></h3>
+
+<table>
+  <thead><tr><th>Method on <code>AgentProvider</code></th><th>Takes <code>executor</code>?</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><code>resolveSession(state, …)</code></td><td><span class="check">✓</span></td><td>Reads sessions file or queries DB. Per-host IO.</td></tr>
+    <tr><td><code>sessionKey(session)</code></td><td><span class="cross">✗</span></td><td>Pure function over an already-resolved session row.</td></tr>
+    <tr><td><code>createWatcher(session, …)</code></td><td><span class="check">✓</span></td><td>Tails JSONL or polls SQLite.</td></tr>
+    <tr><td><code>externalChanges.isPresent(state, …)</code></td><td><span class="check">✓</span></td><td>Probes whether agent's state dir exists on host fs.</td></tr>
+    <tr><td><code>externalChanges.install(…)</code></td><td><span class="check">✓</span></td><td>Installs the per-executor fan-out watcher.</td></tr>
+  </tbody>
+</table>
+
+<h3>The activation registry (new mechanism in F6b)</h3>
+
+<p>When five terminals on the same SSH host all run codex, we want <em>one</em> WAL watcher per host, not five. The orchestrator keeps a <code>Map&lt;string, Activation&gt;</code> keyed by <code>(provider.kind, executorId)</code> where <code>executorId</code> uses <code>WeakMap&lt;Executor, string&gt;</code> identity. The <code>"local"</code> singleton gets id <code>"local"</code>; each remote <code>Host</code> instance gets <code>"exec#N"</code>. First terminal installs; subsequent terminals join the fan-out set.</p>
+
+<p>~120 of F6b's ~150 lines are the registry itself.</p>
+
+<h3>Cross-host gotchas</h3>
+
+<ul>
+  <li><strong><code>$HOME</code> per executor.</strong> Paths like <code>~/.claude/sessions/</code> are host-relative. Resolve via <code>executor.exec("printenv", ["HOME"])</code> and memoize per-executor.</li>
+  <li><strong>Tilde expansion.</strong> <code>executor.readFile("~/.foo")</code> does NOT expand <code>~</code>. Resolve home first.</li>
+  <li><strong>SQLite WAL across wire.</strong> Helper opens <code>node:sqlite</code> with <code>readOnly: true</code> so concurrent OpenCode/Codex writes don't block.</li>
+  <li><strong>Watch latency.</strong> Local refcounted parcel-watcher: &lt;50 ms. SSH-relayed <code>fs.watch</code>: 200-500 ms.</li>
+  <li><strong>Test-time env overrides.</strong> <code>KOLU_CLAUDE_SESSIONS_DIR</code> only affects controller's local path; remote tests use mock-executor.</li>
+</ul>
+
+<h2>Local path — symmetric with remote, not asymmetric</h2>
+
+<p>After R1 + F4, <code>LocalHost.watch</code> consumes <code>integrations/io/refcounted-dir-watcher</code> directly — the same generic primitive <code>kolu-git</code>'s existing watcher stack uses. Routing local terminals through <code>LocalHost</code> doesn't pessimise relative to the existing master code path; they share the same underlying refcounted machinery.</p>
+
+<p>The "<code>executor?: Executor</code> where <code>undefined</code> = optimised local" pattern from earlier drafts is gone. <code>meta/git.ts</code> always passes the terminal's <code>Host</code> as the executor; local terminals get <code>LocalHost</code> (which uses the refcounted primitive), remote terminals get <code>RemoteHost</code> (which uses <code>executor.watch</code> over RPC). One code path; the routing decision is host identity, not a special-case.</p>
+
+<div class="footnote"><span class="label">PR #929 note</span> PR #929 carries an explicit <code>executor = undefined</code> shortcut at <code>meta/git.ts:37-40</code> to preserve the parcel-watcher fast path for local. That asymmetry exists in PR #929 because PR #929 doesn't extract the refcounted primitive — it stays in kolu-git, only the bare <code>fs.watch</code> ends up in <code>localExecutor</code>. R1 fixes this at the root.</div>
+
+<h2>Why not AsyncLocalStorage?</h2>
+
+<p>Tempting alternative: stash the executor in <code>AsyncLocalStorage</code> at the orchestrator, read it implicitly inside kolu-git / agents. Functions wouldn't need an <code>executor</code> parameter. Rejected — five concrete failure modes:</p>
+
+<div class="diagram">// REJECTED: AsyncLocalStorage executor injection
+import { AsyncLocalStorage } from "node:async_hooks";
+const executorContext = new AsyncLocalStorage&lt;Executor&gt;();
+
+// Orchestrator:
+executorContext.run(host, () =&gt; startProviders(entry));
+
+// kolu-git (unchanged signature):
+export async function detectDefaultBranch(repoPath: string): Promise&lt;string&gt; {
+  const executor = executorContext.getStore() ?? localExecutor;
+  return executor.exec("git", ["symbolic-ref", …], { cwd: repoPath });
+}</div>
+
+<h3>1. Tests silently pass against the wrong executor</h3>
+
+<div class="diagram">test("worktree create on remote", async () =&gt; {
+  const mockExec = vi.fn().mockResolvedValue({ stdout: "main", exitCode: 0 });
+  const mockExecutor: Executor = { exec: mockExec, /* … */ };
+
+  // FORGOT executorContext.run(mockExecutor, …) wrapper
+  const result = await worktreeCreate("/tmp/repo", "feature-a");
+
+  expect(mockExec).toHaveBeenCalled();    // ← FAILS silently
+});</div>
+
+<p>The function ran successfully against <code>localExecutor</code>'s default fallback. With explicit params, the test won't compile without supplying an executor.</p>
+
+<h3>2. Static analysis becomes useless</h3>
+
+<p>With explicit params, <code>grep "executor" packages/integrations/</code> tells you exactly which functions are host-aware. With ALS, every async function is implicitly host-aware. Refactor decisions become guesswork.</p>
+
+<h3>3. New code silently bypasses the executor</h3>
+
+<div class="diagram">// Six months later, a maintainer adds:
+import fs from "node:fs/promises";
+
+async function readGitConfig(repoPath: string): Promise&lt;string&gt; {
+  return fs.readFile(`${repoPath}/.git/config`, "utf-8");   // ← Direct fs.* call
+}</div>
+
+<p>With explicit params, the missing <code>executor</code> parameter is a code-review red flag. With ALS, this silently reads the controller's filesystem for remote terminals — bug surfaces only when a user reports "Code tab shows wrong file on remote."</p>
+
+<h3>4. Context propagation across boundaries is fragile</h3>
+
+<p>ALS propagates through <code>await</code> and Promise chains. It does NOT propagate cleanly across <code>EventEmitter</code> listeners attached outside the context, <code>setImmediate</code> scheduled before context was set, worker threads, or third-party libraries with internal queues.</p>
+
+<div class="diagram">executorContext.run(remoteHost, () =&gt; {
+  startWatcher(session, onChange);   // registers an fs.watch listener
+});
+// …time passes, watcher fires:
+onChange();   // ← getStore() here returns undefined.
+              //   Falls back to localExecutor. Wrong host.</div>
+
+<h3>5. Concurrent contexts mix unpredictably</h3>
+
+<div class="diagram">await Promise.all([
+  executorContext.run(host1, () =&gt; getStatus("/repo")),
+  executorContext.run(host2, () =&gt; getStatus("/repo")),
+]);</div>
+
+<p>Works if every IO call is awaited cleanly. Any non-awaited scheduling (<code>setImmediate</code>, <code>queueMicrotask</code>) picks up whichever context the event loop is in. Unreproducible.</p>
+
+<h3>The explicit alternative</h3>
+
+<p>Every IO-bearing function takes an <code>executor</code> parameter. Noisy. Adding a new IO call requires threading through callers. That's the volatility tax: <strong>"which host's filesystem does this read run against?"</strong> is a question with a real per-call answer, and the answer should be visible at every site that needs to know.</p>
+
+<h2>Verification — structural smells (from PR #929) and whether this plan inherits them</h2>
+
+<p>Eleven coupling smells were catalogued by reading PR #929's actual imports + package.jsons. Does this plan inherit any?</p>
+
+<table>
+  <thead><tr><th>#</th><th>Smell</th><th>This plan</th><th>Where addressed</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>kolu-remote-server</code> depends on <code>kolu-git</code></td><td class="check">Fixed</td><td>F1 — <code>localExecutor</code> lives in <code>integrations/io/</code>; helper imports from there, not from <code>kolu-git</code>.</td></tr>
+    <tr><td>2</td><td><code>anyagent</code> depends on <code>kolu-git</code> to re-export <code>Executor</code></td><td class="check">Fixed</td><td>F1 + F3 — <code>anyagent</code> imports <code>Executor</code> from <code>integrations/io/</code>. No re-export.</td></tr>
+    <tr><td>3</td><td><code>kolu-git/package.json</code>'s <code>./executor</code> subpath export</td><td class="check">Fixed</td><td>F1 — abstraction lives in its own package. No subpath hack.</td></tr>
+    <tr><td>4</td><td><code>kolu-git</code> declares + implements <code>queryDb</code> it never calls</td><td class="check">Fixed</td><td>F1 — <code>queryDb</code> lives on the <code>Executor</code> interface in <code>integrations/io/</code>. <code>kolu-git</code> stops being publisher of an IO primitive it doesn't consume.</td></tr>
+    <tr><td>5</td><td>Helper wire protocol in <code>kolu-common</code></td><td class="check">Fixed</td><td>F5 — protocol lives at <code>integrations/remote/src/protocol.ts</code>.</td></tr>
+    <tr><td>6</td><td><code>kolu-common</code> depends on every integration</td><td>Engaged, no refactor</td><td>Verified shape on master: 8 imports across 3 files (<code>surface.ts</code>, <code>contract.ts</code>, <code>terminalKey.ts</code>), all from <code>&lt;integration&gt;/schemas</code> subpaths. This is an <em>aggregation</em> pattern, not an inversion: <code>kolu-common</code>'s role is to synthesise the RPC contract from each integration's surface, so by definition it needs to know about every integration's <em>Info</em> shape. The "common = leaf" intuition doesn't apply — common is the assembly point. Refactor options considered: (a) move shared schemas to a third leaf types package (adds indirection without changing ownership); (b) plugin-based contract registration (architectural change far beyond this feature). Neither is a strict improvement.</td></tr>
+    <tr><td>7</td><td><code>Host</code> duplicates <code>Executor</code> methods inline</td><td class="check">Fixed</td><td>F1 — <code>Host extends Executor</code> by composition.</td></tr>
+    <tr><td>8</td><td><code>RemoteHost</code> runs xterm-headless on the controller</td><td class="cross">Inherited</td><td>F5. Alternative (parse in helper, send structured events) is a meaningful design decision flagged here; default choice matches PR #929 for symmetry with local PTY handling. Per-PTY memory scales with terminal count.</td></tr>
+    <tr><td>9</td><td><code>kolu-remote-server</code> bundles <code>node-pty</code></td><td class="cross">Inherent</td><td>Native binding required for PTY creation.</td></tr>
+    <tr><td>10</td><td><code>GitExecutor</code> name despite being non-git</td><td class="check">Fixed</td><td>F1 — named <code>Executor</code> at the source.</td></tr>
+    <tr><td>11</td><td>RPC contract carries the "host" concept</td><td>Engaged, conforms to convention</td><td>Strictly, this isn't a pre-existing smell — it's introduced by F5 (the <code>host.list</code> RPC + <code>HostSummary</code> type added to <code>kolu-common/contract.ts</code>). It <em>conforms</em> to master's convention #6: <code>kolu-common/contract.ts</code> is the aggregation point for the server's RPC surface, and "host" is a new RPC surface this feature adds. Not a violation. The placement is consistent and intentional.</td></tr>
+    <tr><td>12</td><td><strong>NEW:</strong> "partial symmetry by design" between local fast-path and remote routing</td><td class="check">Fixed</td><td>R1 + F4 — <code>LocalHost.watch</code> uses <code>integrations/io/</code>'s refcounted primitive. No <code>undefined</code>-means-fast-path shortcut needed.</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Eight of twelve smells fixed (including the new one); four left untouched are pre-existing master conventions or inherent constraints.</strong> The big wins:</p>
+
+<ul>
+  <li>Smells #1-4 + #10 — all symptoms of one mislocated abstraction (executor in <code>kolu-git</code>). Fixed by F1 putting <code>Executor</code> in its own home.</li>
+  <li>Smell #5 — protocol mislocation. Fixed by F5 (lives with transport).</li>
+  <li>Smell #7 — concept multiplication. Fixed by F1's <code>Host extends Executor</code>.</li>
+  <li>Smell #12 — local-remote asymmetry. Fixed by R1's primitive extraction.</li>
+</ul>
+
+<h2>Trade-offs honestly</h2>
+
+<ul>
+  <li><span class="verdict good">Each user-visible PR is small.</span> F6a-d are ~20-150 lines touching one <code>meta/*.ts</code> file each. Reviewers can reason about one provider's remote behaviour at a time.</li>
+  <li><span class="verdict good">Refactor PRs are no-functional-change.</span> R1, R2, F1, F2, F3a-c, F4 are mechanical refactors. Tests pass identically. Reviewers verify "did anything break?"</li>
+  <li><span class="verdict good">All refactors captured in the plan.</span> R1, R2 land first as standalone PRs; F1-F4 fold in additional refactor work; nothing is deferred to a "future cleanup."</li>
+  <li><span class="verdict good">After R1 + R2 land, master is unambiguously better even if the feature never ships.</span> The two extracted libraries stand on their own merits.</li>
+  <li><span class="verdict good">No partial-symmetry asymmetry.</span> Local and remote routing are structurally identical post-R1.</li>
+  <li><span class="verdict bad">Adding a new <code>Executor</code> op</span> later (e.g. <code>streamFile</code>) edits 4 places (<code>io/</code> interface, <code>localExecutor</code>, <code>RemoteHost</code>, helper protocol + manager). Acceptable; only matters when a second op forces the move.</li>
+  <li><span class="verdict bad">AsyncLocalStorage rejected.</span> See the dedicated section for the five concrete failure modes.</li>
+</ul>
+
+<h2>Verification appendix</h2>
+
+<p>What I checked against <code>master</code> code vs. what's estimated. Master HEAD: <code>b8c955b2</code>.</p>
+
+<table>
+  <thead><tr><th>Claim</th><th>Status</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td><code>shared-dir-filename-watcher.ts</code> is 132 lines, self-described as "Generic refcounted shared fs.watch watcher"</td><td class="check">Verified</td><td>Read the file head + <code>wc -l</code></td></tr>
+    <tr><td><code>pty.ts</code> on master is 241 lines (<code>spawnPty</code>, <code>getScreenText</code>, <code>PtyHandle</code>)</td><td class="check">Verified</td><td>Read + <code>wc -l</code></td></tr>
+    <tr><td><code>shell.ts</code> on master is 326 lines, OSC injection in <code>OSC7_FN</code>/<code>OSC2_PREEXEC_FN</code>/etc.</td><td class="check">Verified</td><td>Read + grep for OSC functions</td></tr>
+    <tr><td><code>shell.ts</code>'s only kolu-coupling is <code>koluShellDir</code> from <code>koluRoot.ts</code></td><td class="check">Verified</td><td>Read both files</td></tr>
+    <tr><td>Master has no <code>osc-parser.ts</code> (PR #929 adds it as new code)</td><td class="check">Verified</td><td><code>ls packages/server/src/</code></td></tr>
+    <tr><td>kolu-git on master has refcounted parcel-watcher composition</td><td class="check">Verified</td><td><code>ls</code> shows <code>head-watcher.ts</code>, <code>index-watcher.ts</code>, etc. composing on <code>shared-dir-filename-watcher.ts</code></td></tr>
+    <tr><td>Coupling smells #1-#11 in PR #929</td><td class="check">Verified</td><td>Read PR's package.jsons + import statements via <code>git show origin/feat/remote-terminal-prototype:&lt;path&gt;</code></td></tr>
+    <tr><td>Per-phase size estimates (R1, R2, F1-F8 line counts)</td><td><span class="cross">Estimated</span></td><td>Extrapolated from PR #929's per-file diff content. Order-of-magnitude.</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>
