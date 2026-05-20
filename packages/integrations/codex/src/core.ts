@@ -78,6 +78,32 @@ export const REQUIRED_THREAD_COLUMNS: readonly string[] = [
   "model",
 ];
 
+/** Run a `queryDb` against an executor; surface absent support
+ *  (executors without sqlite) and per-call failures as a clean log +
+ *  null so callers don't need their own try/catch. Mirror of the
+ *  opencode-side helper — each provider keeps the failure-handling
+ *  policy local (its own error context, its own log level). */
+async function runQuery(
+  executor: Executor,
+  dbPath: string,
+  sql: string,
+  params: ReadonlyArray<string | number | null>,
+  errorMsg: string,
+  errorCtx: Record<string, unknown>,
+  log: Logger | undefined,
+): Promise<Array<Record<string, unknown>> | null> {
+  if (!executor.queryDb) {
+    log?.debug(errorCtx, "executor lacks queryDb support");
+    return null;
+  }
+  try {
+    return await executor.queryDb(dbPath, sql, params);
+  } catch (err) {
+    log?.debug({ err, ...errorCtx }, errorMsg);
+    return null;
+  }
+}
+
 /** Return the list of required columns missing from the `threads` table
  *  on the given DB — empty array when the schema matches. Reads via
  *  `executor.queryDb` so the same check runs against local + remote DBs.
@@ -87,22 +113,25 @@ export async function missingThreadColumns(
   executor: Executor,
   log?: Logger,
 ): Promise<string[]> {
-  if (!executor.queryDb) return [];
-  try {
-    const rows = (await executor.queryDb(
-      dbPath,
-      "PRAGMA table_info(threads)",
-      [],
-    )) as Array<{ name: string }>;
-    const observed = new Set(rows.map((r) => r.name));
-    return REQUIRED_THREAD_COLUMNS.filter((c) => !observed.has(c));
-  } catch (err) {
-    log?.debug({ err, dbPath }, "codex schema introspection failed");
-    // Treat introspection failure as "schema is unusable" — the caller
-    // logs and disables detection on the same code path it'd hit for a
-    // genuine column rename.
-    return REQUIRED_THREAD_COLUMNS.slice();
+  const rows = await runQuery(
+    executor,
+    dbPath,
+    "PRAGMA table_info(threads)",
+    [],
+    "codex schema introspection failed",
+    { dbPath },
+    log,
+  );
+  if (rows === null) {
+    // queryDb absent → behave as if schema is empty (no missing columns,
+    // i.e. nothing to gate on). This matches the pre-extraction
+    // behavior: `if (!executor.queryDb) return [];`.
+    return executor.queryDb ? REQUIRED_THREAD_COLUMNS.slice() : [];
   }
+  const observed = new Set(
+    (rows as Array<{ name: string }>).map((r) => r.name),
+  );
+  return REQUIRED_THREAD_COLUMNS.filter((c) => !observed.has(c));
 }
 
 /** One-shot guard: has the schema-mismatch error been logged for this
@@ -134,7 +163,6 @@ export async function findSessionByDirectory(
   const dirs = await resolveCodexDirs(executor, log);
   const dbPath = dirs.dbPath;
   if (!dbPath) return null;
-  if (!executor.queryDb) return null;
   const missing = await missingThreadColumns(dbPath, executor, log);
   if (missing.length > 0) {
     if (!loggedSchemaError) {
@@ -146,19 +174,18 @@ export async function findSessionByDirectory(
     }
     return null;
   }
-  try {
-    const rows = (await executor.queryDb(
-      dbPath,
-      "SELECT id, rollout_path FROM threads WHERE cwd = ? AND source = 'cli' AND archived = 0 ORDER BY updated_at_ms DESC LIMIT 1",
-      [directory],
-    )) as Array<{ id: string; rollout_path: string }>;
-    if (rows.length === 0) return null;
-    const row = rows[0]!;
-    return { id: row.id, rolloutPath: row.rollout_path, dbPath };
-  } catch (err) {
-    log?.debug({ err, directory }, "codex threads query failed");
-    return null;
-  }
+  const rows = await runQuery(
+    executor,
+    dbPath,
+    "SELECT id, rollout_path FROM threads WHERE cwd = ? AND source = 'cli' AND archived = 0 ORDER BY updated_at_ms DESC LIMIT 1",
+    [directory],
+    "codex threads query failed",
+    { directory },
+    log,
+  );
+  if (rows === null || rows.length === 0) return null;
+  const row = rows[0]! as { id: string; rollout_path: string };
+  return { id: row.id, rolloutPath: row.rollout_path, dbPath };
 }
 
 // --- Thread row refresh (title + model) ---
@@ -190,20 +217,18 @@ export async function getThreadMetadata(
   executor: Executor,
   log?: Logger,
 ): Promise<ThreadMetadata | null> {
-  if (!executor.queryDb) return null;
-  try {
-    const rows = (await executor.queryDb(
-      dbPath,
-      "SELECT title, model FROM threads WHERE id = ?",
-      [threadId],
-    )) as Array<{ title: string | null; model: string | null }>;
-    if (rows.length === 0) return null;
-    const row = rows[0]!;
-    return { title: row.title || null, model: row.model || null };
-  } catch (err) {
-    log?.debug({ err, threadId }, "codex thread metadata query failed");
-    return null;
-  }
+  const rows = await runQuery(
+    executor,
+    dbPath,
+    "SELECT title, model FROM threads WHERE id = ?",
+    [threadId],
+    "codex thread metadata query failed",
+    { threadId },
+    log,
+  );
+  if (rows === null || rows.length === 0) return null;
+  const row = rows[0]! as { title: string | null; model: string | null };
+  return { title: row.title || null, model: row.model || null };
 }
 
 // --- Local-only DB helper (transcript export) ---
