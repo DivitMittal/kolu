@@ -7,15 +7,13 @@
  */
 
 import { createRequire } from "node:module";
-import {
-  DEFAULT_COLS,
-  DEFAULT_ROWS,
-  DEFAULT_SCROLLBACK,
-} from "kolu-common/config";
+import type { Logger } from "kolu-shared";
 import * as pty from "node-pty";
-import pkg from "../package.json" with { type: "json" };
-import type { Logger } from "./log.ts";
 import { cleanEnv, koluIdentityEnv, prepareShellInit } from "./shell.ts";
+
+/** Default terminal grid dimensions (matches xterm/VT100 standard). */
+const DEFAULT_COLS = 80;
+const DEFAULT_ROWS = 24;
 
 // @xterm packages ship CJS only — use createRequire for clean ESM interop
 const require = createRequire(import.meta.url);
@@ -74,6 +72,15 @@ export function spawnPty(
   tlog: Logger,
   terminalId: string,
   opts: {
+    /** Directory where per-terminal rc files (bashrc, ZDOTDIR) are written.
+     *  Caller owns the lifetime — kolu-pty just writes into it. */
+    rcDir: string;
+    /** Version string emitted as `TERM_PROGRAM_VERSION` to the spawned shell. */
+    termProgramVersion: string;
+    /** Scrollback buffer size in lines for the server-side headless terminal.
+     *  Must match the client's visible scrollback so `getScreenState()` on
+     *  late join carries the lines the client expects. */
+    scrollback: number;
     onData: (data: string) => void;
     onExit: (exitCode: number) => void;
     onCwd?: (cwd: string) => void;
@@ -96,12 +103,13 @@ export function spawnPty(
   const shell = env.SHELL ?? "/bin/sh";
   const cwd = spawnCwd || env.HOME || "/";
 
-  Object.assign(env, koluIdentityEnv(pkg.version));
+  Object.assign(env, koluIdentityEnv(opts.termProgramVersion));
 
   const shellInit = prepareShellInit({
     shell,
     home: env.HOME,
     terminalId,
+    rcDir: opts.rcDir,
   });
   Object.assign(env, shellInit.env);
 
@@ -133,7 +141,7 @@ export function spawnPty(
   const headless = new Terminal({
     cols: DEFAULT_COLS,
     rows: DEFAULT_ROWS,
-    scrollback: DEFAULT_SCROLLBACK,
+    scrollback: opts.scrollback,
     allowProposedApi: true,
   });
   const serializeAddon = new SerializeAddon();
