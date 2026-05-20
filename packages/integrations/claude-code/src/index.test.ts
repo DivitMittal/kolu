@@ -320,11 +320,13 @@ describe("tailJsonlLines", () => {
       }),
     ];
     fs.writeFileSync(filePath, `${lines.join("\n")}\n`);
-    // tailJsonlLines drops the first byte-cut line; on small files where the
-    // window is wider than the file, the "first cut" is line 0 — so the
-    // result is lines starting from index 1.
+    // When the file fits in the tail window, the cut starts at the file's
+    // first byte (which is `{` for valid JSONL) — every line should round-trip
+    // intact. Previously the implementation unconditionally dropped the first
+    // line, which silently swallowed the only entry in single-line transcripts
+    // (the e2e mock that exposed it).
     const result = await tailJsonlLines(filePath, 16_384, fsExecutor);
-    expect(result).toEqual(lines.slice(1));
+    expect(result).toEqual(lines);
   });
 
   it("skips partial first line when reading from middle of file", async () => {
