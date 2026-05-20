@@ -383,9 +383,6 @@ importers:
 
   packages/integrations/io:
     dependencies:
-      kolu-pty:
-        specifier: workspace:*
-        version: link:../pty
       kolu-shared:
         specifier: workspace:*
         version: link:../../shared

@@ -15,7 +15,6 @@
     "test:unit": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "kolu-pty": "workspace:*",
     "kolu-shared": "workspace:*"
   },
   "devDependencies": {

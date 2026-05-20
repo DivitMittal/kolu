@@ -17,7 +17,12 @@ export {
   type ExecutorWalSubscriptionConfig,
 } from "./executor-wal.ts";
 
-export type { Host } from "./host.ts";
+export type {
+  Host,
+  HostLogger,
+  HostPtyHandle,
+  HostSpawnPtyOpts,
+} from "./host.ts";
 
 export {
   createDirFilenameWatcher,
