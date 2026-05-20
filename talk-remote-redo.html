@@ -313,7 +313,7 @@ export interface Host extends Executor {           // ← extends, not duplicate
   <tbody>
     <tr class="modified">
       <td><strong>F1</strong></td>
-      <td>Extend <code>kolu-io</code> (exists on master from R1) with <code>Executor</code> interface + <code>localExecutor</code> + <code>Host</code> interface. No new consumers yet.</td>
+      <td>Extend <code>kolu-io</code> (exists on master from R1) with the <code>Executor</code> interface, <code>localExecutor</code> (the <em>only</em> concrete impl at this point — wraps <code>execFile</code>/<code>fs</code>/<code>node:sqlite</code>), and the <code>Host</code> interface (<code>extends Executor</code>). <strong>No remote impl yet</strong> — that lands in F5 alongside <code>kolu-remote</code> and <code>RemoteHost</code>. No new consumers yet either.</td>
       <td class="check">None — additions not imported anywhere</td>
       <td class="num">~+250</td>
       <td>3 new files inside existing pkg</td>
