@@ -105,14 +105,21 @@ async function runQuery(
 }
 
 /** Return the list of required columns missing from the `threads` table
- *  on the given DB — empty array when the schema matches. Reads via
- *  `executor.queryDb` so the same check runs against local + remote DBs.
- *  Exported for unit tests. */
+ *  on the given DB — empty array when the schema matches, null on a
+ *  transient query failure (caller should skip the schema gate and retry
+ *  on the next reconcile, rather than permanently disabling detection).
+ *  Reads via `executor.queryDb` so the same check runs against local +
+ *  remote DBs. Exported for unit tests. */
 export async function missingThreadColumns(
   dbPath: string,
   executor: Executor,
   log?: Logger,
-): Promise<string[]> {
+): Promise<string[] | null> {
+  if (!executor.queryDb) {
+    // No SQLite support on this executor — treat as no missing columns
+    // (nothing to gate on; matches the pre-extraction behavior).
+    return [];
+  }
   const rows = await runQuery(
     executor,
     dbPath,
@@ -123,10 +130,11 @@ export async function missingThreadColumns(
     log,
   );
   if (rows === null) {
-    // queryDb absent → behave as if schema is empty (no missing columns,
-    // i.e. nothing to gate on). This matches the pre-extraction
-    // behavior: `if (!executor.queryDb) return [];`.
-    return executor.queryDb ? REQUIRED_THREAD_COLUMNS.slice() : [];
+    // Transient failure (DB locked, ENOENT, etc.) — return null so the
+    // caller skips the schema gate this reconcile cycle instead of
+    // permanently setting `loggedSchemaError = true` and silencing Codex
+    // detection for the process lifetime.
+    return null;
   }
   const observed = new Set(
     (rows as Array<{ name: string }>).map((r) => r.name),
@@ -164,6 +172,11 @@ export async function findSessionByDirectory(
   const dbPath = dirs.dbPath;
   if (!dbPath) return null;
   const missing = await missingThreadColumns(dbPath, executor, log);
+  if (missing === null) {
+    // Transient failure (DB locked, not yet created, etc.) — skip this
+    // reconcile; the next one will retry the schema check.
+    return null;
+  }
   if (missing.length > 0) {
     if (!loggedSchemaError) {
       loggedSchemaError = true;

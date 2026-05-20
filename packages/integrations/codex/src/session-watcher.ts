@@ -194,7 +194,7 @@ export function createCodexWatcher(
       );
       onChange(info);
     } catch (err) {
-      log?.debug({ err, session: session.id }, "codex refresh failed");
+      log?.error({ err, session: session.id }, "codex refresh failed");
     } finally {
       inFlight = false;
       if (pending && !stopped) {
@@ -222,23 +222,24 @@ export function createCodexWatcher(
   // construction on install, but we DO kick an initial `refresh` so
   // the badge populates without waiting for the first WAL event.
   void (async () => {
+    const walPath = `${session.dbPath}-wal`;
     try {
-      walHandle = await executor.watch(
-        `${session.dbPath}-wal`,
-        () => scheduleRefresh(),
-        { recursive: false },
-      );
+      walHandle = await executor.watch(walPath, () => scheduleRefresh(), {
+        recursive: false,
+      });
+      log?.info({ walPath }, "codex: WAL watcher installed");
     } catch (err) {
-      log?.debug(
-        { err, walPath: `${session.dbPath}-wal` },
-        "codex WAL watch install failed",
-      );
+      log?.debug({ err, walPath }, "codex WAL watch install failed");
     }
     try {
       rolloutHandle = await executor.watch(
         session.rolloutPath,
         () => scheduleRefresh(),
         { recursive: false },
+      );
+      log?.info(
+        { path: session.rolloutPath },
+        "codex: rollout watcher installed",
       );
     } catch (err) {
       log?.debug(
@@ -257,10 +258,22 @@ export function createCodexWatcher(
         clearTimeout(debounceTimer);
         debounceTimer = undefined;
       }
-      walHandle?.stop();
-      rolloutHandle?.stop();
-      walHandle = null;
-      rolloutHandle = null;
+      if (walHandle) {
+        log?.info(
+          { walPath: `${session.dbPath}-wal` },
+          "codex: WAL watcher retired",
+        );
+        walHandle.stop();
+        walHandle = null;
+      }
+      if (rolloutHandle) {
+        log?.info(
+          { path: session.rolloutPath },
+          "codex: rollout watcher retired",
+        );
+        rolloutHandle.stop();
+        rolloutHandle = null;
+      }
     },
   };
 }

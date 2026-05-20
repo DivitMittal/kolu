@@ -166,7 +166,7 @@ export function createOpenCodeWatcher(
       );
       onChange(info);
     } catch (err) {
-      log?.debug({ err, session: session.id }, "opencode refresh failed");
+      log?.error({ err, session: session.id }, "opencode refresh failed");
     } finally {
       inFlight = false;
       if (pending && !stopped) {
@@ -198,6 +198,7 @@ export function createOpenCodeWatcher(
     (err) => log?.error({ err, session: session.id }, "opencode WAL cb threw"),
     log,
   );
+  log?.info({ session: session.id }, "opencode: WAL watcher installed");
   void refresh();
 
   return {
@@ -208,8 +209,11 @@ export function createOpenCodeWatcher(
         clearTimeout(debounceTimer);
         debounceTimer = undefined;
       }
-      unsubscribe?.();
-      unsubscribe = null;
+      if (unsubscribe) {
+        log?.info({ session: session.id }, "opencode: WAL watcher retired");
+        unsubscribe();
+        unsubscribe = null;
+      }
     },
   };
 }

@@ -11,7 +11,7 @@ import path from "node:path";
 import { type Executor, localExecutor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { err, type GitResult, ok } from "./errors.ts";
-import { gitOutput } from "./git-exec.ts";
+import { gitOutput, realpath } from "./git-exec.ts";
 
 /** Existence probe via {@link Executor.statMtimeMs} — rejects when the
  *  path does not exist, so a failed call means "absent". */
@@ -38,12 +38,7 @@ async function resolveMainRepoRoot(
     await gitOutput(executor, repoPath, ["rev-parse", "--git-common-dir"])
   ).trim();
   const resolved = path.resolve(repoPath, gitCommonDir);
-  const { stdout, exitCode } = await executor.exec("readlink", [
-    "-f",
-    resolved,
-  ]);
-  const canonical = exitCode === 0 ? stdout.trim() : resolved;
-  return path.dirname(canonical);
+  return path.dirname(await realpath(executor, resolved));
 }
 
 /** Detect the default branch name on the remote (e.g. "main" or "master"). */

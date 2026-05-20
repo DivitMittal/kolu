@@ -163,7 +163,7 @@ export function createSessionWatcher(
       // (transcript-change handler) doesn't block on the network fetch.
       void refreshSummary();
     } catch (err) {
-      plog.debug({ err, session: session.sessionId }, "claude refresh failed");
+      plog.error({ err, session: session.sessionId }, "claude refresh failed");
     } finally {
       inFlight = false;
       if (pending && !stopped) {
@@ -263,9 +263,15 @@ export function createSessionWatcher(
         clearTimeout(debounceTimer);
         debounceTimer = undefined;
       }
-      transcriptHandle?.stop();
+      if (transcriptHandle) {
+        plog.info(
+          { path: transcriptPath, session: session.sessionId },
+          "claude-code: transcript watcher retired",
+        );
+        transcriptHandle.stop();
+        transcriptHandle = null;
+      }
       projectDirHandle?.stop();
-      transcriptHandle = null;
       projectDirHandle = null;
     },
   };

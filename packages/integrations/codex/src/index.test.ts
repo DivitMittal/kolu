@@ -370,7 +370,7 @@ describe("missingThreadColumns", () => {
       (c) => c !== "rollout_path" && c !== "archived",
     );
     const db = dbWithColumns([...kept, "rollout_uri"]);
-    expect((await missingThreadColumns("/db", dbExecutor(db))).sort()).toEqual(
+    expect((await missingThreadColumns("/db", dbExecutor(db)))!.sort()).toEqual(
       ["archived", "rollout_path"].sort(),
     );
     db.close();
@@ -384,7 +384,7 @@ describe("missingThreadColumns", () => {
     // can immediately tell the table is gone, not that 8 individual
     // columns got renamed.
     const db = new DatabaseSync(":memory:");
-    expect((await missingThreadColumns("/db", dbExecutor(db))).sort()).toEqual(
+    expect((await missingThreadColumns("/db", dbExecutor(db)))!.sort()).toEqual(
       [...REQUIRED_THREAD_COLUMNS].sort(),
     );
     db.close();

@@ -14,7 +14,7 @@ import { type Executor, localExecutor } from "kolu-io";
 import type { Logger } from "kolu-shared";
 import { watchCwdForGitDir } from "./cwd-git-watcher.ts";
 import { err, type GitResult, ok } from "./errors.ts";
-import { gitOutput } from "./git-exec.ts";
+import { gitOutput, realpath } from "./git-exec.ts";
 import { watchGitHead } from "./head-watcher.ts";
 import type { GitInfo } from "./schemas.ts";
 
@@ -26,14 +26,6 @@ export function hasGitDir(cwd: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Canonicalize a path via the executor's `readlink -f` — matches
- *  `fs.realpathSync` on local, works on remote without bouncing through
- *  the local fs. */
-async function realpath(executor: Executor, p: string): Promise<string> {
-  const result = await executor.exec("readlink", ["-f", p]);
-  return result.exitCode === 0 ? result.stdout.trim() : p;
 }
 
 /** Resolve git context for a directory. Returns an error result if not in a

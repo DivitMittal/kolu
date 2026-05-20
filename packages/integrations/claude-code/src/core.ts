@@ -502,7 +502,7 @@ export async function subscribeSessionsDir(
   const dirs = await resolveClaudeCodeDirs(executor, log);
   if (!dirs) return { stop: () => {} };
   try {
-    const handle = await executor.watch(
+    const inner = await executor.watch(
       dirs.sessionsDir,
       () => {
         try {
@@ -517,7 +517,15 @@ export async function subscribeSessionsDir(
       { dir: dirs.sessionsDir },
       "claude-code: sessions dir watcher installed",
     );
-    return handle;
+    return {
+      stop() {
+        log?.info(
+          { dir: dirs.sessionsDir },
+          "claude-code: sessions dir watcher retired",
+        );
+        inner.stop();
+      },
+    };
   } catch (err) {
     log?.debug(
       { err, dir: dirs.sessionsDir },
