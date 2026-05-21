@@ -19,12 +19,12 @@
   html { background: var(--bg); color: var(--fg); }
   body {
     font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    max-width: 880px;
+    max-width: 900px;
     margin: 2rem auto;
     padding: 0 1.25rem 4rem;
   }
   h1 { font-size: 1.55rem; margin: 0 0 .25rem; }
-  h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .25rem; }
+  h2 { font-size: 1.12rem; margin: 2rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .25rem; }
   h3 { font-size: .92rem; margin: 1.2rem 0 .35rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   p, ul, ol { margin: .5rem 0; }
   ul, ol { padding-left: 1.4rem; }
@@ -79,676 +79,372 @@
   .new-pkg { background: #fff4dc; }
   .new-dir { background: #e8f1e0; }
   .modified  { background: #f3f3f3; }
-  .refactor { background: #e6f0fa; }
+  .untouched { background: #f5fbf5; }
 </style>
 </head>
 <body>
 
 <h1>Remote terminals over SSH — design plan</h1>
-<p class="cite">Current master HEAD: <code>4b55c58a</code> (post-R1 #944, post-R2 #945). Goal: a new terminal in Kolu can run its PTY on any host in your <code>~/.ssh/config</code>, with branch chip / agent badge / Code-tab parity to local terminals; SSH drops survive via a daemon on the remote side. Plan is captured end-to-end — no deferred follow-ups. Reviewed through Hickey + Lowy; numbers verified against current master. PR #929 (still in draft) is the prior implementation cited for structural observations — those citations are point-in-time and may drift if PR #929 is revised.</p>
+<p class="cite">Starting point: <code>master</code> @ <code>4b55c58a</code> (after R1 #944 + R2 #945 merged — <code>kolu-io</code> with refcounted dir-watcher exists; <code>kolu-pty</code> with PTY primitives exists). Goal: a new terminal in Kolu can run on any host in <code>~/.ssh/config</code>, with branch chip / agent badge / Code-tab parity to local terminals. Zed-inspired architecture: the PTY runs locally with ssh inside; the remote machine hosts a node daemon that runs Kolu's existing integration packages unchanged and streams their events back.</p>
 
 <div class="tldr">
-<strong>TL;DR.</strong> Two standalone refactor PRs (R1, R2) extracted library-shaped primitives to master — <strong>both merged</strong> (<a href="https://github.com/juspay/kolu/pull/944">PR #944</a>, <a href="https://github.com/juspay/kolu/pull/945">PR #945</a>). Eight feature phases (F1-F8) build the remote-terminal capability on the cleaner base. <strong>Every refactor was captured in the plan, none deferred.</strong> Each refactor PR landing reduced the surface of the feature plan that follows.
+<strong>TL;DR.</strong> The remote machine runs a node daemon (<code>kolu-remote-server</code>) that imports <code>kolu-git</code>, <code>kolu-claude-code</code>, <code>kolu-codex</code>, <code>kolu-opencode</code> <em>unmodified</em> and exposes their subscription APIs over an NDJSON+Zod RPC channel. The controller speaks to that daemon for metadata; the user's terminal is a local PTY whose program is <code>ssh -t &lt;host&gt; '...'</code>. There is no executor abstraction. There is no async cascade through the integration packages. The integration packages are <strong>untouched</strong>. The complexity lives in two new packages (<code>kolu-host</code>, <code>kolu-remote</code>) and a small dispatch change in <code>kolu-server</code>'s metadata orchestrator.
 </div>
 
-<h2>Standalone refactor PRs — <span class="check">both merged ✓</span></h2>
-
-<p>Two refactors that delivered structural value to <code>master</code> independent of any remote-terminal context. Both shipped as standalone PRs, reviewable on their own merits.</p>
-
-<table>
-  <thead><tr><th>PR</th><th>Issue / PR</th><th>What it extracted</th><th>From → To</th><th>Size</th></tr></thead>
-  <tbody>
-    <tr class="refactor">
-      <td><strong>R1</strong> <span class="check">✓ merged</span></td>
-      <td><a href="https://github.com/juspay/kolu/issues/942">#942</a> · <a href="https://github.com/juspay/kolu/pull/944">PR #944</a></td>
-      <td><code>shared-dir-filename-watcher.ts</code> — header reads "Generic refcounted shared <code>fs.watch</code> watcher keyed by directory."</td>
-      <td><code>kolu-git</code> → new <code>kolu-io</code> (<code>packages/integrations/io/</code>)</td>
-      <td class="num">+144/−26</td>
-    </tr>
-    <tr class="refactor">
-      <td><strong>R2</strong> <span class="check">✓ merged</span></td>
-      <td><a href="https://github.com/juspay/kolu/issues/943">#943</a> · <a href="https://github.com/juspay/kolu/pull/945">PR #945</a></td>
-      <td><code>pty.ts</code> (<code>spawnPty</code>, <code>getScreenText</code>, <code>PtyHandle</code>) + <code>shell.ts</code> (OSC injection functions, rcfile builder). The <code>koluShellDir</code> coupling parameterised — function takes <code>rcDir</code> (verified <code>kolu-pty/src/shell.ts:220, 247, 280</code>; server passes at <code>terminals.ts:111</code>).</td>
-      <td><code>kolu-server</code> → new <code>kolu-pty</code> (<code>packages/integrations/pty/</code>)</td>
-      <td class="num">+148/−53</td>
-    </tr>
-  </tbody>
-</table>
-
-<p class="cite">Both estimates I made earlier overshot: R1 estimated ~+150/−132 (close); R2 estimated ~+650/−570 (way off — git rename detection preserved most lines, showing only the deltas as real adds/deletes).</p>
-
-<div class="footnote"><span class="label">Note</span> <code>kolu-pty</code> shipped with <code>kolu-shared</code> as a runtime dep (for the <code>Logger</code> type), not the inline structural interface I recommended. Small deviation; doesn't compromise library shape meaningfully. Could be tightened in a follow-up if strict zero-kolu-deps becomes important. <code>kolu-io</code> has zero <code>kolu-*</code> deps (verified).</div>
-
-<h3>Why these stand on their own merits</h3>
+<h2>What we're building</h2>
 
 <ul>
-  <li><strong>R1's target file is already labeled generic.</strong> Verified: <code>shared-dir-filename-watcher.ts:1-15</code> says verbatim "Generic refcounted shared <code>fs.watch</code> watcher keyed by directory." A generic primitive living inside a git integration is the wrong home regardless of whether we ship remote terminals.</li>
-  <li><strong>R2's target files have no kolu-specific logic.</strong> Verified by reading <code>pty.ts</code> + <code>shell.ts</code>: <code>spawnPty</code> wraps node-pty, <code>getScreenText</code> wraps xterm-headless, <code>OSC7_FN</code>/<code>OSC2_PREEXEC_FN</code> emit standard sequences. Only kolu-coupling is <code>koluShellDir</code> (path the rcfile writer uses) — eliminable via parameter.</li>
-  <li><strong>Each refactor reduces the surface of the feature plan that follows.</strong> Once <code>integrations/io/</code> exists (R1), F1 just <em>extends</em> it rather than creating it from scratch. Once <code>integrations/pty/</code> exists (R2), the question "where do host implementations live?" has a clean answer — <code>integrations/host/</code> can be its own package because the deps it needs are public.</li>
+  <li>"New terminal" palette can target a host from <code>~/.ssh/config</code>. The PTY runs locally; ssh runs inside it and drops the user into a shell on the remote.</li>
+  <li>Branch chip, worktree create/remove, Code-tab file read, agent badges (Claude Code / Codex / OpenCode) all reflect the remote machine's state.</li>
+  <li>Terminal metadata persists <code>hostId</code>; session restore re-spawns on the original host. Sub-terminals inherit the parent's host.</li>
+  <li>Cross-arch deployment via Nix: <code>nix copy</code> the controller's exact <code>kolu-remote-server</code> closure or <code>.drv</code> to the remote.</li>
 </ul>
 
-<div class="footnote"><span class="label">PR #929 note</span> PR #929 lifts the OSC parsing concern into a new <code>osc-parser.ts</code> (102 lines, new code). On master that file doesn't exist — OSC parsing is implicit inside <code>pty.ts</code>'s xterm-headless usage. The OSC parser is needed for the remote-PTY path (parsing bytes streamed back over RPC) but isn't part of R2's pure-refactor scope; it's new code that lands as part of <code>integrations/pty/</code> in F5 alongside <code>RemoteHost</code>.</div>
+<h2>Architecture</h2>
 
-<h2>Where master stands now</h2>
+<p>Two SSH channels per remote terminal, multiplexed over one TCP connection via OpenSSH's <code>ControlMaster=auto</code> + <code>ControlPersist=10m</code>:</p>
 
-<p>Both refactors merged; master already carries the cleaner base. The feature plan (F1-F8 below) starts from here:</p>
+<div class="diagram">┌── controller (laptop) ────────────────────┐   ┌── remote host ─────────────────────────────┐
+│                                           │   │                                            │
+│  ┌─ LOCAL PTY (kolu-pty) ──────┐          │   │                                            │
+│  │  program: ssh               │ ── ch A ───→│  bash --rcfile /tmp/kolu-rc-${id}          │
+│  │  args:    -t host '...'     │←─────────────│  (OSC 7/2/633;E hooks → bytes back via ssh)│
+│  │  xterm.js renders here      │          │   │                                            │
+│  └─────────────────────────────┘          │   │                                            │
+│                                           │   │  ┌─ kolu-remote-server (node daemon) ──┐  │
+│  ┌─ kolu-remote RPC client ────┐          │   │  │                                     │  │
+│  │  Host.subscribe(...)        │ ── ch B ───→│  │  imports kolu-git UNCHANGED         │  │
+│  │  Host.invoke(...)           │←─────────────│  │  imports kolu-claude-code UNCHANGED │  │
+│  │  NDJSON envelope frames     │          │   │  │  imports kolu-codex UNCHANGED       │  │
+│  │  request / response / event │          │   │  │  imports kolu-opencode UNCHANGED    │  │
+│  │  / endStream / ping         │          │   │  │                                     │  │
+│  └─────────────────────────────┘          │   │  │  on subscribe("git", { cwd }):      │  │
+│                                           │   │  │    subscribeGitInfo(cwd, emit, log) │  │
+│  meta/{git,agent}.ts dispatches:          │   │  │                                     │  │
+│   - local terminal: in-process subscribe  │   │  │  on invoke("worktree.create", …):   │  │
+│   - remote terminal: host.subscribe(...)  │   │  │    worktreeCreate(…) → response     │  │
+│                                           │   │  └─────────────────────────────────────┘  │
+└───────────────────────────────────────────┘   └────────────────────────────────────────────┘</div>
 
-<ul>
-  <li><code>packages/integrations/io/</code> exists. Currently owns just the refcounted dir-watcher (R1). F1 will extend it with <code>Executor</code> + <code>localExecutor</code> + <code>Host</code> interface.</li>
-  <li><code>packages/integrations/pty/</code> exists. Owns <code>PtyHandle</code>, <code>spawnPty</code>, <code>getScreenText</code>, OSC injection rcfile builder (R2). Server's <code>terminals.ts</code> + <code>terminal-registry.ts</code> already import from here.</li>
-  <li><strong>No new top-level packages get created inside feature PRs</strong> — only new files inside the already-extracted homes, plus two more new packages (<code>integrations/host/</code>, <code>integrations/remote/</code>) introduced in F4 / F5.</li>
-</ul>
+<p><strong>The integration packages don't know there's a remote.</strong> They run in-process on the controller for local terminals; they run in-process on the remote (inside <code>kolu-remote-server</code>) for remote terminals. Same source, same behaviour, same callbacks. The dispatch — "is this a local or remote terminal?" — happens once in <code>meta/git.ts</code> and <code>meta/agent.ts</code>, not in the providers themselves.</p>
 
-<h2>Package overview (after all phases land)</h2>
+<h2>Package overview</h2>
 
 <table>
   <thead><tr><th>Package / directory</th><th>Status</th><th>Purpose</th></tr></thead>
   <tbody>
-    <tr class="modified">
-      <td><code>packages/integrations/io/</code></td>
-      <td>EXISTS (R1 ✓) + extended in F1</td>
-      <td>Generic IO primitives. R1 landed the refcounted dir-watcher (live on master). F1 will add <code>Executor</code> interface, <code>localExecutor</code>, and <code>Host</code> interface (extends Executor). Library-shaped: zero kolu-specific imports (verified — no <code>kolu-*</code> deps in <code>package.json</code>).</td>
+    <tr class="untouched">
+      <td><code>packages/integrations/{git, claude-code, codex, opencode, anyagent}/</code></td>
+      <td><strong>UNTOUCHED</strong></td>
+      <td>Zero diff. The providers run identically on controller (for local terminals) and inside <code>kolu-remote-server</code> on the remote (for remote terminals). No <code>executor</code> parameter, no async cascade, no rewrites.</td>
     </tr>
-    <tr class="modified">
-      <td><code>packages/integrations/pty/</code></td>
-      <td>EXISTS (R2 ✓) + extended in F5</td>
-      <td>PTY primitives. R2 landed <code>PtyHandle</code>, <code>spawnPty</code>, <code>getScreenText</code>, OSC injection rcfile builder. F5 will add the byte-stream OSC parser (new code for RemoteHost's needs). Currently has one <code>kolu-shared</code> runtime dep (for <code>Logger</code> type) — minor deviation from the strict library-shape recommendation; could be tightened later.</td>
-    </tr>
-    <tr class="new-pkg">
-      <td><code>packages/integrations/host/</code></td>
-      <td>NEW pkg (F4-F5)</td>
-      <td>Host implementations + registry. <code>LocalHost</code> (uses <code>integrations/pty/</code>'s <code>spawnPty</code> + <code>integrations/io/</code>'s refcounted watch + <code>localExecutor</code>). <code>RemoteHost</code> (uses <code>integrations/remote/</code>'s RPC client + <code>integrations/pty/</code>'s OSC parser). Lives outside server because its deps are now public.</td>
+    <tr class="untouched">
+      <td><code>packages/integrations/{io, pty}/</code></td>
+      <td>Lightly extended (just <code>Host</code> + <code>Subscription</code> types in <code>kolu-io</code>)</td>
+      <td>R1 + R2 already shipped these. P1 adds the <code>Host</code> interface to <code>kolu-io</code>. <code>kolu-pty</code> needs no changes.</td>
     </tr>
     <tr class="new-pkg">
-      <td><code>packages/integrations/remote/</code></td>
-      <td>NEW pkg (F5 + F7)</td>
-      <td>SSH-backed remote transport. F5 lands the helper daemon binary (<code>kolu-remote-server</code>), wire-protocol Zod schemas, JSON-RPC client over SSH stdio, <code>~/.ssh/config</code> parser. F7 adds daemon mode + ring buffer + reconnect-replay. Library-shaped.</td>
+      <td><code>packages/integrations/host/</code> <em>(new in P1)</em></td>
+      <td>NEW pkg</td>
+      <td>Owns the host abstraction's <em>implementations</em>: <code>LocalHost</code> (in-process dispatch to the providers + <code>kolu-pty</code>'s <code>spawnPty</code>), <code>registry</code> (<code>getHost("local")</code> initially; <code>getHost(sshAlias)</code> after P3). Depends on <code>kolu-io</code>, <code>kolu-pty</code>, and the four integration packages. The "is this terminal local or remote?" dispatch lives here.</td>
     </tr>
-    <tr class="modified">
-      <td><code>packages/integrations/git/</code></td>
-      <td>MODIFIED (R1 + F2)</td>
-      <td>R1: existing watchers import refcounted primitive from <code>io/</code>. F2: public functions gain optional <code>executor?: Executor = localExecutor</code>, drop <code>simple-git</code>, switch to <code>executor.exec("git", …)</code>.</td>
-    </tr>
-    <tr class="modified">
-      <td><code>packages/integrations/anyagent/</code></td>
-      <td>MODIFIED (F3)</td>
-      <td>The shared <code>AgentProvider</code> contract gains <code>executor</code> param on IO-bearing methods. Imports <code>Executor</code> from <code>io/</code> directly.</td>
-    </tr>
-    <tr class="modified">
-      <td><code>packages/integrations/{claude-code,opencode,codex}/</code></td>
-      <td>MODIFIED (F3, 3 PRs)</td>
-      <td>Provider impls switch from direct <code>fs.*</code> / <code>node:sqlite</code> / <code>fs.watch</code> to <code>await executor.*</code>. Default <code>localExecutor</code> preserves behaviour.</td>
+    <tr class="new-pkg">
+      <td><code>packages/integrations/remote/</code> <em>(new in P3)</em></td>
+      <td>NEW pkg</td>
+      <td>Owns the SSH transport: <code>kolu-remote-server</code> binary (depends on the four integration packages — runs them on the remote), wire-protocol Zod schemas, NDJSON RPC client over SSH stdio, <code>~/.ssh/config</code> parser, <code>CommandTemplate</code> builder. Plus <code>RemoteHost</code> (the <code>Host</code> impl that talks to <code>kolu-remote-server</code> via RPC).</td>
     </tr>
     <tr class="modified">
       <td><code>packages/server/</code></td>
-      <td>MODIFIED (R2 + F4-F6)</td>
-      <td>R2: <code>terminals.ts</code> / <code>terminal-registry.ts</code> / etc. update PTY imports to <code>integrations/pty/</code>. F4: <code>terminals.ts</code> calls <code>host.spawnPty()</code> via <code>integrations/host/</code>'s registry. F5: <code>host.list</code> RPC. F6: <code>meta/git.ts</code> + <code>meta/agent.ts</code> pick executor per-terminal.</td>
+      <td>MODIFIED (P1, P2, P4, P5)</td>
+      <td>Terminal lifecycle (<code>terminals.ts</code>) gains <code>hostId</code> + calls <code>host.spawnPty()</code> via the registry. Metadata orchestrators (<code>meta/git.ts</code>, <code>meta/agent.ts</code>) dispatch via <code>host.subscribe(...)</code> instead of calling providers directly. Persisted-metadata schema bumps for <code>hostId</code>. New <code>host.list</code> RPC.</td>
     </tr>
     <tr class="modified">
       <td><code>packages/common/</code></td>
-      <td>MODIFIED (F4-F5)</td>
-      <td>RPC contract adds <code>HostSummary</code>, <code>host.list</code>, <code>hostId</code> on <code>TerminalCreateInput</code>. Persisted-metadata schema bumps for <code>hostId</code> default.</td>
+      <td>MODIFIED (P2)</td>
+      <td>RPC contract gains <code>HostSummary</code>, <code>host.list</code>, <code>hostId</code> on <code>TerminalCreateInput</code>.</td>
     </tr>
     <tr class="modified">
       <td><code>packages/client/</code></td>
-      <td>MODIFIED (F5, F8)</td>
-      <td>F5: host axis in "New terminal" palette + <code>hostId</code> threading. F8: SSH chip, "Connecting…" placeholder, eager tile rendering.</td>
+      <td>MODIFIED (P3, P5)</td>
+      <td>P3: host axis in "New terminal" palette + <code>hostId</code> threading. P5: SSH chip, "Connecting…" placeholder, eager tile rendering.</td>
     </tr>
   </tbody>
 </table>
 
-<h3>Legend (used to colour-code rows above and phase rows below)</h3>
+<h3>Legend</h3>
 <table>
   <tbody>
-    <tr><td><span class="refactor" style="padding:0 .35rem;">refactor PR</span></td><td>Pure refactor; no functional change; stands on its own.</td></tr>
-    <tr><td><span class="new-pkg" style="padding:0 .35rem;">new package</span></td><td>Created from scratch — no precedent in <code>master</code>.</td></tr>
-    <tr><td><span class="new-dir" style="padding:0 .35rem;">new subdir</span></td><td>New directory inside an existing package.</td></tr>
-    <tr><td><span class="modified" style="padding:0 .35rem;">modified</span></td><td>Existing files gain optional <code>executor?</code> param or update import paths; no logic change.</td></tr>
+    <tr><td><span class="new-pkg" style="padding:0 .35rem;">new package</span></td><td>Created from scratch.</td></tr>
+    <tr><td><span class="modified" style="padding:0 .35rem;">modified</span></td><td>Existing package gains new code at narrow seams (terminal lifecycle, metadata dispatch).</td></tr>
+    <tr><td><span class="untouched" style="padding:0 .35rem;">untouched</span></td><td>Zero functional change. The whole point of the architecture.</td></tr>
   </tbody>
 </table>
 
-<h2>What we're building (the user-visible feature)</h2>
+<h2>The <code>Host</code> abstraction</h2>
 
-<ul>
-  <li>"New terminal" palette can target a remote host from <code>~/.ssh/config</code>. The PTY runs there; bytes flow over SSH.</li>
-  <li>Branch chip, worktree create/remove, Code-tab file read all reflect the remote machine's state.</li>
-  <li>Agent badges (Claude Code, Codex, OpenCode) detect and live-update against the agent process running remotely.</li>
-  <li>Helper survives SSH drops: PTYs and their scrollback live in a daemon; reconnect replays missed output.</li>
-  <li>Terminal metadata persists <code>hostId</code>; session restore re-spawns on the original host. Sub-terminals inherit the parent's host.</li>
-</ul>
+<p>One interface in <code>kolu-io</code>. Two implementations (<code>LocalHost</code>, <code>RemoteHost</code>) in <code>kolu-host</code>. Generic dispatch primitives — providers don't appear in the type.</p>
 
-<h2>Target package layout (after all phases)</h2>
+<div class="diagram">// packages/integrations/io/src/host.ts  (new in P1)
 
-<div class="diagram">┌─ packages/integrations/io/  ──────────────────┐    EXISTS (R1 ✓) + F1
-│  src/refcounted-dir-watcher.ts  (R1)          │    Library-shaped:
-│  src/executor.ts                (F1)          │    zero kolu deps.
-│    Executor interface, localExecutor          │
-│  src/host.ts                    (F1)          │
-│    Host interface extends Executor            │
-└────────────────────┬──────────────────────────┘
-                     │
-       ┌─────────────┼─────────────┬─────────────────┐
-       ▼             ▼             ▼                 ▼
-┌─ pty/ (R2✓+F5)─┐  ┌─ git ─┐  ┌─ anyagent ─┐  ┌─ host/ (F4+F5) ─┐
-│ PtyHandle      │  │ exec  │  │ Executor   │  │  LocalHost      │
-│ spawnPty       │  │ param │  │ in iface   │  │  RemoteHost     │
-│ getScreenText  │  └───────┘  ├─ claude-c  │  │  registry       │
-│ shell rcfile   │             ├─ opencode  │  └────┬────────────┘
-│ osc-parser(F5) │             └─ codex     │       │
-└────┬───────────┘                                  │
-     │                                              ▼
-     │                                ┌─ remote/ (F5+F7) ────┐
-     │                                │  bin/kolu-remote-server     │
-     │                                │  src/protocol.ts     │
-     │                                │  src/rpc-client.ts   │
-     │                                │  src/ssh-config.ts   │
-     │                                │  src/ring-buffer.ts  │
-     │                                └──────────────────────┘
-     ▼
-┌─ packages/server/  ─┐    MODIFIED throughout — terminal lifecycle
-│   terminals.ts      │    + meta orchestrator + RPC contract.
-│   meta/{git,agent}  │    Stops owning pty.ts / shell.ts (R2),
-│   router.ts         │    delegates host abstraction to integrations/host/.
-└─────────────────────┘</div>
+import type { PtyHandle, SpawnPtyOpts } from "kolu-pty";
 
-<h2>How kolu-specific are the new packages?</h2>
-
-<p>Boundary discipline check (verified by reading PR #929's equivalent files):</p>
-
-<table>
-  <thead><tr><th>Package</th><th>Kolu-specific?</th><th>Notes</th></tr></thead>
-  <tbody>
-    <tr><td><code>integrations/io/</code></td><td><span class="check">No</span></td><td>Refcounted dir-watcher + Executor + Host interface. Only deps: node stdlib. Could be a standalone npm library.</td></tr>
-    <tr><td><code>integrations/pty/</code></td><td><span class="check">No</span></td><td>Wraps node-pty, xterm-headless. OSC sequences are standardized. rc-file directory is a parameter, not a hardcoded path. Could be a standalone npm library.</td></tr>
-    <tr><td><code>integrations/host/</code></td><td>Minimal</td><td>The branding (host registry's <code>"local"</code> sentinel) is incidental. Implementations are just glue between <code>io/</code>, <code>pty/</code>, and <code>remote/</code>. Could be standalone.</td></tr>
-    <tr><td><code>integrations/remote/</code></td><td>Branding only</td><td>Remote-side binary named <code>kolu-remote-server</code> (mirrors Zed's <code>zed-remote-server</code>; VSCode uses <code>code-server</code>), data dir <code>~/.kolu-remote-server/</code> — two top-of-file constants. Functional surface is generic "remote IO + PTY over SSH-stdio JSON-RPC."</td></tr>
-  </tbody>
-</table>
-
-<p><strong>All four new packages have zero imports from <code>kolu-shared</code>, <code>kolu-common</code>, or any kolu-named package.</strong> Logger handled via a structural interface or pino directly. Constants inline.</p>
-
-<h2>The <code>Executor</code> abstraction (added in F1)</h2>
-
-<div class="diagram">// packages/integrations/io/src/executor.ts
-
-export interface ExecResult { stdout: string; stderr: string; exitCode: number | null; }
-export interface WatchHandle { stop(): void; }
-
-export interface Executor {
-  exec(cmd: string, args: string[], opts?: { cwd?: string; timeoutMs?: number; maxBytes?: number; })
-    : Promise&lt;ExecResult&gt;;
-  readFile(path: string, opts?: { maxBytes?: number; })
-    : Promise&lt;{ content: string; truncated: boolean }&gt;;
-  statMtimeMs(path: string): Promise&lt;number&gt;;
-  watch(path: string, onChange: (rel: string) =&gt; void, opts?: { recursive?: boolean; })
-    : Promise&lt;WatchHandle&gt;;
-  queryDb?(path: string, sql: string, params?: ReadonlyArray&lt;string|number|null&gt;)
-    : Promise&lt;Array&lt;Record&lt;string, unknown&gt;&gt;&gt;;
+export interface HostLogger {
+  debug(obj: Record&lt;string, unknown&gt;, msg: string): void;
+  info(obj: Record&lt;string, unknown&gt;, msg: string): void;
+  warn(obj: Record&lt;string, unknown&gt;, msg: string): void;
+  error(obj: Record&lt;string, unknown&gt;, msg: string): void;
 }
 
-export const localExecutor: Executor = { /* execFile + fs + node:sqlite */ };</div>
+export interface Subscription {
+  stop(): void;
+}
 
-<h2>The <code>Host</code> abstraction (added in F1)</h2>
+/** Discriminated union of every subscription the system supports. Adding
+ *  a new subscription kind = one variant here + one case in LocalHost.subscribe
+ *  + one case in kolu-remote-server's handler table. */
+export type SubscriptionRequest =
+  | { kind: "git"; cwd: string }
+  | { kind: "agent.claude-code"; terminalId: string; state: AgentTerminalState }
+  | { kind: "agent.codex";       terminalId: string; state: AgentTerminalState }
+  | { kind: "agent.opencode";    terminalId: string; state: AgentTerminalState }
+  | { kind: "foreground";        terminalId: string };
 
-<div class="diagram">// packages/integrations/io/src/host.ts
+/** Discriminated union of one-shot commands the system supports. */
+export type InvokeRequest =
+  | { kind: "git.worktreeCreate"; repo: string; name: string }
+  | { kind: "git.worktreeRemove"; path: string }
+  | { kind: "fs.readFile";        path: string; maxBytes?: number }
+  | { kind: "fs.listDir";         path: string };
 
-import type { Executor } from "./executor.ts";
-import type { PtyHandle, SpawnPtyOpts } from "kolu-integrations-pty";
-
-export interface Host extends Executor {           // ← extends, not duplicates
-  readonly id: string;                             // "local" | SSH alias
+export interface Host {
+  readonly id: string;                              // "local" or SSH alias
   readonly label: string;
   readonly kind: "local" | "remote-ssh";
-  spawnPty(log: Logger, opts: SpawnPtyOpts): Promise&lt;PtyHandle&gt;;
+  spawnPty(log: HostLogger, opts: SpawnPtyOpts): Promise&lt;PtyHandle&gt;;
+  subscribe&lt;R extends SubscriptionRequest&gt;(
+    req: R,
+    onEvent: (event: EventOf&lt;R&gt;) =&gt; void,
+    log: HostLogger,
+  ): Subscription;
+  invoke&lt;R extends InvokeRequest&gt;(req: R): Promise&lt;ResultOf&lt;R&gt;&gt;;
   shutdown(): Promise&lt;void&gt;;
 }</div>
 
-<p><code>PtyHandle</code> comes from <code>integrations/pty/</code> (extracted in R2). Logger type is a structural interface (<code>{ info, debug, warn, error, child }</code>) — no kolu import.</p>
-
-<h2>Feature phasing (F1-F8)</h2>
-<p class="cite">R1 + R2 have landed on master; F1 onward builds on the cleaner base.</p>
-
-<div class="footnote"><span class="label">Workflow</span> Feature PRs target <code>remote-terminal</code> (a feature branch off master), <strong>not master directly</strong>. Each F-phase PR merges into <code>remote-terminal</code>; once F1-F8 are complete, <code>remote-terminal</code> merges to master as the final feature delivery. The design plan lives separately in PR #946 (this PR) on its own branch.</div>
-
-<div class="footnote"><span class="label">F1+F2+F3 bundled</span> Filed as a single PR — <a href="https://github.com/juspay/kolu/issues/947">issue #947</a>. F2's diff is mechanical pattern-matching (every <code>simpleGit(...).raw(...)</code> → <code>await executor.exec("git", ...)</code>); F3 is "<code>fs.* → await executor.*</code>" with an async cascade. The transformation rules are uniform per phase; reviewer cost scales with the rules, not the raw LOC. F1 alone would be unused exports, so it bundles cleanly with F2 (its first consumer).</div>
-
-<table>
-  <thead><tr><th>Phase</th><th>Scope</th><th>Functional change?</th><th>Size</th><th>Files</th></tr></thead>
-  <tbody>
-    <tr class="modified">
-      <td colspan="5" style="background:#fff4dc; font-weight:600;">F1 + F2 + F3 ship as one PR → <a href="https://github.com/juspay/kolu/issues/947">issue #947</a></td>
-    </tr>
-    <tr class="modified">
-      <td><strong>F1</strong></td>
-      <td>Extend <code>kolu-io</code> with the <code>Executor</code> interface, <code>localExecutor</code> (the <em>only</em> concrete impl at this point — wraps <code>execFile</code>/<code>fs</code>/<code>node:sqlite</code>), and the <code>Host</code> interface (<code>extends Executor</code>). <strong>No remote impl yet</strong> — that lands in F5 alongside <code>kolu-remote</code> and <code>RemoteHost</code>.</td>
-      <td class="check">None — additions not imported until F2</td>
-      <td class="num">~+250</td>
-      <td>3 new files in <code>kolu-io</code></td>
-    </tr>
-    <tr class="modified">
-      <td><strong>F2</strong></td>
-      <td>Refactor <code>kolu-git</code> public functions to take <code>executor?: Executor = localExecutor</code>. Drop <code>simple-git</code>; switch git invocations to <code>executor.exec("git", …)</code>. Switch bare <code>fs.*</code> to <code>executor.*</code>. Mostly mechanical (one transformation rule).</td>
-      <td class="check">None — default preserves behaviour</td>
-      <td class="num">+623/−196 <span class="cite">(verified from PR #929)</span></td>
-      <td>6 modified</td>
-    </tr>
-    <tr class="modified">
-      <td><strong>F3</strong></td>
-      <td>Refactor agent providers: <code>AgentProvider</code> contract in <code>anyagent</code> gains <code>executor</code> param. Each of claude-code / codex / opencode rewrites <code>core.ts</code> + <code>session-watcher.ts</code> to <code>await executor.*</code> + async cascade. Each provider has its own quirks (sqlite for opencode/codex, JSONL tail for claude, WAL watch for codex) but follows the same three transformation rules.</td>
-      <td class="check">None — default preserves behaviour</td>
-      <td class="num">+1,434/−1,528 <span class="cite">(verified, all four pkgs combined)</span></td>
-      <td>anyagent + 3 providers</td>
-    </tr>
-    <tr class="new-pkg">
-      <td><strong>F4</strong></td>
-      <td>Create <code>packages/integrations/host/</code>: <code>LocalHost</code> (composes <code>localExecutor</code> + <code>integrations/pty/spawnPty</code> + <code>integrations/io/refcounted-dir-watcher</code>), placeholder for <code>RemoteHost</code>, <code>registry</code>. Modify server's <code>terminals.ts</code> to use the registry; <code>createTerminal</code> takes optional <code>hostId</code> defaulting to <code>"local"</code>. Persisted metadata schema bumps to include <code>hostId</code>.</td>
-      <td class="cross">Internal restructure only — UI unchanged</td>
-      <td class="num">~+500 new<br>~+70 modified</td>
-      <td>4 new + 3 modified</td>
-    </tr>
-    <tr class="new-pkg">
-      <td><strong>F5</strong></td>
-      <td>Create <code>packages/integrations/remote/</code>: <code>kolu-remote-server</code> binary (file-IO RPC only — no PTY engine), wire-protocol Zod schemas, SSH-stdio RPC client, ssh-config parser, <code>buildSshCommand({ program, args, env, cwd, interactive }) → CommandTemplate</code>. Implement <code>RemoteHost</code> in <code>kolu-host</code>: <code>spawnPty</code> uses <code>buildSshCommand({ interactive: true })</code> + <code>kolu-pty</code>'s local <code>spawnPty</code> (program=ssh inside local PTY). For <code>readFile/exec/watch/queryDb/statMtimeMs</code>, dispatch over channel B to <code>kolu-remote-server</code>. SSH ControlMaster multiplexes both channels over one TCP connection. OSC rcfile written on remote via RPC; <code>--rcfile</code> passed in the PTY's ssh command. Wire <code>readSshHosts()</code> into registry. Add <code>host.list</code> RPC + host axis in palette. Nix-only deployment: <code>nix copy --to ssh-ng://&lt;alias&gt;</code> seeds the remote binary closure.</td>
-      <td class="check">User-visible: remote PTYs work end-to-end with full metadata parity (branch chip, agent badges, Code-tab read).</td>
-      <td class="num">~+1,200<br><span class="cite">smaller than PR #929's ~+1,800 — no PTY engine on remote</span></td>
-      <td>~10 (new in remote/, new in host/, ~3 modified)</td>
-    </tr>
-    <tr class="modified">
-      <td><strong>F6a-d</strong><br><span class="cite">4 PRs</span></td>
-      <td>Light up metadata for remote, one provider at a time. Each is just: in the relevant <code>meta/*.ts</code> file, pass <code>host</code> as the executor when the terminal is remote. F6b adds the per-<code>(kind, executor)</code> activation registry.</td>
-      <td class="check">Branch chip → claude → opencode → codex, one per PR</td>
-      <td class="num"><strong>~+20-150 per PR</strong></td>
-      <td>1-2 per PR (just <code>meta/</code> files)</td>
-    </tr>
-    <tr class="modified">
-      <td><strong>F7</strong></td>
-      <td>Reliability for the metadata RPC channel: <code>kolu-remote-server</code> stays alive across SSH connection drops (Unix socket, lock file). Controller's RPC client auto-reconnects with exponential backoff. <strong>No PTY-state replay needed</strong> — terminals are stateless from the server's perspective; if SSH drops, the local PTY's ssh process dies and the user spawns a new one. (PR #929's ring buffer + sequence numbering + <code>attach(sinceSeq)</code> are <em>not</em> in scope under the Zed-inspired approach.)</td>
-      <td class="check">Metadata channel survives SSH blips; long-running watchers don't tear down on every reconnect</td>
-      <td class="num">~+200<br><span class="cite">vs PR #929's ~+650 — no PTY replay</span></td>
-      <td>1-2, all in <code>integrations/remote/</code></td>
-    </tr>
-    <tr class="modified">
-      <td><strong>F8</strong></td>
-      <td>UX polish: SSH chip on remote tiles, "Connecting to <code>&lt;host&gt;</code>…" placeholder, eager tile rendering.</td>
-      <td class="check">Cosmetic</td>
-      <td class="num">~+200</td>
-      <td>4 in <code>client/</code></td>
-    </tr>
-  </tbody>
-</table>
-
-<p>Two refactor PRs (R1, R2, both merged) + eight feature phases split across nine feature PRs (F1+F2+F3 bundled, F4, F5, F6×4, F7, F8). The first two feature PRs (through F4) ship no user-visible change; reviewers verify "tests still pass." The remaining seven each add one visible capability.</p>
-
-<h2>F6 in detail — the per-provider light-up</h2>
-
-<p>F6 is the user-visible "remote terminals now show branch / agent state" work. Each sub-PR is tiny because F2/F3 already taught kolu-git and the agent providers to accept an <code>executor</code>; F6 only adds the orchestrator deciding to pass the host as the executor.</p>
-
-<table>
-  <thead><tr><th>Sub</th><th>Provider</th><th>Where</th><th>Size</th></tr></thead>
-  <tbody>
-    <tr><td>F6a</td><td>kolu-git</td><td><code>meta/git.ts</code></td><td class="num">~+20</td></tr>
-    <tr><td>F6b</td><td>claude-code (adds activation registry)</td><td><code>meta/agent.ts</code></td><td class="num">~+150</td></tr>
-    <tr><td>F6c</td><td>opencode</td><td><code>meta/agent.ts</code> (register opencode)</td><td class="num">~+30</td></tr>
-    <tr><td>F6d</td><td>codex</td><td><code>meta/agent.ts</code> (register codex + WAL <code>externalChanges</code>)</td><td class="num">~+50</td></tr>
-  </tbody>
-</table>
-
-<h3>Per-method audit — which provider methods need <code>executor</code></h3>
-
-<table>
-  <thead><tr><th>Method on <code>AgentProvider</code></th><th>Takes <code>executor</code>?</th><th>Why</th></tr></thead>
-  <tbody>
-    <tr><td><code>resolveSession(state, …)</code></td><td><span class="check">✓</span></td><td>Reads sessions file or queries DB. Per-host IO.</td></tr>
-    <tr><td><code>sessionKey(session)</code></td><td><span class="cross">✗</span></td><td>Pure function over an already-resolved session row.</td></tr>
-    <tr><td><code>createWatcher(session, …)</code></td><td><span class="check">✓</span></td><td>Tails JSONL or polls SQLite.</td></tr>
-    <tr><td><code>externalChanges.isPresent(state, …)</code></td><td><span class="check">✓</span></td><td>Probes whether agent's state dir exists on host fs.</td></tr>
-    <tr><td><code>externalChanges.install(…)</code></td><td><span class="check">✓</span></td><td>Installs the per-executor fan-out watcher.</td></tr>
-  </tbody>
-</table>
-
-<h3>The activation registry (new mechanism in F6b)</h3>
-
-<p>When five terminals on the same SSH host all run codex, we want <em>one</em> WAL watcher per host, not five. The orchestrator keeps a <code>Map&lt;string, Activation&gt;</code> keyed by <code>(provider.kind, executorId)</code> where <code>executorId</code> uses <code>WeakMap&lt;Executor, string&gt;</code> identity. The <code>"local"</code> singleton gets id <code>"local"</code>; each remote <code>Host</code> instance gets <code>"exec#N"</code>. First terminal installs; subsequent terminals join the fan-out set.</p>
-
-<p>~120 of F6b's ~150 lines are the registry itself.</p>
-
-<h3>Cross-host gotchas</h3>
+<p>Two impls in <code>kolu-host</code>:</p>
 
 <ul>
-  <li><strong><code>$HOME</code> per executor.</strong> Paths like <code>~/.claude/sessions/</code> are host-relative. Resolve via <code>executor.exec("printenv", ["HOME"])</code> and memoize per-executor.</li>
-  <li><strong>Tilde expansion.</strong> <code>executor.readFile("~/.foo")</code> does NOT expand <code>~</code>. Resolve home first.</li>
-  <li><strong>SQLite WAL across wire.</strong> Helper opens <code>node:sqlite</code> with <code>readOnly: true</code> so concurrent OpenCode/Codex writes don't block.</li>
-  <li><strong>Watch latency.</strong> Local refcounted parcel-watcher: &lt;50 ms. SSH-relayed <code>fs.watch</code>: 200-500 ms.</li>
-  <li><strong>Test-time env overrides.</strong> <code>KOLU_CLAUDE_SESSIONS_DIR</code> only affects controller's local path; remote tests use mock-executor.</li>
+  <li><strong><code>LocalHost</code></strong> (P1): <code>spawnPty</code> calls <code>kolu-pty</code>'s <code>spawnPty</code> directly. <code>subscribe</code> matches on <code>req.kind</code> and calls the relevant provider's in-process subscribe function (<code>subscribeGitInfo</code>, <code>subscribeClaudeCodeSession</code>, etc.), wiring its callback to <code>onEvent</code>. <code>invoke</code> matches on <code>req.kind</code> and calls the relevant one-shot function (<code>worktreeCreate</code>, etc.).</li>
+  <li><strong><code>RemoteHost</code></strong> (P3): <code>spawnPty</code> calls <code>kolu-pty</code>'s <code>spawnPty</code> with <code>program: "ssh"</code> and <code>args: [...sshOpts, host, "-t", remoteCmd]</code>. <code>subscribe</code> sends a streaming RPC request to <code>kolu-remote-server</code>; events come back as wire envelopes, get decoded, fired into <code>onEvent</code>. <code>invoke</code> sends a request/response RPC.</li>
 </ul>
 
-<h2>Local path — symmetric with remote, not asymmetric</h2>
+<p><strong>The providers never see <code>Host</code>.</strong> They keep their existing signatures (<code>subscribeGitInfo(cwd, onChange, log)</code>, etc.). <code>LocalHost</code> calls them directly; <code>kolu-remote-server</code> calls them on the remote.</p>
 
-<p>After R1 + F4, <code>LocalHost.watch</code> consumes <code>integrations/io/refcounted-dir-watcher</code> directly — the same generic primitive <code>kolu-git</code>'s existing watcher stack uses. Routing local terminals through <code>LocalHost</code> doesn't pessimise relative to the existing master code path; they share the same underlying refcounted machinery.</p>
+<h2>Wire protocol</h2>
 
-<p>The "<code>executor?: Executor</code> where <code>undefined</code> = optimised local" pattern from earlier drafts is gone. <code>meta/git.ts</code> always passes the terminal's <code>Host</code> as the executor; local terminals get <code>LocalHost</code> (which uses the refcounted primitive), remote terminals get <code>RemoteHost</code> (which uses <code>executor.watch</code> over RPC). One code path; the routing decision is host identity, not a special-case.</p>
+<p>NDJSON + Zod with a Zed-shaped envelope discriminator. Every line on the SSH stdio channel is a JSON object matching one variant:</p>
 
-<div class="footnote"><span class="label">PR #929 note</span> PR #929 carries an explicit <code>executor = undefined</code> shortcut at <code>meta/git.ts:37-40</code> to preserve the parcel-watcher fast path for local. That asymmetry exists in PR #929 because PR #929 doesn't extract the refcounted primitive — it stays in kolu-git, only the bare <code>fs.watch</code> ends up in <code>localExecutor</code>. R1 fixes this at the root.</div>
+<div class="diagram">// packages/integrations/remote/src/protocol.ts
 
-<h2>Why not AsyncLocalStorage?</h2>
-
-<p>Tempting alternative: stash the executor in <code>AsyncLocalStorage</code> at the orchestrator, read it implicitly inside kolu-git / agents. Functions wouldn't need an <code>executor</code> parameter. Rejected — five concrete failure modes:</p>
-
-<div class="diagram">// REJECTED: AsyncLocalStorage executor injection
-import { AsyncLocalStorage } from "node:async_hooks";
-const executorContext = new AsyncLocalStorage&lt;Executor&gt;();
-
-// Orchestrator:
-executorContext.run(host, () =&gt; startProviders(entry));
-
-// kolu-git (unchanged signature):
-export async function detectDefaultBranch(repoPath: string): Promise&lt;string&gt; {
-  const executor = executorContext.getStore() ?? localExecutor;
-  return executor.exec("git", ["symbolic-ref", …], { cwd: repoPath });
-}</div>
-
-<h3>1. Tests silently pass against the wrong executor</h3>
-
-<div class="diagram">test("worktree create on remote", async () =&gt; {
-  const mockExec = vi.fn().mockResolvedValue({ stdout: "main", exitCode: 0 });
-  const mockExecutor: Executor = { exec: mockExec, /* … */ };
-
-  // FORGOT executorContext.run(mockExecutor, …) wrapper
-  const result = await worktreeCreate("/tmp/repo", "feature-a");
-
-  expect(mockExec).toHaveBeenCalled();    // ← FAILS silently
-});</div>
-
-<p>The function ran successfully against <code>localExecutor</code>'s default fallback. With explicit params, the test won't compile without supplying an executor.</p>
-
-<h3>2. Static analysis becomes useless</h3>
-
-<p>With explicit params, <code>grep "executor" packages/integrations/</code> tells you exactly which functions are host-aware. With ALS, every async function is implicitly host-aware. Refactor decisions become guesswork.</p>
-
-<h3>3. New code silently bypasses the executor</h3>
-
-<div class="diagram">// Six months later, a maintainer adds:
-import fs from "node:fs/promises";
-
-async function readGitConfig(repoPath: string): Promise&lt;string&gt; {
-  return fs.readFile(`${repoPath}/.git/config`, "utf-8");   // ← Direct fs.* call
-}</div>
-
-<p>With explicit params, the missing <code>executor</code> parameter is a code-review red flag. With ALS, this silently reads the controller's filesystem for remote terminals — bug surfaces only when a user reports "Code tab shows wrong file on remote."</p>
-
-<h3>4. Context propagation across boundaries is fragile</h3>
-
-<p>ALS propagates through <code>await</code> and Promise chains. It does NOT propagate cleanly across <code>EventEmitter</code> listeners attached outside the context, <code>setImmediate</code> scheduled before context was set, worker threads, or third-party libraries with internal queues.</p>
-
-<div class="diagram">executorContext.run(remoteHost, () =&gt; {
-  startWatcher(session, onChange);   // registers an fs.watch listener
-});
-// …time passes, watcher fires:
-onChange();   // ← getStore() here returns undefined.
-              //   Falls back to localExecutor. Wrong host.</div>
-
-<h3>5. Concurrent contexts mix unpredictably</h3>
-
-<div class="diagram">await Promise.all([
-  executorContext.run(host1, () =&gt; getStatus("/repo")),
-  executorContext.run(host2, () =&gt; getStatus("/repo")),
+const FrameSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("request"),  id: z.number(), method: z.string(), params: z.unknown() }),
+  z.object({ kind: z.literal("response"), respondingTo: z.number(), result: z.unknown() }),
+  z.object({ kind: z.literal("error"),    respondingTo: z.number(), error: ErrorShape }),
+  z.object({ kind: z.literal("event"),    respondingTo: z.number(), payload: z.unknown() }),
+  z.object({ kind: z.literal("endStream"),respondingTo: z.number() }),
+  z.object({ kind: z.literal("ping") }),
 ]);</div>
 
-<p>Works if every IO call is awaited cleanly. Any non-awaited scheduling (<code>setImmediate</code>, <code>queueMicrotask</code>) picks up whichever context the event loop is in. Unreproducible.</p>
+<p>RPC patterns:</p>
 
-<h3>The explicit alternative</h3>
+<ul>
+  <li><strong>One-shot request</strong> (worktreeCreate, readFile): client sends <code>{ kind: "request", id, method: "invoke.git.worktreeCreate", params }</code>; server responds with one <code>{ kind: "response", respondingTo: id, result }</code> or one <code>{ kind: "error", respondingTo: id, error }</code>.</li>
+  <li><strong>Subscription</strong> (git info, agent state, foreground): client sends <code>{ kind: "request", id, method: "subscribe.git", params }</code>; server streams zero-or-more <code>{ kind: "event", respondingTo: id, payload }</code>; client closes by sending <code>{ kind: "endStream", respondingTo: id }</code> upstream (or server emits <code>endStream</code> on its own termination).</li>
+  <li><strong>Keepalive</strong>: either side may send <code>{ kind: "ping" }</code> at any time; receiver echoes. Used to keep <code>ControlPersist</code> alive across idle periods.</li>
+</ul>
 
-<p>Every IO-bearing function takes an <code>executor</code> parameter. Noisy. Adding a new IO call requires threading through callers. That's the volatility tax: <strong>"which host's filesystem does this read run against?"</strong> is a question with a real per-call answer, and the answer should be visible at every site that needs to know.</p>
-
-<h2>Verification — structural smells (from PR #929) and whether this plan inherits them</h2>
-
-<p>Eleven coupling smells were catalogued by reading PR #929's actual imports + package.jsons. Does this plan inherit any?</p>
+<h3>Why NDJSON+Zod over protobuf</h3>
 
 <table>
-  <thead><tr><th>#</th><th>Smell</th><th>This plan</th><th>Where addressed</th></tr></thead>
+  <thead><tr><th>Option</th><th>Pros</th><th>Cons</th><th>Pick</th></tr></thead>
   <tbody>
-    <tr><td>1</td><td><code>kolu-remote-server</code> depends on <code>kolu-git</code></td><td class="check">Fixed</td><td>F1 — <code>localExecutor</code> lives in <code>integrations/io/</code>; helper imports from there, not from <code>kolu-git</code>.</td></tr>
-    <tr><td>2</td><td><code>anyagent</code> depends on <code>kolu-git</code> to re-export <code>Executor</code></td><td class="check">Fixed</td><td>F1 + F3 — <code>anyagent</code> imports <code>Executor</code> from <code>integrations/io/</code>. No re-export.</td></tr>
-    <tr><td>3</td><td><code>kolu-git/package.json</code>'s <code>./executor</code> subpath export</td><td class="check">Fixed</td><td>F1 — abstraction lives in its own package. No subpath hack.</td></tr>
-    <tr><td>4</td><td><code>kolu-git</code> declares + implements <code>queryDb</code> it never calls</td><td class="check">Fixed</td><td>F1 — <code>queryDb</code> lives on the <code>Executor</code> interface in <code>integrations/io/</code>. <code>kolu-git</code> stops being publisher of an IO primitive it doesn't consume.</td></tr>
-    <tr><td>5</td><td>Helper wire protocol in <code>kolu-common</code></td><td class="check">Fixed</td><td>F5 — protocol lives at <code>integrations/remote/src/protocol.ts</code>.</td></tr>
-    <tr><td>6</td><td><code>kolu-common</code> depends on every integration</td><td>Engaged, no refactor</td><td>Verified shape on master: 8 imports across 3 files (<code>surface.ts</code>, <code>contract.ts</code>, <code>terminalKey.ts</code>), all from <code>&lt;integration&gt;/schemas</code> subpaths. This is an <em>aggregation</em> pattern, not an inversion: <code>kolu-common</code>'s role is to synthesise the RPC contract from each integration's surface, so by definition it needs to know about every integration's <em>Info</em> shape. The "common = leaf" intuition doesn't apply — common is the assembly point. Refactor options considered: (a) move shared schemas to a third leaf types package (adds indirection without changing ownership); (b) plugin-based contract registration (architectural change far beyond this feature). Neither is a strict improvement.</td></tr>
-    <tr><td>7</td><td><code>Host</code> duplicates <code>Executor</code> methods inline</td><td class="check">Fixed</td><td>F1 — <code>Host extends Executor</code> by composition.</td></tr>
-    <tr><td>8</td><td><code>RemoteHost</code> runs xterm-headless on the controller</td><td class="cross">Inherited</td><td>F5. Alternative (parse in helper, send structured events) is a meaningful design decision flagged here; default choice matches PR #929 for symmetry with local PTY handling. Per-PTY memory scales with terminal count.</td></tr>
-    <tr><td>9</td><td><code>kolu-remote-server</code> bundles <code>node-pty</code></td><td class="cross">Inherent</td><td>Native binding required for PTY creation.</td></tr>
-    <tr><td>10</td><td><code>GitExecutor</code> name despite being non-git</td><td class="check">Fixed</td><td>F1 — named <code>Executor</code> at the source.</td></tr>
-    <tr><td>11</td><td>RPC contract carries the "host" concept</td><td>Engaged, conforms to convention</td><td>Strictly, this isn't a pre-existing smell — it's introduced by F5 (the <code>host.list</code> RPC + <code>HostSummary</code> type added to <code>kolu-common/contract.ts</code>). It <em>conforms</em> to master's convention #6: <code>kolu-common/contract.ts</code> is the aggregation point for the server's RPC surface, and "host" is a new RPC surface this feature adds. Not a violation. The placement is consistent and intentional.</td></tr>
-    <tr><td>12</td><td><strong>NEW:</strong> "partial symmetry by design" between local fast-path and remote routing</td><td class="check">Fixed</td><td>R1 + F4 — <code>LocalHost.watch</code> uses <code>integrations/io/</code>'s refcounted primitive. No <code>undefined</code>-means-fast-path shortcut needed.</td></tr>
+    <tr><td><strong>Protobuf</strong> (Zed's choice)</td><td>Schema-versioned, binary-efficient, mature tooling, the <code>EndStream</code> pattern is cleanly typed via the <code>oneof</code></td><td>Codegen step in the build; TypeScript ecosystem doesn't lean here; binary debugging</td><td><span class="cross">No</span></td></tr>
+    <tr><td><strong>NDJSON + Zod</strong> with envelope discriminator</td><td>TS-native; Zod schemas double as runtime validators; debuggable via <code>cat</code>; no codegen; the discriminator gives us protobuf-style <code>oneof</code> typing</td><td>Hand-roll subscription/<code>endStream</code> semantics</td><td><span class="check">Yes</span></td></tr>
+    <tr><td><strong>MessagePack + Zod</strong></td><td>50-70% the wire size of JSON; TS support is fine</td><td>Wire size rarely the bottleneck for our message volume; binary debugging</td><td><span class="cross">No</span></td></tr>
+    <tr><td><strong>JSON-RPC 2.0</strong></td><td>Standard, has notifications (one-way)</td><td>"Notifications" aren't subscriptions; still have to layer subscription lifecycle on top</td><td><span class="cross">No</span></td></tr>
   </tbody>
 </table>
 
-<p><strong>Eight of twelve smells fixed (including the new one); four left untouched are pre-existing master conventions or inherent constraints.</strong> The big wins:</p>
+<p>The envelope discriminator pattern is structurally Zed's <code>Envelope.payload oneof</code> — just human-readable on the wire and validated by Zod instead of generated by <code>prost</code>. See the zed skill for the full comparison.</p>
 
-<ul>
-  <li>Smells #1-4 + #10 — all symptoms of one mislocated abstraction (executor in <code>kolu-git</code>). Fixed by F1 putting <code>Executor</code> in its own home.</li>
-  <li>Smell #5 — protocol mislocation. Fixed by F5 (lives with transport).</li>
-  <li>Smell #7 — concept multiplication. Fixed by F1's <code>Host extends Executor</code>.</li>
-  <li>Smell #12 — local-remote asymmetry. Fixed by R1's primitive extraction.</li>
-</ul>
+<h2>How each feature works under this architecture</h2>
 
-<h2>Prior art — Zed's remote development</h2>
-
-<p>Zed ships SSH-based remote development with a similar local-vs-remote unification goal. I cloned <code>github.com/zed-industries/zed</code> and read the relevant crates (<code>crates/remote</code>, <code>crates/remote_server</code>, <code>crates/remote_connection</code>, <code>crates/fs</code>, <code>crates/project/src/terminals.rs</code>, ~9k LOC total). Findings worth folding in:</p>
-
-<h3>1. Terminals: Zed runs the PTY locally with <code>ssh</code> as the program — <span class="check">ADOPTED</span></h3>
-
-<p>The biggest divergence from PR #929. Verified at <code>crates/remote/src/transport/ssh.rs:1768-1880</code> (<code>build_command_posix</code>): when Zed creates a remote terminal, it builds a command template like:</p>
-
-<div class="diagram">ssh -q -t &lt;destination&gt; 'cd &lt;working_dir&gt; &amp;&amp; exec env &lt;ENV_KV...&gt; &lt;remote_shell&gt; -l'</div>
-
-<p>That command is passed to <code>alacritty_terminal::tty::new(...)</code> as the PTY's program (<code>crates/terminal/src/terminal.rs:568</code>). <strong>The PTY itself is local;</strong> ssh runs inside it; ssh's protocol shuttles bytes to the remote shell. Zed's <code>remote_server</code> daemon is <em>not involved in terminals at all</em> — its responsibilities (verified from <code>crates/remote_server/src/headless_project.rs</code>) are file I/O, LSP, search, Jupyter kernels, directory env. <strong>Not PTY hosting.</strong></p>
-
-<p><strong>We're adopting this.</strong> The trade-off — SSH drops kill the PTY (scrollback gone) — is acceptable given the simplification: F5 sheds ~1,200 lines of helper-side PTY engine + ring buffer + sequence-numbering + attach/replay logic. F7 collapses from "PTY survives SSH drops" to "RPC channel reconnects automatically" — much smaller scope.</p>
-
-<h3>How Kolu's features work under the new architecture</h3>
-
-<p>Each remote terminal has <strong>two SSH-backed channels</strong>, multiplexed over one TCP connection via SSH's <code>ControlMaster</code>:</p>
-
-<div class="diagram">┌── controller (your laptop) ──────────────────┐    ┌── remote host ─────────────┐
-│                                              │    │                            │
-│  ┌─ LOCAL PTY ─────────────┐                 │    │                            │
-│  │  program: ssh           │ ── ssh channel A ───→│ shell -l (-rcfile injects │
-│  │  args: -t host 'cmd…'   │←─────────────────────│   OSC 7 / 2 / 633;E hooks) │
-│  │  xterm.js renders here  │                 │    │                            │
-│  └─────────────────────────┘                 │    │                            │
-│                                              │    │                            │
-│  ┌─ metadata RPC client ───┐                 │    │  ┌─ kolu-remote-server ─┐ │
-│  │  executor.readFile      │ ── ssh channel B ───→│  │ NDJSON over stdio     │ │
-│  │  executor.exec("git",…) │←─────────────────────│  │ exec / readFile / fs  │ │
-│  │  executor.watch(.git/…) │                 │    │  │ .watch / queryDb /    │ │
-│  │  executor.queryDb(…)    │                 │    │  │ statMtimeMs           │ │
-│  └─────────────────────────┘                 │    │  └───────────────────────┘ │
-└──────────────────────────────────────────────┘    └────────────────────────────┘</div>
-
-<p>Concrete behaviour per feature:</p>
+<p>For every Kolu feature touching the remote, the table below shows what happens when the user spawns a remote terminal and the feature lights up.</p>
 
 <table>
   <thead><tr><th>Feature</th><th>How it works on remote</th></tr></thead>
   <tbody>
     <tr>
+      <td><strong>Open a remote terminal</strong></td>
+      <td><code>createTerminal({ hostId: "srid-build-box", cwd: "/home/srid/foo" })</code>. <code>terminals.ts</code> calls <code>getHost("srid-build-box").spawnPty(log, opts)</code>. <code>RemoteHost.spawnPty</code> writes the kolu rcfile to the remote (<code>invoke("fs.writeTemp", { content })</code>), then asks <code>kolu-pty</code>'s <code>spawnPty</code> for a local PTY with <code>program: "ssh"</code> and <code>args: [..., host, "-t", "exec bash --rcfile /tmp/kolu-rc-${id}"]</code>. The local xterm parses OSC 7/2/633 from the byte stream naturally.</td>
+    </tr>
+    <tr>
       <td><strong>Branch chip</strong></td>
-      <td><code>meta/git.ts</code> calls <code>subscribeGitInfo(cwd, onChange, log, host)</code>. <code>host.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd })</code> goes over channel B (metadata RPC). <code>host.watch(".git/HEAD", onChange)</code> installs a watcher on the kolu-remote-server side. Updates stream back over channel B.</td>
+      <td><code>meta/git.ts</code> calls <code>host.subscribe({ kind: "git", cwd }, onGitInfoChange, log)</code>. For remote: <code>RemoteHost</code> sends a streaming subscribe RPC. <code>kolu-remote-server</code> calls <code>subscribeGitInfo(cwd, emit, log)</code> from <code>kolu-git</code> <em>locally on the remote</em>. Events flow back as <code>{ kind: "event", payload: GitInfo }</code>.</td>
     </tr>
     <tr>
-      <td><strong>Worktree create/remove</strong></td>
-      <td>kolu-git's <code>worktreeCreate(repo, name, log, host)</code> uses <code>host.exec("git", ["worktree", "add", …])</code>. All over channel B.</td>
+      <td><strong>Agent badge (claude-code / codex / opencode)</strong></td>
+      <td><code>meta/agent.ts</code> calls <code>host.subscribe({ kind: "agent.codex", terminalId, state }, onAgentChange, log)</code>. <code>kolu-remote-server</code>'s handler calls <code>codexProvider.resolveSession(state, log)</code> + <code>createCodexWatcher(...)</code> — the same provider code that runs on the controller for local terminals, just running on the remote. SQLite reads, WAL watches, transcript tails — all happen on the remote in-process.</td>
     </tr>
     <tr>
-      <td><strong>Agent badge (claude-code)</strong></td>
-      <td><code>host.readFile(`${resolvedHome}/.claude/sessions/${pid}.json`)</code> + <code>host.watch(sessionsDir, onChange)</code> + <code>host.exec("tail", ["-c", "262144", transcriptPath])</code>. Pure channel B.</td>
+      <td><strong>Code-tab read / browse</strong></td>
+      <td><code>host.invoke({ kind: "fs.readFile", path })</code> on the controller side. On the remote, the daemon calls <code>fs.readFile</code> directly.</td>
     </tr>
     <tr>
-      <td><strong>Agent badge (opencode / codex)</strong></td>
-      <td><code>host.queryDb(opencodeDbPath, sessionLookupSql, params)</code> + <code>host.watch(walPath, onChange)</code>. Pure channel B.</td>
-    </tr>
-    <tr>
-      <td><strong>Code-tab file browser / read</strong></td>
-      <td><code>host.exec("ls", [path])</code> for directory listing; <code>host.readFile(path)</code> for content. Channel B.</td>
-    </tr>
-    <tr>
-      <td><strong>OSC 7/2/633;E injection</strong></td>
-      <td>kolu writes a per-terminal rcfile to the remote (via <code>host.exec("sh", ["-c", "cat > /tmp/kolu-rc-${id}"], { stdin: rcContent })</code> — channel B). The PTY ssh command is then <code>ssh -t host '… exec bash --rcfile /tmp/kolu-rc-${id}'</code>. Remote shell sources the rcfile; OSC sequences emit naturally as part of the shell's normal output, get parsed by xterm.js on the controller from channel A's byte stream.</td>
+      <td><strong>Worktree create / remove</strong></td>
+      <td><code>host.invoke({ kind: "git.worktreeCreate", repo, name })</code>. On the remote, the daemon calls <code>worktreeCreate(repo, name, log)</code> from <code>kolu-git</code> directly.</td>
     </tr>
     <tr>
       <td><strong>Foreground process detection</strong></td>
-      <td>OSC 633;E preexec hook in the rcfile prints the typed command name. Same mechanism as local. <code>tcgetpgrp</code>-based fallback (for cases where the user runs a sub-program via Tab-completion etc.) becomes a periodic <code>host.exec("ps", ["-o", "pid,comm,pgid", "-p", ptyPid])</code> over channel B.</td>
+      <td>When the remote terminal is spawned, the controller captures the local <code>ssh</code> child PID. It sends <code>host.subscribe({ kind: "foreground", terminalId })</code> with the controller-side ssh PID. The daemon walks <code>/proc</code> to find the ssh session's remote shell child, polls <code>tcgetpgrp</code> there, and emits <code>foregroundChange</code> events with the resolved process name. macOS-as-remote: deferred until needed (Linux-as-remote is the common case).</td>
     </tr>
     <tr>
-      <td><strong>session restore</strong></td>
+      <td><strong>Session restore</strong></td>
       <td>Persisted <code>hostId</code> on terminal metadata. On restore, <code>createTerminal(savedCwd, parentId, savedInitial, savedHostId)</code> spawns a new local PTY with ssh inside — same shape as initial creation.</td>
+    </tr>
+    <tr>
+      <td><strong>Multiple terminals sharing a watcher</strong></td>
+      <td>Five terminals on <code>srid-build-box</code> all subscribed to git info for the same <code>cwd</code> → the daemon's subscription handler dedupes: <em>one</em> underlying <code>subscribeGitInfo</code> call, five RPC stream subscribers, one event fanned out to all. Same activation-registry pattern as the local orchestrator uses today, just inside <code>kolu-remote-server</code> instead of <code>kolu-server</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Cross-arch deployment</strong></td>
+      <td><code>nix copy --derivation --to ssh-ng://&lt;alias&gt; &lt;closure&gt;.drv</code> on the controller. The remote realises the .drv (builds from source there using its own nix). No prebuilt binary for the remote arch needed locally; the remote does its own build. Substituters cache subsequent builds. Same-arch: <code>nix copy</code> the realised closure (fast path with substituters).</td>
     </tr>
   </tbody>
 </table>
 
-<p><strong>The kolu-remote-server is much smaller under this approach.</strong> It's a generic IO-RPC daemon (exec, readFile, watch, queryDb, statMtimeMs) with no PTY engine, no ring buffer, no sequence numbering, no attach/replay. Estimate: ~600 lines vs PR #929's ~1,200.</p>
-
-<h3>2. Transport pluggability — Zed supports SSH, Docker, WSL, and mock</h3>
-
-<p>Verified at <code>crates/remote/src/transport/</code>: four concrete transports behind a single <code>RemoteConnection</code> trait (<code>remote_client.rs:1509</code>). The trait has methods like <code>start_proxy</code>, <code>build_command</code>, <code>upload_directory</code>, <code>kill</code>, <code>connection_options</code>, <code>path_style</code>, <code>shell</code>. Any new transport implements the trait.</p>
-
-<p>Our <code>Host</code> interface already gestures at this (the <code>kind: "local" | "remote-ssh"</code> discriminator hints at future variants), but we don't have a structured transport seam yet. Worth shaping F5's <code>kolu-remote</code> with a <code>Transport</code> abstraction internally so a future <code>RemoteHost</code> over Docker or WSL or Tailscale-direct doesn't require rewriting the package. Cost: ~20 lines of interface declaration.</p>
-
-<h3>3. <code>CommandTemplate</code> abstraction</h3>
-
-<p>Verified at <code>crates/remote/src/transport/ssh.rs:303-371</code> and the trait at <code>remote_client.rs:1531</code>: Zed's transport doesn't run commands itself. It returns a <code>CommandTemplate { program, args, env }</code>. The caller decides what to do with it — feed it to a PTY (terminal), pass it to <code>child_process</code> (one-shot exec), etc.</p>
-
-<p>This is a clean separation. For our <code>integrations/remote/</code> package, the equivalent design: the RPC client exposes a <code>buildSshCommand({ remoteCmd, env, cwd, interactive }) → { program: "ssh", args: [...], env: {...} }</code> primitive. Callers (PTY spawn for the Zed-style terminal approach, or RPC exec for one-shot commands) consume the template.</p>
-
-<h3>4. Wire protocol — protobuf vs our planned NDJSON+Zod</h3>
-
-<p>Verified at <code>crates/remote/src/protocol.rs</code>: 4-byte little-endian length prefix, then encoded <code>rpc::proto::Envelope</code> (protobuf). 76 lines of framing total — much smaller than Zod schemas because protobuf does the codec work.</p>
-
-<p>Trade-offs honestly:</p>
-<ul>
-  <li><strong>NDJSON+Zod (this plan)</strong>: TypeScript-native, no codegen step, human-readable wire (debuggable via <code>cat</code>), schemas double as runtime validators.</li>
-  <li><strong>Protobuf (Zed)</strong>: binary-efficient, explicit schema versioning, fast codec, mature tooling, but adds a build step.</li>
-</ul>
-
-<p>NDJSON is the right pick for Kolu's stage — JavaScript ecosystem, no codegen tax, plenty fast for the message volume we'll see. Keep it. Worth knowing protobuf is the path forward if message throughput becomes a bottleneck (it won't, for terminal use).</p>
-
-<h3>5. Server binary deployment</h3>
-
-<p>Verified from <code>crates/remote/src/remote_client.rs:785</code> (<code>ensure_server_binary</code>) and <code>docs/src/remote-development.md</code>: Zed downloads a prebuilt server binary from <code>zed.dev</code> directly on the remote host (using the remote's network), or uploads from the controller via SSH (<code>upload_binary_over_ssh: true</code> setting) for networks where the remote can't reach the internet. Platform/arch detected via <code>uname -sm</code> first.</p>
-
-<p><strong>Kolu deployment is Nix-only.</strong> <code>nix copy --to ssh-ng://&lt;alias&gt;</code> pushes the controller's exact <code>kolu-remote-server</code> closure to the remote — same commit on both sides, no version skew, no HTTP download path needed. Cross-arch (controller and remote on different platforms) falls back to building from source on the remote via <code>nix run github:juspay/kolu#kolu-remote-server</code>. Same-arch path uses substituted binaries from the cache. No env-override escape hatch — Nix is the deployment contract.</p>
-
-<h3>6. <code>Fs</code> trait and structured <code>GitRepository</code> — a richer IO abstraction than our <code>Executor</code></h3>
-
-<p>Verified at <code>crates/fs/src/fs.rs:97</code>: Zed's <code>Fs</code> trait has ~30 methods including <code>create_dir</code>, <code>create_file</code>, <code>copy_file</code>, <code>rename</code>, <code>remove_dir</code>, <code>trash</code>, <code>atomic_write</code>, <code>save</code>, <code>load_bytes</code>, <code>metadata</code>, <code>read_dir</code> (streaming), <code>watch</code> (streaming), plus first-class git operations (<code>open_repo</code>, <code>git_init</code>, <code>git_clone</code>, <code>git_config</code>).</p>
-
-<p>And <code>open_repo</code> returns a <code>GitRepository</code> trait (verified at <code>crates/git/src/repository.rs:750</code>) with another ~30 methods:</p>
-
-<div class="diagram">pub trait GitRepository: Send + Sync {
-    fn reload_index(&self);
-    fn load_index_text(...) -> BoxFuture<'_, Option<String>>;
-    fn load_committed_text(...) -> BoxFuture<'_, Option<String>>;
-    fn load_blob_content(...) -> BoxFuture<'_, Result<String>>;
-    fn set_index_text(...) -> BoxFuture<'_, Result<()>>;
-    fn remote_url(...) -> BoxFuture<'_, Option<String>>;
-    fn revparse_batch(...) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
-    fn head_sha(&self) -> BoxFuture<'_, Option<String>>;
-    fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
-    fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
-    fn diff_tree(...) -> BoxFuture<'_, Result<TreeDiff>>;
-    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
-    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
-    fn change_branch(...) -> BoxFuture<'_, Result<()>>;
-    fn create_branch(...) -> BoxFuture<'_, Result<()>>;
-    fn rename_branch(...) -> BoxFuture<'_, Result<()>>;
-    fn delete_branch(...) -> BoxFuture<'_, Result<()>>;
-    fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
-    fn create_worktree(...) -> BoxFuture<'_, Result<()>>;
-    fn checkout_branch_in_worktree(...) -> BoxFuture<'_, Result<()>>;
-    fn remove_worktree(...) -> BoxFuture<'_, Result<()>>;
-    fn reset(&self, commit, mode, env) -> BoxFuture<'_, Result<()>>;
-    fn checkout_files(...) -> BoxFuture<'_, Result<()>>;
-    fn show(&self, commit) -> BoxFuture<'_, Result<CommitDetails>>;
-    fn load_commit(...) -> BoxFuture<'_, Result<CommitDiff>>;
-    fn blame(...) -> BoxFuture<'_, Result<Blame>>;
-    fn path(&self) -> PathBuf;
-    fn main_repository_path(&self) -> PathBuf;
-    // ... and more
-}</div>
-
-<h4>Comparison to our plan</h4>
+<h2>Phases</h2>
 
 <table>
-  <thead><tr><th></th><th>Zed: structured <code>GitRepository</code> trait</th><th>Our plan: kolu-git over <code>executor.exec("git", …)</code></th></tr></thead>
+  <thead><tr><th>Phase</th><th>Scope</th><th>Functional change?</th><th>Size</th></tr></thead>
   <tbody>
-    <tr><td>Surface</td><td>~30 typed methods returning <code>Branch</code>, <code>GitStatus</code>, <code>TreeDiff</code>, <code>CommitDetails</code>, etc.</td><td>~10 public functions, each builds <code>git</code> argv and parses stdout into typed shapes.</td></tr>
-    <tr><td>Local backend</td><td>libgit2 (or shell-out — runtime choice).</td><td>Always shell-out via <code>localExecutor.exec</code>.</td></tr>
-    <tr><td>Remote backend</td><td>Shell-out via RPC, or could be libgit2 server-side.</td><td>Shell-out via <code>host.exec("git", …)</code> RPC.</td></tr>
-    <tr><td>New git op (e.g. <code>git stash</code>)</td><td>Add method to trait + impl on both backends + define output shape.</td><td>Add a function to kolu-git that builds argv + parses output. One file.</td></tr>
-    <tr><td>Performance (local)</td><td>libgit2 avoids fork/exec per call. Big wins for editor-style usage (status on every keystroke, blame, etc.).</td><td>Each call forks <code>git</code>. ~5-20ms overhead per invocation. Fine for our usage (status on file-watch events, not per-keystroke).</td></tr>
-    <tr><td>Output parsing</td><td>Built into trait — each method returns a typed result.</td><td>Per-function parsers (<code>parseNameStatus</code>, etc.). Currently ~80 LOC across kolu-git for parsers.</td></tr>
-    <tr><td>Test surface</td><td>Trait mockable; fake impl for tests.</td><td><code>Executor</code> mockable; fake <code>exec</code> returns canned stdout.</td></tr>
-    <tr><td>Dependency on <code>git</code> CLI</td><td>Can drop CLI entirely if libgit2 backend used everywhere.</td><td>Requires <code>git</code> on both controller and remote.</td></tr>
+    <tr class="new-pkg">
+      <td><strong>P1</strong></td>
+      <td>Add <code>Host</code> interface to <code>kolu-io</code>. Create new <code>kolu-host</code> package with <code>LocalHost</code> + registry. <code>LocalHost.subscribe</code> dispatches to in-process provider subscribe functions; <code>LocalHost.invoke</code> dispatches to one-shot functions. <code>terminals.ts</code> calls <code>getHost(hostId).spawnPty(...)</code> via the registry (only <code>"local"</code> resolves for now). Persist <code>hostId</code> on terminal metadata (default <code>"local"</code>).</td>
+      <td class="cross">Internal restructure only — UI unchanged; tests pass identically</td>
+      <td class="num">~+400 new<br>~+80 modified</td>
+    </tr>
+    <tr class="modified">
+      <td><strong>P2</strong></td>
+      <td>Rewire <code>meta/git.ts</code> and <code>meta/agent.ts</code> to dispatch via <code>host.subscribe(...)</code> instead of calling provider subscribe functions directly. For local terminals, <code>LocalHost</code>'s subscribe path is structurally identical to today's call. Per-host activation registry moves to <code>LocalHost</code>.</td>
+      <td class="cross">Internal restructure only — same observable behaviour for local terminals</td>
+      <td class="num">~+150 modified</td>
+    </tr>
+    <tr class="new-pkg">
+      <td><strong>P3</strong></td>
+      <td>Create new <code>kolu-remote</code> package: <code>protocol.ts</code> (envelope Zod schemas), <code>rpc-client.ts</code> (NDJSON-over-SSH-stdio request/response/stream framing), <code>ssh-config.ts</code> (parse <code>~/.ssh/config</code>), <code>build-command.ts</code> (<code>CommandTemplate { program, args, env }</code> builder with ControlMaster opts), <code>bin/kolu-remote-server</code> (node daemon that imports the four integration packages and exposes subscribe/invoke handlers). Add <code>RemoteHost</code> in <code>kolu-host</code>. Wire <code>readSshHosts()</code> into registry. Add <code>host.list</code> RPC + host axis in palette. Nix deployment: <code>nix copy --derivation</code> the controller's closure.</td>
+      <td class="check">User-visible: remote PTYs work end-to-end with full metadata parity (branch chip, agent badges, Code-tab) on the first PR that ships this.</td>
+      <td class="num">~+1,200<br><span class="cite">~80% new pkg, ~20% kolu-host extensions</span></td>
+    </tr>
+    <tr class="modified">
+      <td><strong>P4</strong></td>
+      <td>Reliability: RPC channel auto-reconnects on SSH drop. Per-subscription snapshot-on-reconnect (daemon re-emits current state as a fresh event so the controller doesn't render stale data). <code>ControlPersist=10m</code> + periodic <code>ping</code> on idle.</td>
+      <td class="check">Metadata channel survives SSH blips; long-running watchers don't tear down on every reconnect.</td>
+      <td class="num">~+200, all in <code>kolu-remote</code></td>
+    </tr>
+    <tr class="modified">
+      <td><strong>P5</strong></td>
+      <td>UX polish: SSH chip on remote tiles, "Connecting to <code>&lt;host&gt;</code>…" placeholder, eager tile rendering (return the placeholder synchronously; swap in the real handle when ssh authenticates).</td>
+      <td class="check">Cosmetic</td>
+      <td class="num">~+200, all in <code>client/</code></td>
+    </tr>
   </tbody>
 </table>
 
-<h4>Why we don't adopt this</h4>
+<p>Five phases, five PRs (P3 is the only large one). Each targets <code>remote-terminal</code> branch off master; the branch merges to master once P1-P5 are complete. The plan PR (this one, #946) tracks design only.</p>
 
-<p>Zed has editor-grade git pressure: blame on every buffer, status diffed against HEAD per-file-change, branch picker, commit-history scrubbing, stash management — all interactive UI features that pay a cost per <code>git</code> invocation. libgit2 + structured trait pays off there.</p>
+<h3>What's NOT in the phasing</h3>
 
-<p>Kolu's git surface is narrower: <strong>branch name</strong> (for the chip), <strong>worktree create/remove</strong> (for branch switching), <strong>status</strong> (for the review pane), <strong>diff</strong> (for the review pane). All event-driven, not keystroke-driven. The fork-exec overhead per <code>git</code> call is negligible at our usage frequency. The structured-trait approach would cost us:</p>
+<p>No "thread executor through kolu-git" phase. No "thread executor through agent providers" phase. No async cascade in the integration packages. Those phases existed in earlier drafts of this plan when the architecture was "abstract the IO substrate"; under the run-providers-on-remote model they are unnecessary.</p>
 
-<ul>
-  <li>libgit2 native binding (cross-arch deployment complexity — same axis we've already accepted for node-pty)</li>
-  <li>~30 methods to implement on both backends</li>
-  <li>Per-op output shape definitions (where today we parse <code>git</code>'s stable text output)</li>
-  <li>A second source of truth for "what does <code>git status</code> mean" — kolu would have to reproduce git's exact semantics in code instead of letting <code>git</code> itself be the spec</li>
-</ul>
+<div class="footnote"><span class="label">Why we abandoned the executor approach</span> Earlier drafts had P1-P3 threading an <code>Executor</code> parameter through every IO-bearing function in kolu-git and the agent providers, with the remote daemon serving as a thin RPC shim for that IO. Two implementing PRs (#948, #949) showed the real cost: ~2,500 lines of churn across the integration packages, plus async-cascade race conditions that forced state-machine rewrites in the watcher code. The "just thread executor" framing turned out to require structural rewrites in code that should be untouched. The run-providers-on-remote model — Zed's approach — moves the substrate seam <em>outside</em> the integration packages: the daemon runs them, the controller talks to the daemon. Integration code is unchanged. See <code>.apm/skills/zed/SKILL.md</code> for the architectural reasoning.</div>
 
-<p><strong>Decision: keep kolu-git's <code>exec("git", …)</code> approach.</strong> Same `git` binary called via different exec backends; one source of truth (the CLI). If Kolu ever grows editor-grade git UI, revisit.</p>
+<h2>The <code>kolu-remote-server</code> daemon</h2>
 
-<h3>Summary of Zed-inspired changes</h3>
+<p>A node process. Single binary, deployed via Nix to the remote host. Its responsibilities, in full:</p>
 
-<table>
-  <thead><tr><th>Inspiration</th><th>Adopt?</th><th>Where in our plan</th></tr></thead>
-  <tbody>
-    <tr><td>Local PTY + ssh-inside (no remote PTY engine)</td><td><span class="check">Yes</span> — simplifies F5 and F7 substantially</td><td>F5 redesigned: RemoteHost.spawnPty wraps a local PTY whose program is ssh. F7 becomes "RPC reconnection" only — no ring buffer, no replay logic.</td></tr>
-    <tr><td>Multi-transport via <code>Transport</code> trait</td><td><span class="check">Yes</span></td><td>F5 shapes <code>integrations/remote/</code> with a Transport interface internally; SSH is the only impl initially.</td></tr>
-    <tr><td><code>CommandTemplate</code> abstraction</td><td><span class="check">Yes</span></td><td>F5's RPC client exposes a <code>buildSshCommand(...)</code> primitive that returns <code>{ program, args, env }</code> instead of running directly. Callers (PTY spawn for terminal; one-shot for RPC) consume the template.</td></tr>
-    <tr><td>SSH ControlMaster multiplexing</td><td><span class="check">Yes</span></td><td>The PTY's ssh process (channel A) and the kolu-remote-server RPC channel (B) share one TCP connection via <code>ControlMaster=auto</code> + <code>ControlPersist=10m</code>. Avoids paying the SSH handshake cost per channel.</td></tr>
-    <tr><td>Protobuf wire protocol</td><td><span class="cross">No</span> — stick with NDJSON+Zod</td><td>Kolu's TypeScript-native context; codegen tax not worth it for our message volume.</td></tr>
-    <tr><td>Streaming <code>read_dir</code> + <code>watch</code></td><td>Maybe later</td><td>Not in F1-F8 scope; revisit if our <code>Executor.watch</code> needs to scale.</td></tr>
-    <tr><td>Structured <code>GitRepository</code> trait</td><td><span class="cross">No</span></td><td>kolu-git's <code>exec("git", …)</code> approach works for our event-driven git surface. See comparison above; libgit2-style structured trait pays off for editor-grade pressure (blame, per-keystroke status), not our usage.</td></tr>
-  </tbody>
-</table>
+<ol>
+  <li><strong>Accept NDJSON envelope frames on stdin, write them on stdout.</strong> No socket, no port, no auth beyond SSH's own. The daemon runs as the user's UID on the remote; everything it can do, the user can do.</li>
+  <li><strong>Handle <code>invoke</code> requests by calling the corresponding integration function</strong>: <code>git.worktreeCreate</code> → <code>worktreeCreate(repo, name, log)</code> from kolu-git; <code>fs.readFile</code> → node's <code>fs.readFile</code>; etc.</li>
+  <li><strong>Handle <code>subscribe</code> requests by calling the corresponding integration subscribe function</strong> and wiring its callback to envelope-emit: <code>{ kind: "git", cwd }</code> → <code>subscribeGitInfo(cwd, (info) =&gt; emit({ kind: "event", respondingTo: subId, payload: info }), log)</code>.</li>
+  <li><strong>Dedup subscriptions across multiple subscribers</strong> on the same resource (same cwd → one underlying watcher, fan out events to N RPC streams).</li>
+  <li><strong>Track foreground process for remote terminals</strong>: maintains a map of <code>{ controllerSshPid → remoteShellPid }</code> built by walking <code>/proc</code> when a foreground subscription is established. Polls <code>tcgetpgrp</code> on the resolved shell PID; emits <code>foregroundChange</code> events on flip.</li>
+  <li><strong>Receive OSC rcfile content from the controller</strong> (one-shot <code>invoke("fs.writeTemp", { content })</code> at terminal-spawn time), write to <code>/tmp/kolu-rc-${id}</code>, return the path. The controller's <code>ssh -t host '... exec bash --rcfile /tmp/kolu-rc-${id}'</code> then sources it.</li>
+  <li><strong>Idle ping</strong>: every 30 seconds, send <code>{ kind: "ping" }</code> to keep ControlMaster's TCP idle timeout from firing.</li>
+  <li><strong>On stdin EOF or stdout broken-pipe, exit.</strong> No daemon-mode persistence across SSH drops — a new connection spawns a fresh daemon. (Subscriptions re-establish on reconnect; see P4.)</li>
+</ol>
+
+<p>Estimated daemon size: ~400 lines of node code, plus the deps it imports (kolu-git, kolu-claude-code, kolu-codex, kolu-opencode, kolu-io, kolu-pty's PtyHandle types — though the daemon doesn't spawn PTYs). Closure size is dominated by node-modules of the integration packages.</p>
+
+<h2>Cross-arch deployment via Nix</h2>
+
+<p>The remote may be x86_64 Linux while the controller is aarch64 macOS (or vice versa). Zed solves this by downloading prebuilt binaries per-arch from <code>zed.dev</code>; Kolu solves it via Nix:</p>
+
+<ol>
+  <li><strong>Same-arch path</strong> (controller and remote on same OS+arch): <code>nix copy --to ssh-ng://&lt;alias&gt; &lt;closure-path&gt;</code> ships the realised closure. Subsequent connects find it in the remote's Nix store; no rebuild.</li>
+  <li><strong>Cross-arch path</strong>: <code>nix copy --derivation --to ssh-ng://&lt;alias&gt; &lt;closure-path&gt;.drv</code> ships only the derivation (the build recipe). The remote then realises (<code>nix-store --realise &lt;drv&gt;</code> or equivalent) — building <code>kolu-remote-server</code> from source there. Substituters (e.g. <code>cache.nixos.asia/oss</code>) cache subsequent builds.</li>
+</ol>
+
+<p>No env-override escape hatch. No prebuilt-binary distribution channel. Nix is the deployment contract.</p>
 
 <h2>Trade-offs honestly</h2>
 
 <ul>
-  <li><span class="verdict good">Each user-visible PR is small.</span> F6a-d are ~20-150 lines touching one <code>meta/*.ts</code> file each. Reviewers can reason about one provider's remote behaviour at a time.</li>
-  <li><span class="verdict good">Refactor PRs are no-functional-change.</span> R1, R2 (merged), F1+F2+F3 (bundled, #947), F4 are mechanical refactors. Tests pass identically. Reviewers verify "did anything break?"</li>
-  <li><span class="verdict good">All refactors captured in the plan.</span> R1, R2 land first as standalone PRs; F1-F4 fold in additional refactor work; nothing is deferred to a "future cleanup."</li>
-  <li><span class="verdict good">R1 + R2 already shipped value to master.</span> Master is unambiguously better even if the feature never lands — the two extracted libraries stand on their own.</li>
-  <li><span class="verdict good">No partial-symmetry asymmetry.</span> Local and remote routing are structurally identical post-R1.</li>
-  <li><span class="verdict bad">Adding a new <code>Executor</code> op</span> later (e.g. <code>streamFile</code>) edits 4 places (<code>io/</code> interface, <code>localExecutor</code>, <code>RemoteHost</code>, helper protocol + manager). Acceptable; only matters when a second op forces the move.</li>
-  <li><span class="verdict bad">AsyncLocalStorage rejected.</span> See the dedicated section for the five concrete failure modes.</li>
+  <li><span class="verdict good">Integration packages are untouched.</span> Zero diff in <code>kolu-git</code>, <code>kolu-claude-code</code>, <code>kolu-codex</code>, <code>kolu-opencode</code>, <code>anyagent</code>. The whole point.</li>
+  <li><span class="verdict good">No executor abstraction.</span> No async cascade, no race condition rewrites in watchers, no concept multiplication between <code>Executor</code> and <code>Host</code>.</li>
+  <li><span class="verdict good">One code path runs on both sides.</span> Same provider source executes locally for local terminals and remotely (inside <code>kolu-remote-server</code>) for remote terminals. No risk of behavioral drift.</li>
+  <li><span class="verdict good">Smaller total diff.</span> ~+2,000 lines net across all phases vs the prior plan's ~+6,500. The ~+4,500 saved is the work we don't do on the integration packages.</li>
+  <li><span class="verdict bad">SSH drops kill the PTY.</span> The local PTY's ssh process dies; user spawns a new terminal to reconnect. Scrollback is gone. Accepted as the cost of dropping the helper-side PTY engine + ring buffer + replay (~1,200 lines we don't write).</li>
+  <li><span class="verdict bad">Remote needs node + the integration packages' native deps</span> (@parcel/watcher, node:sqlite). Same constraint as PR #929 had. Nix deployment handles it.</li>
+  <li><span class="verdict bad">Foreground-PID tracking on the remote needs <code>/proc</code> traversal.</span> Linux: straightforward. macOS-as-remote: needs <code>proc_listpids</code> via native binding. Defer until someone wants macOS-as-remote.</li>
+  <li><span class="verdict bad">Subscription protocol is more complex than plain request/response.</span> NDJSON envelope handles it; well-trodden pattern.</li>
+  <li><span class="verdict bad">Per-host dedup logic lives in <code>kolu-remote-server</code>, not <code>kolu-server</code>.</span> The activation registry idea moves to the daemon. Cleaner because there's only one "executor" per daemon instance.</li>
 </ul>
+
+<h2>What we borrowed from Zed (and what we didn't)</h2>
+
+<p>See <code>.apm/skills/zed/SKILL.md</code> for the full architectural research. The short version:</p>
+
+<table>
+  <thead><tr><th>Zed pattern</th><th>Adopt?</th></tr></thead>
+  <tbody>
+    <tr><td>Local PTY + <code>ssh -t host '...'</code> as the program (no PTY on remote)</td><td><span class="check">Yes</span></td></tr>
+    <tr><td>Headless daemon runs the same provider code as the controller</td><td><span class="check">Yes</span> — the core architectural choice</td></tr>
+    <tr><td>Subscriptions as streaming RPCs (one outbound, many inbound, <code>EndStream</code> to close)</td><td><span class="check">Yes</span></td></tr>
+    <tr><td>Length-prefixed protobuf wire</td><td><span class="cross">No</span> — NDJSON+Zod fits TS-native context; same shape, different encoding</td></tr>
+    <tr><td>Multi-transport (SSH / Docker / WSL / mock) behind a trait</td><td><span class="check">Aspire to</span> — leave the seam, ship SSH only initially</td></tr>
+    <tr><td>SSH ControlMaster multiplexing</td><td><span class="check">Yes</span> — set explicitly on every <code>ssh</code> invocation</td></tr>
+    <tr><td><code>nix copy</code> for deployment</td><td><span class="check">Yes</span> — Kolu's contract</td></tr>
+    <tr><td>30-method <code>Fs</code> trait + <code>GitRepository</code> trait with libgit2 backend</td><td><span class="cross">No</span> — over-engineered for Kolu's narrower IO surface; <code>kolu-git</code>'s existing <code>simpleGit</code>/<code>git CLI</code> usage suffices</td></tr>
+    <tr><td><code>CommandTemplate { program, args, env }</code> returned by transport</td><td><span class="check">Yes</span> — clean separation between "build the ssh invocation" and "what to do with it"</td></tr>
+    <tr><td>Project model reused headlessly on the remote</td><td><span class="cross">No</span> — Kolu has no <code>Project</code> equivalent; trying to invent one would be over-engineering</td></tr>
+    <tr><td>Per-connection collaboration plumbing (PeerId, rooms, ack flow control)</td><td><span class="cross">No</span> — Kolu's remote-terminal is single-user; dead weight to copy</td></tr>
+  </tbody>
+</table>
 
 <h2>Verification appendix</h2>
 
-<p>What I checked against <code>master</code> code vs. what's estimated. Master HEAD at verification time: <code>4b55c58a</code> (after R1 #944 and R2 #945 merged).</p>
+<p>What's verified vs estimated. Master HEAD at verification time: <code>4b55c58a</code>.</p>
 
 <table>
   <thead><tr><th>Claim</th><th>Status</th><th>Source</th></tr></thead>
   <tbody>
-    <tr><td>R1 actual size +144/−26, closes #942, merged via PR #944</td><td class="check">Verified</td><td><code>gh pr view 944 --json mergedAt,additions,deletions,closingIssuesReferences</code></td></tr>
-    <tr><td>R2 actual size +148/−53, closes #943, merged via PR #945</td><td class="check">Verified</td><td><code>gh pr view 945 --json …</code></td></tr>
-    <tr><td><code>kolu-io</code> exists on master with <code>refcounted-dir-watcher.ts</code> and zero <code>kolu-*</code> deps</td><td class="check">Verified</td><td><code>ls packages/integrations/io/src/</code> + read <code>package.json</code></td></tr>
-    <tr><td><code>kolu-pty</code> exists on master with <code>pty.ts</code> + <code>shell.ts</code> + tests, deps: <code>node-pty</code>, <code>@xterm/headless</code>, <code>@xterm/addon-serialize</code>, <code>kolu-shared</code></td><td class="check">Verified</td><td><code>ls</code> + <code>cat package.json</code></td></tr>
-    <tr><td>R2 parameterised <code>koluShellDir</code> as <code>rcDir</code> (per the plan recommendation)</td><td class="check">Verified</td><td><code>shell.ts:220,247,280</code> use <code>rcDir</code> param; <code>terminals.ts:111</code> passes <code>koluShellDir</code> at call site</td></tr>
-    <tr><td>Master has no <code>osc-parser.ts</code> (PR #929 adds it as new code; F5 will too)</td><td class="check">Verified</td><td><code>ls packages/server/src/</code></td></tr>
-    <tr><td>kolu-git on master has refcounted parcel-watcher composition (now imports <code>kolu-io</code> after R1)</td><td class="check">Verified</td><td><code>ls</code> shows <code>head-watcher.ts</code>, <code>index-watcher.ts</code>, etc.; R1 PR #944 confirms imports updated</td></tr>
-    <tr><td>Coupling smells #1-#11 in PR #929</td><td class="check">Verified</td><td>Read PR's package.jsons + import statements via <code>git show origin/feat/remote-terminal-prototype:&lt;path&gt;</code></td></tr>
-    <tr><td>Per-phase size estimates (F1-F8 line counts)</td><td><span class="cross">Estimated</span></td><td>Extrapolated from PR #929's per-file diff content. Order-of-magnitude.</td></tr>
+    <tr><td>R1 (#944) + R2 (#945) merged; <code>kolu-io</code> + <code>kolu-pty</code> exist on master</td><td class="check">Verified</td><td><code>ls packages/integrations/{io,pty}/src/</code></td></tr>
+    <tr><td>Zed runs PTYs locally with ssh inside (not on the remote)</td><td class="check">Verified</td><td><code>/tmp/zed/crates/remote/src/transport/ssh.rs:1768-1880</code> (<code>build_command_posix</code>); <code>/tmp/zed/crates/terminal/src/terminal.rs:568</code> (<code>tty::new</code>)</td></tr>
+    <tr><td>Zed's <code>remote_server</code> hosts file IO / LSP / search / Jupyter, not PTY</td><td class="check">Verified</td><td><code>/tmp/zed/crates/remote_server/src/headless_project.rs</code> — handler list inspected</td></tr>
+    <tr><td>Zed's wire is length-prefixed protobuf with <code>Envelope</code> oneof payload</td><td class="check">Verified</td><td><code>/tmp/zed/crates/remote/src/protocol.rs</code> + <code>/tmp/zed/crates/proto/proto/zed.proto</code></td></tr>
+    <tr><td>Zed's RPC has <code>send</code>, <code>request</code>, <code>request_stream</code>, <code>forward_*</code>, <code>respond</code> primitives</td><td class="check">Verified</td><td><code>/tmp/zed/crates/rpc/src/peer.rs</code></td></tr>
+    <tr><td>Per-phase size estimates (P1 ~+400, P3 ~+1,200, etc.)</td><td><span class="cross">Estimated</span></td><td>Order-of-magnitude. The integration packages contribute 0; the new packages dominate.</td></tr>
+    <tr><td>Cross-arch <code>nix copy --derivation</code> path works for kolu-remote-server</td><td><span class="cross">Estimated</span></td><td>The Nix mechanism is well-known; not yet exercised on a real kolu-remote-server closure.</td></tr>
   </tbody>
 </table>
 
