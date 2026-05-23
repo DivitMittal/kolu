@@ -57,7 +57,10 @@ export type RankedDockRow = {
 /** Project a terminal id list into the recency-sorted, bucket-classified
  *  row order the dock paints. Secondary key is bucket priority so
  *  never-touched plain shells don't outrank an idle terminal with the
- *  same `ts === 0`. */
+ *  same `ts === 0`. `isStale` is a pure-temporal predicate over
+ *  `lastActivityAt` — identity for stale-but-still-awaiting agents lives
+ *  at the render layer (`QuietRowBody` paints `AgentIndicator` when
+ *  `meta.agent` is set), not in the bucket decision here. */
 export function rankDockRows(
   ids: readonly TerminalId[],
   getMeta: (id: TerminalId) => TerminalMetadata | undefined,
