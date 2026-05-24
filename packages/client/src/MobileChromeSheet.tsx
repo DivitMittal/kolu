@@ -67,7 +67,7 @@ const MobileChromeSheet: Component<{
         />
       </div>
 
-      {/* Control cluster — palette, settings, inspector. Each button
+      {/* Control cluster — palette, settings, files. Each button
        *  stops propagation on pointerdown so Corvu Drawer's drag handler
        *  on Drawer.Content can't claim the tap as the start of a drag
        *  (which would suppress the click). */}
