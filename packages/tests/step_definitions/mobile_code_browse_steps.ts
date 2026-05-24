@@ -68,6 +68,97 @@ When("I tap the mobile code close button", async function (this: KoluWorld) {
   await this.waitForFrame();
 });
 
+/** Dispatch a synthetic touchstart on the buffer cell where `target`
+ *  appears in the active terminal's output. Exercises the
+ *  touchstart-capture handler in `Terminal.tsx` that powers mobile
+ *  file-ref taps — xterm's hover-armed link provider never fires on
+ *  iOS, so kolu intercepts the touch directly. The test path bypasses
+ *  Playwright's tap actionability gates (which never settle against
+ *  xterm's reactive buffer rendering) and goes straight at the
+ *  handler the production code registers. */
+When(
+  "I tap terminal text {string}",
+  async function (this: KoluWorld, target: string) {
+    const point = await this.page.evaluate((targetText) => {
+      type BufferLine = { translateToString(trim?: boolean): string };
+      type XtermForClick = {
+        cols: number;
+        rows: number;
+        buffer: {
+          active: {
+            viewportY: number;
+            length: number;
+            getLine(index: number): BufferLine | undefined;
+          };
+        };
+      };
+      const el = document.querySelector("[data-focused]") as
+        | (HTMLElement & { __xterm?: XtermForClick })
+        | null;
+      const term = el?.__xterm;
+      const screen = el?.querySelector(".xterm-screen");
+      if (!el || !term || !screen) return null;
+      const b = term.buffer.active;
+      const top = b.viewportY;
+      for (let row = top; row < top + term.rows; row++) {
+        const line = b.getLine(row)?.translateToString(true) ?? "";
+        // Skip the command-echo line (prompt + typed text). Prompt
+        // glyphs vary by shell; `❯` covers starship's default.
+        if (line.includes("❯")) continue;
+        const col = line.indexOf(targetText);
+        if (col < 0) continue;
+        const rect = (screen as Element).getBoundingClientRect();
+        const cellW = rect.width / term.cols;
+        const cellH = rect.height / term.rows;
+        const x = rect.left + (col + targetText.length / 2) * cellW;
+        const y = rect.top + (row - top + 0.5) * cellH;
+        return { x, y };
+      }
+      return null;
+    }, target);
+    if (!point) {
+      throw new Error(`terminal text "${target}" not found in viewport`);
+    }
+    await this.page.evaluate((p) => {
+      const el = document.querySelector("[data-focused]");
+      if (!el) return;
+      const touch = new Touch({
+        identifier: 1,
+        target: el,
+        clientX: p.x,
+        clientY: p.y,
+        pageX: p.x,
+        pageY: p.y,
+        screenX: p.x,
+        screenY: p.y,
+        radiusX: 1,
+        radiusY: 1,
+        rotationAngle: 0,
+        force: 1,
+      });
+      el.dispatchEvent(
+        new TouchEvent("touchstart", {
+          cancelable: true,
+          bubbles: true,
+          touches: [touch],
+          targetTouches: [touch],
+          changedTouches: [touch],
+        }),
+      );
+    }, point);
+    await this.waitForFrame();
+  },
+);
+
+Then(
+  "a toast should mention {string}",
+  async function (this: KoluWorld, fragment: string) {
+    await this.page
+      .locator(`[data-sonner-toast]`, { hasText: fragment })
+      .waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  },
+);
+
 Then(
   "the mobile code sheet should be visible",
   async function (this: KoluWorld) {

@@ -45,6 +45,40 @@ Feature: Mobile code browser
     And there should be no page errors
 
   @mobile
+  Scenario: Tapping an absolute path in terminal output resolves to a repo-relative file
+    # Regression: terminal output emits absolute paths (`pwd`, error
+    # traces, build logs). The mobile path used to shove the raw
+    # absolute string into the selection slot — `fsReadFile` then
+    # rejected with "path escapes root" or EISDIR depending on where
+    # the repo root sat. `resolveLineRefPath` in `MobileCodeSheet`
+    # now strips the repo prefix before the slot is written.
+    When I run "rm -rf /tmp/kolu-mobile-abs && git init /tmp/kolu-mobile-abs && cd /tmp/kolu-mobile-abs"
+    And I run "echo hello > README.md"
+    And I run "git add README.md && git commit -m init"
+    And I run "echo /tmp/kolu-mobile-abs/README.md"
+    And I tap terminal text "/tmp/kolu-mobile-abs/README.md"
+    Then the mobile code sheet should be visible
+    And the mobile file view should be visible
+    And there should be no page errors
+
+  @mobile
+  Scenario: Tapping a path outside the repo surfaces a "not found" toast
+    # Regression: the bug the user reported on iPhone — tapping a
+    # path that doesn't resolve under the active repo used to push
+    # the absolute string at `fsReadFile` and render a server error.
+    # Now it toasts and leaves the slot empty so the tree stays
+    # visible.
+    When I run "rm -rf /tmp/kolu-mobile-offrepo && git init /tmp/kolu-mobile-offrepo && cd /tmp/kolu-mobile-offrepo"
+    And I run "echo hello > a.txt"
+    And I run "git add a.txt && git commit -m init"
+    And I run "echo /etc/passwd"
+    And I tap terminal text "/etc/passwd"
+    Then the mobile code sheet should be visible
+    And the mobile file view should not be visible
+    And a toast should mention "File reference not found"
+    And there should be no page errors
+
+  @mobile
   Scenario: Close button dismisses the drawer
     When I run "rm -rf /tmp/kolu-mobile-close && git init /tmp/kolu-mobile-close && cd /tmp/kolu-mobile-close"
     And I run "echo hi > x.txt"
