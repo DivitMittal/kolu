@@ -22,7 +22,7 @@
 
 import { FileTree } from "@kolu/solid-pierre";
 import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
-import { type Component, Show } from "solid-js";
+import { type Component, Match, Show, Switch } from "solid-js";
 import { toast } from "solid-sonner";
 import BrowseFileDispatcher from "./right-panel/BrowseFileDispatcher";
 import { useRightPanel } from "./right-panel/useRightPanel";
@@ -120,39 +120,40 @@ const MobileCodeSheet: Component<{
             <Show
               when={selectedPath()}
               fallback={
-                <Show
-                  when={!allPaths.error()}
+                <Switch
                   fallback={
-                    <div class="px-2 py-1 text-danger text-[11px]">
-                      Error: {allPaths.error()?.message}
+                    <div class="px-2 py-1 text-fg-3/50 text-[11px]">
+                      Loading…
                     </div>
                   }
                 >
-                  <Show
-                    when={allPaths()}
-                    fallback={
-                      <div class="px-2 py-1 text-fg-3/50 text-[11px]">
-                        Loading…
+                  <Match when={allPaths.error()}>
+                    {(err) => (
+                      <div class="px-2 py-1 text-danger text-[11px]">
+                        Error: {err().message}
                       </div>
-                    }
-                  >
-                    <FileTree
-                      paths={allPaths()?.paths ?? []}
-                      selectedPath={null}
-                      onSelect={(p) => {
-                        if (p !== null) setSelectedPath(p);
-                      }}
-                      initialExpansion="closed"
-                      search={true}
-                      icons={pierreIconConfig}
-                      onError={(err) =>
-                        toast.error(`File tree render failed: ${err.message}`)
-                      }
-                      class="h-full w-full"
-                      style={pierreTreesStyle}
-                    />
-                  </Show>
-                </Show>
+                    )}
+                  </Match>
+                  <Match when={allPaths()}>
+                    {(paths) => (
+                      <FileTree
+                        paths={paths().paths}
+                        selectedPath={null}
+                        onSelect={(p) => {
+                          if (p !== null) setSelectedPath(p);
+                        }}
+                        initialExpansion="closed"
+                        search={true}
+                        icons={pierreIconConfig}
+                        onError={(err) =>
+                          toast.error(`File tree render failed: ${err.message}`)
+                        }
+                        class="h-full w-full"
+                        style={pierreTreesStyle}
+                      />
+                    )}
+                  </Match>
+                </Switch>
               }
             >
               {(path) => {
