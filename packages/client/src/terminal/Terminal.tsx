@@ -470,25 +470,30 @@ const Terminal: Component<{
           linkProviderDisposable = term.registerLinkProvider(
             createFileRefLinkProvider(term, {
               onActivate: (ref) => {
-                if (isMobile()) {
-                  // The right panel doesn't exist on mobile; route to
-                  // the Files drawer instead. No repoRoot gate here —
-                  // `MobileCodeSheet` reads `meta.git.repoRoot` from the
-                  // active terminal's signal at mount and renders the
-                  // "not in a git repository" fallback when null, so
-                  // clicking a link in a non-repo terminal still opens
-                  // the drawer with a useful message instead of looking
-                  // silently dead. The desktop helper would also write
-                  // `rightPanel.collapsed = false` to preferences — a
-                  // server-persisted mutation with no UI effect on
-                  // mobile but a stale toggle waiting to surprise the
-                  // user the next time they open Kolu on desktop.
-                  openInMobileFiles({ path: ref.path });
-                  return;
-                }
                 const meta = terminalStore.getMetadata(props.terminalId);
                 const repoRoot = meta?.git?.repoRoot ?? null;
                 if (!repoRoot) return;
+                if (isMobile()) {
+                  // The right panel doesn't exist on mobile; route to
+                  // the Files drawer instead. `MobileCodeSheet` will
+                  // run `resolveLineRefPath` against the live
+                  // `fsListAll` paths before writing the selection
+                  // slot — terminal output emits absolute paths
+                  // (`pwd`) and cwd-relative paths that `fsReadFile`
+                  // would reject as `path escapes root` if we pushed
+                  // them in raw. The desktop helper would also write
+                  // `rightPanel.collapsed = false` to preferences —
+                  // a server-persisted mutation with no UI effect on
+                  // mobile but a stale toggle on the user's next
+                  // desktop session.
+                  openInMobileFiles({
+                    ref,
+                    repoRoot,
+                    cwd: meta?.cwd,
+                    targetMode: "browse",
+                  });
+                  return;
+                }
                 openInCodeTab({
                   ref,
                   repoRoot,
@@ -557,8 +562,16 @@ const Terminal: Component<{
                 (m) => col >= m.index && col < m.index + m.text.length,
               );
               if (!hit) return;
+              const meta = terminalStore.getMetadata(props.terminalId);
+              const repoRoot = meta?.git?.repoRoot ?? null;
+              if (!repoRoot) return;
               e.preventDefault();
-              openInMobileFiles({ path: hit.path });
+              openInMobileFiles({
+                ref: hit,
+                repoRoot,
+                cwd: meta?.cwd,
+                targetMode: "browse",
+              });
             },
             { capture: true, passive: false },
           );

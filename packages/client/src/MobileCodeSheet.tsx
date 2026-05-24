@@ -22,11 +22,23 @@
 
 import { FileTree } from "@kolu/solid-pierre";
 import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
-import { type Component, Match, Show, Switch } from "solid-js";
+import {
+  type Component,
+  createEffect,
+  Match,
+  on,
+  Show,
+  Switch,
+} from "solid-js";
 import { toast } from "solid-sonner";
+import {
+  type OpenInMobileFilesRequest,
+  pendingMobileOpen,
+} from "./openInMobileFiles";
 import BrowseFileDispatcher from "./right-panel/BrowseFileDispatcher";
 import { useRightPanel } from "./right-panel/useRightPanel";
 import { useColorScheme } from "./settings/useColorScheme";
+import { resolveLineRefPath } from "./ui/lineRef";
 import { pierreIconConfig, pierreTreesStyle } from "./ui/pierreTheme";
 import { app } from "./wire";
 import { FileBrowseIcon, GitBranchIcon } from "./ui/Icons";
@@ -55,6 +67,48 @@ const MobileCodeSheet: Component<{
     {
       onError: (err) => toast.error(`File list stream: ${err.message}`),
     },
+  );
+
+  // Consume `openInMobileFiles` requests once `fsListAll` has settled.
+  // Mirrors `CodeTab.tsx`'s `pendingOpen` consumer — terminal output
+  // emits absolute paths (`/abs/path`), cwd-relative paths
+  // (`error in foo.ts:42` while in a subdir), and basename-only
+  // references (`Foo.hs:42` from compiler output that drops the
+  // `src/lib/` prefix); `resolveLineRefPath` normalizes them against
+  // the live repo file set. Writing `req.ref.path` raw into the
+  // selection slot (the bug this effect fixes) pushes
+  // un-resolvable strings at `fsReadFile` and the server returns
+  // `path escapes root` or `EISDIR`.
+  let lastHandled: OpenInMobileFilesRequest | null = null;
+  createEffect(
+    on(
+      () => {
+        const req = pendingMobileOpen();
+        const paths = allPaths();
+        const isPending = allPaths.pending();
+        return { req, paths, isPending };
+      },
+      ({ req, paths, isPending }) => {
+        if (!req) return;
+        if (lastHandled === req) return;
+        const repo = repoPath();
+        if (repo === null || repo !== req.repoRoot) return;
+        if (isPending || !paths) return;
+        const rel = resolveLineRefPath({
+          rawPath: req.ref.path,
+          repoRoot: repo,
+          cwd: req.cwd,
+          repoPaths: paths.paths,
+        });
+        lastHandled = req;
+        if (rel === null) {
+          toast.error(`File reference not found: ${req.ref.path}`);
+          return;
+        }
+        rightPanel.setSelectedFile("browse", rel);
+      },
+      { defer: true },
+    ),
   );
 
   return (

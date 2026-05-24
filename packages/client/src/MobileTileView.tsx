@@ -80,14 +80,16 @@ const MobileTileView: Component<{
 
   // External producers (today: terminal `path:line` link clicks in
   // `Terminal.tsx`) request the Files drawer via `openInMobileFiles`,
-  // which bumps the counter we subscribe to here. `defer: true` skips
-  // the initial-mount tick so the drawer stays closed until a real
-  // request lands.
+  // which emits a fresh request object we subscribe to here. `defer:
+  // true` skips the initial-mount tick so the drawer stays closed
+  // until a real request lands. Path resolution + slot-write happens
+  // inside `MobileCodeSheet` once the drawer is mounted and
+  // `fsListAll` has settled.
   createEffect(
     on(
       pendingMobileOpen,
-      () => {
-        setFilesOpen(true);
+      (req) => {
+        if (req !== null) setFilesOpen(true);
       },
       { defer: true },
     ),
