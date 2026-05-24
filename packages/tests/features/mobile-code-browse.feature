@@ -13,7 +13,7 @@ Feature: Mobile code browser
 
   @mobile
   Scenario: Files button opens the mobile code sheet
-    When I run "git init /tmp/kolu-mobile-files && cd /tmp/kolu-mobile-files"
+    When I run "rm -rf /tmp/kolu-mobile-files && git init /tmp/kolu-mobile-files && cd /tmp/kolu-mobile-files"
     And I run "echo hello > a.txt"
     And I run "git add a.txt && git commit -m init"
     And I tap the mobile pull handle
@@ -24,7 +24,7 @@ Feature: Mobile code browser
 
   @mobile
   Scenario: Tapping a text file shows its content
-    When I run "git init /tmp/kolu-mobile-text && cd /tmp/kolu-mobile-text"
+    When I run "rm -rf /tmp/kolu-mobile-text && git init /tmp/kolu-mobile-text && cd /tmp/kolu-mobile-text"
     And I run "echo hello > readme.txt"
     And I run "git add readme.txt && git commit -m init"
     And I tap the mobile pull handle
@@ -35,7 +35,7 @@ Feature: Mobile code browser
 
   @mobile
   Scenario: Tapping an HTML file shows the iframe preview
-    When I run "git init /tmp/kolu-mobile-html && cd /tmp/kolu-mobile-html"
+    When I run "rm -rf /tmp/kolu-mobile-html && git init /tmp/kolu-mobile-html && cd /tmp/kolu-mobile-html"
     And I run "printf '<h1>hi</h1>' > index.html"
     And I run "git add index.html && git commit -m init"
     And I tap the mobile pull handle
@@ -46,7 +46,7 @@ Feature: Mobile code browser
 
   @mobile
   Scenario: Back arrow dismisses the detail view
-    When I run "git init /tmp/kolu-mobile-back && cd /tmp/kolu-mobile-back"
+    When I run "rm -rf /tmp/kolu-mobile-back && git init /tmp/kolu-mobile-back && cd /tmp/kolu-mobile-back"
     And I run "echo hi > foo.md"
     And I run "git add foo.md && git commit -m init"
     And I tap the mobile pull handle
@@ -59,7 +59,7 @@ Feature: Mobile code browser
 
   @mobile
   Scenario: Close button dismisses the drawer
-    When I run "git init /tmp/kolu-mobile-close && cd /tmp/kolu-mobile-close"
+    When I run "rm -rf /tmp/kolu-mobile-close && git init /tmp/kolu-mobile-close && cd /tmp/kolu-mobile-close"
     And I run "echo hi > x.txt"
     And I run "git add x.txt && git commit -m init"
     And I tap the mobile pull handle
