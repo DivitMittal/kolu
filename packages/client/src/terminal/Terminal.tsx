@@ -48,6 +48,7 @@ import { isMobile } from "../useMobile";
 import { preferences } from "../wire";
 import { isTouch } from "../useMobile";
 import { createFileRefLinkProvider } from "./fileRefLinkProvider";
+import { parseLineRefs } from "../ui/lineRef";
 import ScrollToBottom from "./ScrollToBottom";
 import SearchBar from "./SearchBar";
 import { registerTerminalRefs, unregisterTerminalRefs } from "./terminalRefs";
@@ -516,6 +517,51 @@ const Terminal: Component<{
           // div stays free of interactive props that would force a11y roles
           // — the actual interactive surface is the xterm canvas inside.
           containerRef.addEventListener("click", () => term.focus());
+
+          // Mobile: bypass xterm's link decoration on touchstart. xterm arms
+          // its activate callback only after a `mousemove` over the link
+          // cell has painted the decoration — iOS has no hover phase, so a
+          // bare tap fires `click` against the helper textarea (popping the
+          // soft keyboard) before xterm's link layer ever sees it. Capture
+          // the touch ourselves, parse the buffer line for `path:line`
+          // refs, and route the hit through `openInMobileFiles` directly.
+          // `preventDefault` keeps iOS from synthesizing the focus shift +
+          // keyboard pop. Desktop is unaffected — the touchstart listener
+          // only fires under `isMobile()` and never on a mouse-only client.
+          containerRef.addEventListener(
+            "touchstart",
+            (e) => {
+              if (!isMobile()) return;
+              const touch = e.touches[0];
+              if (!touch) return;
+              const screen = containerRef.querySelector(".xterm-screen");
+              if (!screen) return;
+              const rect = (screen as Element).getBoundingClientRect();
+              if (
+                touch.clientX < rect.left ||
+                touch.clientX > rect.right ||
+                touch.clientY < rect.top ||
+                touch.clientY > rect.bottom
+              ) {
+                return;
+              }
+              const cellW = rect.width / term.cols;
+              const cellH = rect.height / term.rows;
+              const col = Math.floor((touch.clientX - rect.left) / cellW);
+              const visRow = Math.floor((touch.clientY - rect.top) / cellH);
+              const bufRow = term.buffer.active.viewportY + visRow;
+              const line =
+                term.buffer.active.getLine(bufRow)?.translateToString(true) ??
+                "";
+              const hit = parseLineRefs(line).find(
+                (m) => col >= m.index && col < m.index + m.text.length,
+              );
+              if (!hit) return;
+              e.preventDefault();
+              openInMobileFiles({ path: hit.path });
+            },
+            { capture: true, passive: false },
+          );
           // Mobile: route soft-keyboard input through `.xterm-screen` itself,
           // the way hterm does (libapps/hterm/js/hterm_scrollport.js:617-655).
           //
