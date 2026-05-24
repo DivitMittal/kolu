@@ -2,7 +2,11 @@
  *  `MobileCodeSheet.tsx`, `MobileTileView.tsx`, `MobileChromeSheet.tsx`. */
 
 import { Then, When } from "@cucumber/cucumber";
-import { type KoluWorld, POLL_TIMEOUT } from "../support/world.ts";
+import {
+  HYDRATION_TIMEOUT,
+  type KoluWorld,
+  POLL_TIMEOUT,
+} from "../support/world.ts";
 
 const FILES_TRIGGER = '[data-testid="mobile-files-trigger"]';
 const CODE_SHEET = '[data-testid="mobile-code-sheet"]';
@@ -16,6 +20,27 @@ function fileRow(path: string): string {
   return `${TREE} [data-item-path="${path}"][data-item-type="file"]:not([data-file-tree-sticky-row])`;
 }
 
+/** Two-step wait mirroring `waitForCodeTabReady` in `code_tab_steps.ts`.
+ *  The full chain (`fs.watcher → server → SSE → SolidJS → Pierre mount`)
+ *  can take well over the per-interaction `POLL_TIMEOUT` on a loaded
+ *  darwin CI runner — fusing both axes into one wait starves the slow
+ *  hydration side. Wait for any non-sticky row at the hydration budget,
+ *  then the specific row at the interaction budget. */
+async function waitForMobileTreeRow(
+  world: KoluWorld,
+  path: string,
+): Promise<void> {
+  await world.page
+    .locator(
+      `${TREE} [data-item-path][data-item-type]:not([data-file-tree-sticky-row])`,
+    )
+    .first()
+    .waitFor({ state: "visible", timeout: HYDRATION_TIMEOUT });
+  await world.page
+    .locator(fileRow(path))
+    .waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+}
+
 When("I tap the mobile files button", async function (this: KoluWorld) {
   await this.page.locator(FILES_TRIGGER).tap();
 });
@@ -23,15 +48,12 @@ When("I tap the mobile files button", async function (this: KoluWorld) {
 When(
   "I tap mobile file {string}",
   async function (this: KoluWorld, path: string) {
-    // Wait for the row to appear — `fsListAll` is a live stream that may
-    // arrive shortly after the drawer opens. Pierre's virtualized tree
-    // repositions rows reactively, so Playwright's stability check
-    // never settles on a tap target inside the drawer; `dispatchEvent`
-    // fires the click event the row's handler listens for without the
-    // stability/visibility actionability gate.
-    const row = this.page.locator(fileRow(path));
-    await row.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
-    await row.dispatchEvent("click");
+    // Pierre's virtualized tree repositions rows reactively, so
+    // Playwright's stability check never settles on a tap target inside
+    // the drawer; `dispatchEvent` fires the click event the row's handler
+    // listens for without the stability/visibility actionability gate.
+    await waitForMobileTreeRow(this, path);
+    await this.page.locator(fileRow(path)).dispatchEvent("click");
     await this.waitForFrame();
   },
 );
@@ -67,9 +89,7 @@ Then(
 Then(
   "the mobile file tree should contain {string}",
   async function (this: KoluWorld, path: string) {
-    await this.page
-      .locator(fileRow(path))
-      .waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+    await waitForMobileTreeRow(this, path);
   },
 );
 
