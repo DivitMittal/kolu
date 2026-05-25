@@ -87,7 +87,13 @@ const App: Component = () => {
   // accessor consumed by the unified command palette's "Search
   // workspaces" group. `useDockOrder` is the single source of dock row
   // order; consuming it here keeps `Cmd+1..9` targeting the exact row
-  // the dock paints, including the new tree-depth-first walk.
+  // the dock paints.
+  //
+  // The shortcut now follows the dock tree's depth-first walk (repo →
+  // branch → terminal), not flat recency. Folded groups still contribute
+  // their children to the walk so a folded terminal at index N is still
+  // reachable via Cmd+(N+1) — fold state is a render concern, not a
+  // navigation concern.
   const workspaceEntries = createMemo(() =>
     buildWorkspaceEntries(
       store.terminalIds(),
