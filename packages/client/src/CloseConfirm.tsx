@@ -9,6 +9,7 @@ import { type Component, Show } from "solid-js";
 import ChecksIndicator from "./terminal/ChecksIndicator";
 import { PrStateIcon, WorktreeIcon } from "./ui/Icons";
 import ModalDialog from "./ui/ModalDialog";
+import { surface } from "./ui/Surface";
 
 /** Reasons why the "Remove worktree" action is suppressed.
  *
@@ -57,6 +58,7 @@ const CloseConfirm: Component<{
   };
   const splitCount = () => props.target?.splitCount ?? 0;
   const closeLabel = () => (splitCount() > 0 ? "Close all" : "Close terminal");
+  const chrome = surface({ portalled: true });
 
   return (
     <ModalDialog
@@ -68,9 +70,9 @@ const CloseConfirm: Component<{
       size="sm"
     >
       <Dialog.Content
-        class="bg-surface-1 border border-edge rounded-2xl shadow-2xl shadow-black/50 p-5 text-sm space-y-4"
+        class={`${chrome.class} p-5 text-sm space-y-4`}
+        style={chrome.style}
         data-testid="close-confirm"
-        style={{ "background-color": "var(--color-surface-1)" }}
       >
         <Dialog.Label class="font-semibold text-fg">
           <Show
