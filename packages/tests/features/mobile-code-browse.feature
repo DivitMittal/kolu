@@ -52,11 +52,17 @@ Feature: Mobile code browser
     # rejected with "path escapes root" or EISDIR depending on where
     # the repo root sat. `resolveLineRefPath` in `MobileCodeSheet`
     # now strips the repo prefix before the slot is written.
-    When I run "rm -rf /tmp/kolu-mobile-abs && git init /tmp/kolu-mobile-abs && cd /tmp/kolu-mobile-abs"
-    And I run "echo hello > README.md"
-    And I run "git add README.md && git commit -m init"
-    And I run "echo /tmp/kolu-mobile-abs/README.md"
-    And I tap terminal text "/tmp/kolu-mobile-abs/README.md"
+    #
+    # The path is kept short (`/tmp/k-abs/r.md`) so it fits on a
+    # single physical buffer row at the darwin-CI mobile-emulated
+    # viewport width — the production code now joins wrapped rows
+    # before parsing, but the test's buffer scan is cheaper when
+    # the target never spans a wrap.
+    When I run "rm -rf /tmp/k-abs && git init /tmp/k-abs && cd /tmp/k-abs"
+    And I run "echo hi > r.md"
+    And I run "git add r.md && git commit -m i"
+    And I run "echo /tmp/k-abs/r.md"
+    And I tap terminal text "/tmp/k-abs/r.md"
     Then the mobile code sheet should be visible
     And the mobile file view should be visible
     And there should be no page errors
@@ -68,9 +74,9 @@ Feature: Mobile code browser
     # the absolute string at `fsReadFile` and render a server error.
     # Now it toasts and leaves the slot empty so the tree stays
     # visible.
-    When I run "rm -rf /tmp/kolu-mobile-offrepo && git init /tmp/kolu-mobile-offrepo && cd /tmp/kolu-mobile-offrepo"
-    And I run "echo hello > a.txt"
-    And I run "git add a.txt && git commit -m init"
+    When I run "rm -rf /tmp/k-off && git init /tmp/k-off && cd /tmp/k-off"
+    And I run "echo hi > a.txt"
+    And I run "git add a.txt && git commit -m i"
     And I run "echo /etc/passwd"
     And I tap terminal text "/etc/passwd"
     Then the mobile code sheet should be visible
