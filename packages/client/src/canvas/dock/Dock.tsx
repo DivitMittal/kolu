@@ -160,12 +160,9 @@ function isGroupFolded(key: string): boolean {
 }
 
 function toggleGroupFold(key: string): void {
-  const set = foldedSet();
-  if (set.has(key)) {
-    setFoldedGroups(foldedGroups().filter((k) => k !== key));
-  } else {
-    setFoldedGroups([...foldedGroups(), key]);
-  }
+  setFoldedGroups((prev) =>
+    prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+  );
 }
 
 const Dock: Component<{
