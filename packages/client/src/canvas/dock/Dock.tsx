@@ -42,7 +42,7 @@ import {
 import { toast } from "solid-sonner";
 import IntentBody from "../../intent/IntentBody";
 import AgentIndicator from "../../terminal/AgentIndicator";
-import { formatTimeAgo, useStaleCheck } from "../../terminal/staleness";
+import { formatTimeAgo } from "../../terminal/staleness";
 import IntentGlyph from "../../intent/IntentGlyph";
 import { IntentMarkdownInline } from "../../intent/IntentMarkdown";
 import { annotationLine } from "../../intent/text";
@@ -60,7 +60,10 @@ import { client } from "../../wire";
 import { isPlatformModifier } from "../../input/keyboard";
 import { useTileTheme } from "../useTileTheme";
 import { useViewPosture } from "../useViewPosture";
-import { type DockRowBucket, rankDockRows } from "./dockRowRanking";
+import type { DockRowBucket } from "./dockRowRanking";
+import type { DockTreeGroup } from "./dockTree";
+import { flattenForRender } from "./dockTree";
+import { useDockOrder } from "./useDockOrder";
 import PrLine from "./PrLine";
 import { SubCountChip } from "./SubCountChip";
 
@@ -122,31 +125,61 @@ export function toggleRailCards(): void {
  *  icon reflects current state. */
 export const dockExpanded = (): boolean => dockMode() !== "rail";
 
+/** Folded group keys, persisted per device. Empty = every group open
+ *  by default — empty-set invariant means a brand-new install renders
+ *  every repo header expanded, and the user opts into compression by
+ *  collapsing the groups they don't currently need. Same `makePersisted`
+ *  pattern as `dockMode`. */
+const [foldedGroups, setFoldedGroups] = makePersisted(
+  createSignal<string[]>([]),
+  {
+    name: "kolu-dock-folded-groups",
+    serialize: (v) => JSON.stringify(v),
+    deserialize: (raw): string[] => {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed)
+          ? parsed.filter((s): s is string => typeof s === "string")
+          : [];
+      } catch {
+        return [];
+      }
+    },
+  },
+);
+
+const foldedSet = createMemo(() => new Set(foldedGroups()));
+
+function isGroupFolded(key: string): boolean {
+  return foldedSet().has(key);
+}
+
+function toggleGroupFold(key: string): void {
+  const set = foldedSet();
+  if (set.has(key)) {
+    setFoldedGroups(foldedGroups().filter((k) => k !== key));
+  } else {
+    setFoldedGroups([...foldedGroups(), key]);
+  }
+}
+
 const Dock: Component<{
   /** Opens the command palette pre-drilled into "Search workspaces" —
    *  invoked by the dock's search-icon button. */
   onOpenWorkspaceSearch: () => void;
   onCreate: () => void;
 }> = (props) => {
-  const store = useTerminalStore();
-  const isStale = useStaleCheck();
+  const order = useDockOrder();
   const posture = useViewPosture();
 
-  const ranked = createMemo(() =>
-    rankDockRows(store.terminalIds(), store.getMetadata, isStale),
+  const renderItems = createMemo(() =>
+    flattenForRender(order.tree(), isGroupFolded),
   );
-
-  const liveIds = createMemo(() => ranked().map((r) => r.id));
-  const bucketOf = createMemo(() => {
-    const map = new Map<TerminalId, DockRowBucket>();
-    for (const r of ranked()) map.set(r.id, r.bucket);
-    return map;
-  });
 
   // Maximized = flush sidebar; tiled = floating overlay. Two distinct
   // shells share the same inner body so rendering logic stays singular.
   return (
-    <Show when={liveIds().length > 0}>
+    <Show when={order.ids().length > 0}>
       <aside
         data-testid="dock"
         data-mode={dockMode()}
@@ -171,8 +204,7 @@ const Dock: Component<{
       >
         <RailOrCards
           mode={dockMode()}
-          liveIds={liveIds()}
-          bucketOf={bucketOf()}
+          renderItems={renderItems()}
           onCreate={props.onCreate}
           onOpenWorkspaceSearch={props.onOpenWorkspaceSearch}
         />
@@ -181,12 +213,14 @@ const Dock: Component<{
   );
 };
 
-/** Rail / cards body — vertical stack of dock rows preceded by a header
- *  with the `+` new-terminal button and the mode chevron. */
+/** Rail / cards body — vertical stack of group headers + dock rows
+ *  preceded by a header with the `+` new-terminal button and the mode
+ *  chevron. `renderItems` is the flattened tree (group headers + terminal
+ *  slots in depth-first order, with folded groups' children omitted but
+ *  their index slots preserved for `Cmd+N` consistency). */
 const RailOrCards: Component<{
   mode: DockMode;
-  liveIds: TerminalId[];
-  bucketOf: Map<TerminalId, DockRowBucket>;
+  renderItems: ReturnType<typeof flattenForRender>;
   onCreate: () => void;
   onOpenWorkspaceSearch: () => void;
 }> = (props) => {
@@ -198,18 +232,90 @@ const RailOrCards: Component<{
         onOpenWorkspaceSearch={props.onOpenWorkspaceSearch}
       />
       <div class="flex flex-col overflow-y-auto overflow-x-hidden scrollbar-none flex-1 min-h-0">
-        <For each={props.liveIds}>
-          {(id, index) => (
-            <DockRow
-              id={id}
-              bucket={props.bucketOf.get(id) ?? "none"}
-              mode={props.mode}
-              index={index()}
-            />
+        <For each={props.renderItems}>
+          {(item) => (
+            <Switch>
+              <Match when={item.kind === "group-header" && item}>
+                {(g) => (
+                  <DockGroupHeader
+                    group={g().group}
+                    folded={g().folded}
+                    mode={props.mode}
+                  />
+                )}
+              </Match>
+              <Match when={item.kind === "terminal" && item}>
+                {(t) => (
+                  <DockRow
+                    id={t().node.id}
+                    bucket={t().node.bucket}
+                    mode={props.mode}
+                    index={t().index}
+                  />
+                )}
+              </Match>
+            </Switch>
           )}
         </For>
       </div>
     </div>
+  );
+};
+
+/** Group header row — folds/unfolds when clicked, displays the group
+ *  label and a child-count badge. In rail mode the header collapses to
+ *  a colored stripe with just the chevron indicator since labels won't
+ *  fit in 40px. */
+const DockGroupHeader: Component<{
+  group: DockTreeGroup;
+  folded: boolean;
+  mode: DockMode;
+}> = (props) => {
+  return (
+    <button
+      type="button"
+      data-testid="dock-group-header"
+      data-group-key={props.group.key}
+      data-group-depth={props.group.depth}
+      data-folded={props.folded ? "" : undefined}
+      onClick={() => toggleGroupFold(props.group.key)}
+      class="flex items-center gap-1.5 text-left text-fg-2 hover:text-fg-1 transition-colors border-b border-edge/30 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
+      classList={{
+        "px-2 py-1": props.mode === "cards",
+        "px-1 py-1 justify-center": props.mode === "rail",
+        "bg-surface-2/40": props.group.depth === 0 && props.mode === "cards",
+        "pl-5": props.group.depth === 1 && props.mode === "cards",
+      }}
+      title={props.folded ? "Expand group" : "Collapse group"}
+      aria-expanded={!props.folded}
+    >
+      <span
+        class="shrink-0 inline-flex items-center justify-center w-3 h-3 text-fg-3 transition-transform duration-200"
+        classList={{ "-rotate-90": props.folded }}
+        aria-hidden="true"
+      >
+        ▾
+      </span>
+      <Show when={props.mode === "cards"}>
+        <span
+          aria-hidden="true"
+          class="shrink-0 w-2 h-2 rounded-sm"
+          style={{ "background-color": props.group.color }}
+        />
+        <span
+          class="font-mono text-[0.65rem] uppercase tracking-[0.08em] truncate min-w-0"
+          classList={{
+            "font-semibold text-fg-1": props.group.depth === 0,
+            "text-fg-2": props.group.depth === 1,
+          }}
+        >
+          {props.group.label}
+        </span>
+        <span class="ml-auto text-[0.65rem] font-mono text-fg-3 tabular-nums shrink-0">
+          {props.group.terminalCount}
+        </span>
+      </Show>
+    </button>
   );
 };
 

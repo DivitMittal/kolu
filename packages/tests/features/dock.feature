@@ -98,6 +98,27 @@ Feature: Dock
     Given I create a terminal
     Then the dock should show 1 active row indicator
 
+  Scenario: Dock auto-groups terminals by repo and branch
+    # The dock derives a repo → branch hierarchy from each terminal's
+    # `meta.git.repoName/branch` at render time. With one terminal in
+    # the background scenario, the dock renders one group header above
+    # the row. Single-branch repos collapse to a `"REPO · branch"`
+    # header instead of nesting a separate branch sub-header.
+    Then the dock should be visible
+    And the dock should show 1 group header
+
+  Scenario: Clicking a dock group header folds and expands the group
+    # Group fold state is persisted per-device via makePersisted. The
+    # header sets `data-folded=""` while folded. Click again to expand.
+    # Folded terminals are hidden from view but still claim their
+    # depth-first index slot — Cmd+1..9 stays consistent regardless of
+    # fold state.
+    Then the first dock group header should be expanded
+    When I click the first dock group header
+    Then the first dock group header should be folded
+    When I click the first dock group header
+    Then the first dock group header should be expanded
+
   Scenario: Dock activity-window selector defaults to 24h and shares with the minimap
     # The dock header carries a compact `24h ▾` chip mirroring the
     # minimap's existing window picker. Both surfaces consume the same

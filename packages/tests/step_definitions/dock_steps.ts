@@ -11,6 +11,7 @@ const WORKING_SELECTOR = '[data-testid="dock-working"]';
 const QUIET_FOREGROUND_SELECTOR = '[data-testid="dock-quiet-foreground"]';
 const CHROME_DOCK_TOGGLE_SELECTOR = '[data-testid="dock-toggle"]';
 const DOCK_WINDOW_TRIGGER_SELECTOR = '[data-testid="dock-window-trigger"]';
+const GROUP_HEADER_SELECTOR = '[data-testid="dock-group-header"]';
 
 Then("the dock should be visible", async function (this: KoluWorld) {
   await this.page
@@ -261,5 +262,53 @@ When(
     await opt.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
     await opt.click();
     await this.waitForFrame();
+  },
+);
+
+Then(
+  "the dock should show {int} group header(s)",
+  async function (this: KoluWorld, expected: number) {
+    await this.page.waitForFunction(
+      ({ selector, count }) =>
+        document.querySelectorAll(selector).length === count,
+      { selector: GROUP_HEADER_SELECTOR, count: expected },
+      { timeout: POLL_TIMEOUT },
+    );
+  },
+);
+
+When("I click the first dock group header", async function (this: KoluWorld) {
+  const header = this.page.locator(GROUP_HEADER_SELECTOR).first();
+  await header.waitFor({ state: "visible", timeout: POLL_TIMEOUT });
+  await header.click();
+  await this.waitForFrame();
+});
+
+Then(
+  "the first dock group header should be folded",
+  async function (this: KoluWorld) {
+    await this.page.waitForFunction(
+      (selector) => {
+        const el = document.querySelector(selector);
+        return el?.hasAttribute("data-folded") ?? false;
+      },
+      GROUP_HEADER_SELECTOR,
+      { timeout: POLL_TIMEOUT },
+    );
+  },
+);
+
+Then(
+  "the first dock group header should be expanded",
+  async function (this: KoluWorld) {
+    await this.page.waitForFunction(
+      (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+        return !el.hasAttribute("data-folded");
+      },
+      GROUP_HEADER_SELECTOR,
+      { timeout: POLL_TIMEOUT },
+    );
   },
 );

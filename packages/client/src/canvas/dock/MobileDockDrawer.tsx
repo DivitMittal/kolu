@@ -12,19 +12,22 @@
  *  cards level is overkill on a phone — the user's intent here is
  *  "switch to that other terminal", not "respond inline".
  *
- *  Sort order matches the desktop dock: recency-descending across all
- *  terminals (parked terminals fall to the bottom, faded). That keeps
- *  "what just changed?" as the first row regardless of which repo it
- *  belongs to. */
+ *  Sort order matches the desktop dock: terminals are grouped by repo →
+ *  branch (auto-derived from git metadata), with `rankDockRows` order
+ *  preserved within each leaf. Mobile ignores per-group fold state — the
+ *  drawer is a quick-switch surface, so everything stays expanded. */
 
 import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
-import { type Component, For, Show, createMemo } from "solid-js";
+import { type Component, For, Match, Show, Switch, createMemo } from "solid-js";
 import { IntentMarkdownInline } from "../../intent/IntentMarkdown";
 import { annotationLine } from "../../intent/text";
 import AgentIndicator from "../../terminal/AgentIndicator";
-import { formatTimeAgo, useStaleCheck } from "../../terminal/staleness";
+import { formatTimeAgo } from "../../terminal/staleness";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
-import { type DockRowBucket, rankDockRows } from "./dockRowRanking";
+import type { DockRowBucket } from "./dockRowRanking";
+import type { DockTreeGroup } from "./dockTree";
+import { flattenForRender } from "./dockTree";
+import { useDockOrder } from "./useDockOrder";
 import PrLine from "./PrLine";
 import { SubCountChip } from "./SubCountChip";
 
@@ -32,11 +35,11 @@ const MobileDockDrawer: Component<{
   onSelect: (id: TerminalId) => void;
   onClose: () => void;
 }> = (props) => {
-  const store = useTerminalStore();
-  const isStale = useStaleCheck();
-
-  const ranked = createMemo(() =>
-    rankDockRows(store.terminalIds(), store.getMetadata, isStale),
+  const order = useDockOrder();
+  const renderItems = createMemo(() =>
+    // Mobile never folds — the drawer is a quick-switch surface; nothing
+    // is gained by hiding rows behind a chevron at this width.
+    flattenForRender(order.tree(), () => false),
   );
 
   function handleSelect(id: TerminalId) {
@@ -52,15 +55,61 @@ const MobileDockDrawer: Component<{
         </span>
       </div>
       <div class="flex-1 min-h-0 overflow-y-auto">
-        <For each={ranked()}>
-          {(row) => (
-            <Row id={row.id} bucket={row.bucket} onSelect={handleSelect} />
+        <For each={renderItems()}>
+          {(item) => (
+            <Switch>
+              <Match when={item.kind === "group-header" && item}>
+                {(g) => <GroupHeader group={g().group} />}
+              </Match>
+              <Match when={item.kind === "terminal" && item}>
+                {(t) => (
+                  <Row
+                    id={t().node.id}
+                    bucket={t().node.bucket}
+                    onSelect={handleSelect}
+                  />
+                )}
+              </Match>
+            </Switch>
           )}
         </For>
       </div>
     </div>
   );
 };
+
+/** Mobile group header — read-only landmark, no fold toggle. Cards-mode
+ *  desktop is the surface that owns fold state; mobile renders everything
+ *  expanded since the drawer is a quick-switch surface. */
+const GroupHeader: Component<{ group: DockTreeGroup }> = (props) => (
+  <div
+    data-testid="mobile-dock-group-header"
+    data-group-key={props.group.key}
+    data-group-depth={props.group.depth}
+    class="flex items-center gap-2 px-3 py-1.5 border-b border-edge/30 text-fg-2"
+    classList={{
+      "bg-surface-2/30": props.group.depth === 0,
+      "pl-6": props.group.depth === 1,
+    }}
+  >
+    <span
+      aria-hidden="true"
+      class="shrink-0 w-2 h-2 rounded-sm"
+      style={{ "background-color": props.group.color }}
+    />
+    <span
+      class="font-mono text-[0.65rem] uppercase tracking-[0.1em] truncate min-w-0"
+      classList={{
+        "font-semibold text-fg-1": props.group.depth === 0,
+      }}
+    >
+      {props.group.label}
+    </span>
+    <span class="ml-auto text-[0.65rem] font-mono text-fg-3 tabular-nums shrink-0">
+      {props.group.terminalCount}
+    </span>
+  </div>
+);
 
 /** Live-attention buckets (awaiting/working) get a richer row — taller
  *  padding, bigger headline type, an agent/time meta line, and a PR
