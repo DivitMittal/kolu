@@ -36,6 +36,7 @@ import {
   Match,
   Show,
   Switch,
+  createEffect,
   createMemo,
   createSignal,
 } from "solid-js";
@@ -175,6 +176,20 @@ const Dock: Component<{
   const renderItems = createMemo(() =>
     flattenForRender(order.tree(), isGroupFolded),
   );
+
+  // Prune stale fold keys whenever the tree changes — repos/branches that
+  // no longer exist should not accumulate in localStorage indefinitely.
+  createEffect(() => {
+    const liveKeys = new Set<string>();
+    for (const node of order.tree()) {
+      if (node.kind !== "group") continue;
+      liveKeys.add(node.key);
+      for (const child of node.children) {
+        if (child.kind === "group") liveKeys.add(child.key);
+      }
+    }
+    setFoldedGroups((prev) => prev.filter((k) => liveKeys.has(k)));
+  });
 
   // Maximized = flush sidebar; tiled = floating overlay. Two distinct
   // shells share the same inner body so rendering logic stays singular.
