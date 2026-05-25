@@ -174,6 +174,9 @@ const Dock: Component<{
   const order = useDockOrder();
   const posture = useViewPosture();
 
+  // Reactive on both `order.tree()` and `foldedSet()` — the latter is
+  // tracked transitively via `isGroupFolded` reading `foldedSet()` inside
+  // the memo's synchronous call to `flattenForRender`.
   const renderItems = createMemo(() =>
     flattenForRender(order.tree(), isGroupFolded),
   );

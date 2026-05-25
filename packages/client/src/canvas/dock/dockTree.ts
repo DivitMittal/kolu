@@ -185,6 +185,8 @@ export function flattenForRender(
 ): DockRenderItem[] {
   const out: DockRenderItem[] = [];
   let terminalIndex = 0;
+  // `skip` = an ancestor group is folded; suppress output but still
+  // advance `terminalIndex` so Cmd+N slot numbers stay stable.
   const walk = (nodes: readonly DockTreeNode[], skip: boolean) => {
     for (const node of nodes) {
       if (node.kind === "terminal") {
