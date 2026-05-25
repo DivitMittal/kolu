@@ -32,9 +32,11 @@ export type DockTreeGroup = {
   /** OKLCH color carried from the repo's `repoColor` — used for the
    *  swatch on the header row. */
   color: string;
-  /** `0` = top-level repo header, `1` = branch sub-header. The renderer
-   *  uses this for indentation and header styling, not the actual depth
-   *  in the tree (which is identical). */
+  /** Render style hint. `0` = top-level repo header, `1` = branch
+   *  sub-header. The hierarchy is exactly two levels deep — single-
+   *  branch repos collapse to a depth-0 leaf header, multi-branch repos
+   *  nest depth-1 sub-headers — so this field doubles as the renderer's
+   *  styling key and the tree's actual depth. */
   depth: 0 | 1;
   /** Either child groups (multi-branch repo) or terminal leaves. */
   children: DockTreeNode[];
