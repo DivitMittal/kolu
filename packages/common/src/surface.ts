@@ -211,18 +211,6 @@ export const ClientPersistedTerminalFieldsSchema = z.object({
   intent: z.string().min(1).optional(),
 });
 
-/**
- * Fields that only exist on a live terminal — transient status fed by
- * external state and never persisted. If a field is here, a session
- * restore must re-derive it; if a field is on one of the persisted
- * schemas, it round-trips through disk as-is.
- *
- * Disjoint from `ServerPersistedTerminalFieldsSchema` and
- * `ClientPersistedTerminalFieldsSchema`. See the partition comment
- * above. Writes go through `updateServerLiveMetadata`, which does NOT
- * fire `terminals:dirty` — that's how the agent-stream firehose is
- * kept off the autosave channel.
- */
 /** Connection state for the terminal's transport. `live` is the only
  *  meaningful value for `location.kind === "local"` terminals; `connecting`
  *  and `disconnected` exist so the schema pattern-matches cleanly once a
@@ -235,6 +223,18 @@ export const ConnectionStateSchema = z.enum([
   "disconnected",
 ]);
 
+/**
+ * Fields that only exist on a live terminal — transient status fed by
+ * external state and never persisted. If a field is here, a session
+ * restore must re-derive it; if a field is on one of the persisted
+ * schemas, it round-trips through disk as-is.
+ *
+ * Disjoint from `ServerPersistedTerminalFieldsSchema` and
+ * `ClientPersistedTerminalFieldsSchema`. See the partition comment
+ * above. Writes go through `updateServerLiveMetadata`, which does NOT
+ * fire `terminals:dirty` — that's how the agent-stream firehose is
+ * kept off the autosave channel.
+ */
 export const LiveTerminalFieldsSchema = z.object({
   /** GitHub PR resolution — discriminated union (see PrResultSchema). */
   pr: PrResultSchema,
