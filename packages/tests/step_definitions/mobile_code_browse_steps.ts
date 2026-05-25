@@ -87,6 +87,7 @@ When(
       type XtermForClick = {
         cols: number;
         rows: number;
+        scrollToBottom(): void;
         buffer: {
           active: {
             viewportY: number;
@@ -101,26 +102,33 @@ When(
       const term = el?.__xterm;
       const screen = el?.querySelector(".xterm-screen");
       if (!el || !term || !screen) return null;
+      // The mobile-emulated viewport's soft-keyboard pop and reactive
+      // chrome-sheet animations can leave the terminal scrolled away
+      // from the most recent output. Anchor to the bottom so the
+      // freshly-echoed path lands in the row scan below.
+      term.scrollToBottom();
       const b = term.buffer.active;
       const top = b.viewportY;
+      const cols = term.cols;
+      const rect = (screen as Element).getBoundingClientRect();
+      const cellW = rect.width / cols;
+      const cellH = rect.height / term.rows;
       // Walk physical rows, joining wrapped continuations into logical
       // lines. Mobile-emulated viewports are narrow enough that
       // `/tmp/some/long/path.txt` echoes split across rows — searching
       // physical rows alone misses the target on `aarch64-darwin` CI
       // even though it's right there in the buffer. `isWrapped` flags
       // continuations (false on the first row of each logical line).
-      const cols = term.cols;
-      const rect = (screen as Element).getBoundingClientRect();
-      const cellW = rect.width / cols;
-      const cellH = rect.height / term.rows;
-      let r = top;
+      // If the viewport starts mid-line (logical line begun above
+      // `top`), walk back to that line's start so the join captures
+      // every wrapped segment.
+      let lineStart = top;
+      while (lineStart > 0 && b.getLine(lineStart)?.isWrapped) lineStart--;
+      let r = lineStart;
       while (r < top + term.rows) {
         let joined = b.getLine(r)?.translateToString(false) ?? "";
         let endRow = r;
-        while (
-          endRow + 1 < top + term.rows &&
-          b.getLine(endRow + 1)?.isWrapped
-        ) {
+        while (endRow + 1 < b.length && b.getLine(endRow + 1)?.isWrapped) {
           joined += b.getLine(endRow + 1)?.translateToString(false) ?? "";
           endRow++;
         }
@@ -137,9 +145,14 @@ When(
             const mid = idx + Math.floor(targetText.length / 2);
             const physRow = r + Math.floor(mid / cols);
             const physCol = mid % cols;
-            const x = rect.left + (physCol + 0.5) * cellW;
-            const y = rect.top + (physRow - top + 0.5) * cellH;
-            return { x, y };
+            // Only return if the cell is actually inside the viewport
+            // — a logical line straddling viewport edges might match
+            // on a segment that's scrolled out.
+            if (physRow >= top && physRow < top + term.rows) {
+              const x = rect.left + (physCol + 0.5) * cellW;
+              const y = rect.top + (physRow - top + 0.5) * cellH;
+              return { x, y };
+            }
           }
         }
         r = endRow + 1;
