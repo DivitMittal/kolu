@@ -51,10 +51,9 @@ import {
   pierreIconConfig,
   pierreTreesStyle,
 } from "../ui/pierreTheme";
-import { resolveLineRefPath } from "../ui/lineRef";
 import BrowseFileDispatcher from "./BrowseFileDispatcher";
 import CodeMenuFrame from "./CodeMenuFrame";
-import type { NavRequest } from "../navRequest";
+import { type NavRequest, resolveNavPath } from "../navRequest";
 import { openInCodeTab, pendingOpen } from "./openInCodeTab";
 import { projectFileTreeSearch } from "./fileSearch";
 import FileSearchInput from "./FileSearchInput";
@@ -250,12 +249,7 @@ const CodeTab: Component<{
         if (handled()?.request === req) return;
         if (repo === null || repo !== req.repoRoot) return;
         if (view() !== req.targetMode || isPending) return;
-        const rel = resolveLineRefPath({
-          rawPath: req.ref.path,
-          repoRoot: repo,
-          cwd: req.cwd,
-          repoPaths: paths,
-        });
+        const rel = resolveNavPath(req, paths);
         if (rel === null) {
           toast.error(`File reference not found: ${req.ref.path}`);
           setHandled({ request: req, resolvedPath: null });

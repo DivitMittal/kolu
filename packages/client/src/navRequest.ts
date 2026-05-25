@@ -13,7 +13,7 @@
  *  snippet ID, say) lands in one place instead of two. */
 
 import type { CodeTabView } from "kolu-common/surface";
-import type { LineRef } from "./ui/lineRef";
+import { type LineRef, resolveLineRefPath } from "./ui/lineRef";
 
 export interface NavRequest {
   /** Parsed `path:line[-end]` to navigate to. The path is resolved
@@ -31,4 +31,23 @@ export interface NavRequest {
   /** Which Code-tab sub-mode the request expects to land in.
    *  Producers that don't track an authoring mode pass `"browse"`. */
   targetMode: CodeTabView;
+}
+
+/** Resolve a `NavRequest` against the consumer's path universe.
+ *  Wraps `resolveLineRefPath` so callers don't unpack the four
+ *  fields manually and so a contract change to `resolveLineRefPath`
+ *  propagates from one site. `repoPaths` stays a parameter because
+ *  desktop and mobile source it differently (desktop's `treePaths()`
+ *  is the user's expanded subset, mobile's `allPaths()` is the full
+ *  repo listing) — the helper resolves, it doesn't pick the universe. */
+export function resolveNavPath(
+  req: NavRequest,
+  repoPaths: readonly string[],
+): string | null {
+  return resolveLineRefPath({
+    rawPath: req.ref.path,
+    repoRoot: req.repoRoot,
+    cwd: req.cwd,
+    repoPaths,
+  });
 }

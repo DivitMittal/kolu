@@ -31,12 +31,11 @@ import {
   Switch,
 } from "solid-js";
 import { toast } from "solid-sonner";
-import type { NavRequest } from "./navRequest";
+import { type NavRequest, resolveNavPath } from "./navRequest";
 import { pendingMobileOpen } from "./openInMobileFiles";
 import BrowseFileDispatcher from "./right-panel/BrowseFileDispatcher";
 import { useRightPanel } from "./right-panel/useRightPanel";
 import { useColorScheme } from "./settings/useColorScheme";
-import { resolveLineRefPath } from "./ui/lineRef";
 import { pierreIconConfig, pierreTreesStyle } from "./ui/pierreTheme";
 import { app } from "./wire";
 import { FileBrowseIcon, GitBranchIcon } from "./ui/Icons";
@@ -92,12 +91,7 @@ const MobileCodeSheet: Component<{
         const repo = repoPath();
         if (repo === null || repo !== req.repoRoot) return;
         if (isPending || !paths) return;
-        const rel = resolveLineRefPath({
-          rawPath: req.ref.path,
-          repoRoot: repo,
-          cwd: req.cwd,
-          repoPaths: paths.paths,
-        });
+        const rel = resolveNavPath(req, paths.paths);
         lastHandled = req;
         if (rel === null) {
           toast.error(`File reference not found: ${req.ref.path}`);
