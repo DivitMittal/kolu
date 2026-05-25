@@ -80,7 +80,10 @@ When(
   "I tap terminal text {string}",
   async function (this: KoluWorld, target: string) {
     const point = await this.page.evaluate((targetText) => {
-      type BufferLine = { translateToString(trim?: boolean): string };
+      type BufferLine = {
+        translateToString(trim?: boolean): string;
+        isWrapped: boolean;
+      };
       type XtermForClick = {
         cols: number;
         rows: number;
@@ -100,19 +103,46 @@ When(
       if (!el || !term || !screen) return null;
       const b = term.buffer.active;
       const top = b.viewportY;
-      for (let row = top; row < top + term.rows; row++) {
-        const line = b.getLine(row)?.translateToString(true) ?? "";
+      // Walk physical rows, joining wrapped continuations into logical
+      // lines. Mobile-emulated viewports are narrow enough that
+      // `/tmp/some/long/path.txt` echoes split across rows — searching
+      // physical rows alone misses the target on `aarch64-darwin` CI
+      // even though it's right there in the buffer. `isWrapped` flags
+      // continuations (false on the first row of each logical line).
+      const cols = term.cols;
+      const rect = (screen as Element).getBoundingClientRect();
+      const cellW = rect.width / cols;
+      const cellH = rect.height / term.rows;
+      let r = top;
+      while (r < top + term.rows) {
+        let joined = b.getLine(r)?.translateToString(false) ?? "";
+        let endRow = r;
+        while (
+          endRow + 1 < top + term.rows &&
+          b.getLine(endRow + 1)?.isWrapped
+        ) {
+          joined += b.getLine(endRow + 1)?.translateToString(false) ?? "";
+          endRow++;
+        }
         // Skip the command-echo line (prompt + typed text). Prompt
-        // glyphs vary by shell; `❯` covers starship's default.
-        if (line.includes("❯")) continue;
-        const col = line.indexOf(targetText);
-        if (col < 0) continue;
-        const rect = (screen as Element).getBoundingClientRect();
-        const cellW = rect.width / term.cols;
-        const cellH = rect.height / term.rows;
-        const x = rect.left + (col + targetText.length / 2) * cellW;
-        const y = rect.top + (row - top + 0.5) * cellH;
-        return { x, y };
+        // glyphs vary by shell; `❯` covers starship's default. Apply
+        // to the JOINED line so wrapped echoes are still filtered.
+        if (!joined.includes("❯")) {
+          const idx = joined.indexOf(targetText);
+          if (idx >= 0) {
+            // Map the logical-string offset back to a physical (row, col)
+            // — `idx + targetText.length/2` lands on a cell inside the
+            // target so the touch hits the production handler's cell-hit
+            // test even when the target wraps.
+            const mid = idx + Math.floor(targetText.length / 2);
+            const physRow = r + Math.floor(mid / cols);
+            const physCol = mid % cols;
+            const x = rect.left + (physCol + 0.5) * cellW;
+            const y = rect.top + (physRow - top + 0.5) * cellH;
+            return { x, y };
+          }
+        }
+        r = endRow + 1;
       }
       return null;
     }, target);
