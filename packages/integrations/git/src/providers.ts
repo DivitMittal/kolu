@@ -43,9 +43,7 @@ export interface GitInfoProvider {
 /** Local impl — straight wrapper around `subscribeGitInfo`. Stateless;
  *  shared across every local terminal. */
 export const localGitInfoProvider: GitInfoProvider = {
-  subscribe(cwd, onChange, log) {
-    return subscribeGitInfo(cwd, onChange, log);
-  },
+  subscribe: subscribeGitInfo,
 };
 
 // ── FsProvider ────────────────────────────────────────────────────────

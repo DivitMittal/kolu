@@ -109,9 +109,7 @@ export interface PtyProvider {
 /** Local PTY provider — direct wrapper around `spawnPty`. Stateless;
  *  shared by every local terminal. */
 export const localPtyProvider: PtyProvider = {
-  spawn(tlog, terminalId, opts, spawnCwd) {
-    return spawnPty(tlog, terminalId, opts, spawnCwd);
-  },
+  spawn: spawnPty,
 };
 
 /** Spawn a shell in a PTY, calling back on data, exit, CWD, and title changes. */

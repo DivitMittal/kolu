@@ -23,7 +23,5 @@ export interface GitHubPrProvider {
 
 /** Local impl — wraps `subscribeGitHubPr`. Stateless; shared. */
 export const localGitHubPrProvider: GitHubPrProvider = {
-  subscribe(onChange, log) {
-    return subscribeGitHubPr(onChange, log);
-  },
+  subscribe: subscribeGitHubPr,
 };
