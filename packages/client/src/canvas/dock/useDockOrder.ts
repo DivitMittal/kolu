@@ -8,14 +8,17 @@
  *  dock paints. This singleton forces all three to agree by construction.
  *
  *  Outputs are layered:
- *  - `ranked` — bucket-classified, recency-sorted flat list, the raw
- *    `rankDockRows` output (kept exposed for tests / future callers).
- *  - `tree` — `ranked` projected into the repo→branch hierarchy that
- *    desktop and mobile render.
+ *  - `tree` — the repo→branch hierarchy that desktop and mobile render.
  *  - `ids` — depth-first walk of terminal IDs through `tree`. This is
  *    the `Cmd+1..9` target list; folded groups still contribute their
  *    children so the keystroke targets the Nth terminal regardless of
  *    fold state.
+ *
+ *  `ranked` (the raw `rankDockRows` output) lives as an internal memo
+ *  feeding `tree`; it isn't exposed because every consumer either reads
+ *  `tree` (renderers) or `ids` (the keyboard shortcut). Direct
+ *  `rankDockRows` callers (e.g. unit tests) import the function directly
+ *  rather than reaching through here.
  *
  *  Cached via `createRoot` so a single set of reactive owners survives
  *  every consumer's lifecycle — same pattern as `useTerminalStore`. */
@@ -29,10 +32,9 @@ import {
   buildDockTree,
   flattenTerminalIds,
 } from "./dockTree";
-import { type RankedDockRow, rankDockRows } from "./dockRowRanking";
+import { rankDockRows } from "./dockRowRanking";
 
 type DockOrder = {
-  ranked: Accessor<RankedDockRow[]>;
   tree: Accessor<DockTreeNode[]>;
   ids: Accessor<TerminalId[]>;
 };
@@ -45,7 +47,7 @@ function init(): DockOrder {
   );
   const tree = createMemo(() => buildDockTree(ranked(), store.getDisplayInfo));
   const ids = createMemo(() => flattenTerminalIds(tree()));
-  return { ranked, tree, ids };
+  return { tree, ids };
 }
 
 let cached: DockOrder | undefined;
