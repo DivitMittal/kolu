@@ -42,13 +42,14 @@ import { streamCall } from "@kolu/surface/solid";
 import { client } from "../wire";
 import { isExpectedCleanupError } from "../rpc/streamCleanup";
 import { createScrollLock } from "../scrollLock";
+import type { NavRequest } from "../navRequest";
 import { openInCodeTab } from "../right-panel/openInCodeTab";
 import { openInMobileFiles } from "../openInMobileFiles";
 import { isMobile } from "../useMobile";
 import { preferences } from "../wire";
 import { isTouch } from "../useMobile";
 import { createFileRefLinkProvider } from "./fileRefLinkProvider";
-import { parseLineRefs } from "../ui/lineRef";
+import { type LineRef, parseLineRefs } from "../ui/lineRef";
 import ScrollToBottom from "./ScrollToBottom";
 import SearchBar from "./SearchBar";
 import { registerTerminalRefs, unregisterTerminalRefs } from "./terminalRefs";
@@ -167,6 +168,28 @@ const Terminal: Component<{
   const scrollLock = createScrollLock(() => preferences().scrollLock);
   const terminalStore = useTerminalStore();
   let fitRaf = 0;
+
+  /** Route a parsed `path:line` reference to the platform's file-browser
+   *  front door. Two call sites use it: xterm's link-provider onActivate
+   *  (desktop mouse click) and the touchstart capture (mobile tap). Both
+   *  arrive with an already-parsed `LineRef` — they read terminal metadata
+   *  for repo/cwd and dispatch to `openInCodeTab` or `openInMobileFiles`
+   *  depending on the surface. Local helper (not pushed into
+   *  `fileRefLinkProvider.ts`) so the xterm adapter stays free of
+   *  platform-dispatch knowledge. */
+  function dispatchFileRef(ref: LineRef): void {
+    const meta = terminalStore.getMetadata(props.terminalId);
+    const repoRoot = meta?.git?.repoRoot ?? null;
+    if (!repoRoot) return;
+    const req: NavRequest = {
+      ref,
+      repoRoot,
+      cwd: meta?.cwd,
+      targetMode: "browse",
+    };
+    if (isMobile()) openInMobileFiles(req);
+    else openInCodeTab(req);
+  }
 
   /** Debounce fit() to one call per animation frame — ResizeObserver fires rapidly. */
   function debouncedFit() {
@@ -468,40 +491,7 @@ const Terminal: Component<{
           // terminal store at click time (not at mount) so a cwd
           // change keeps subsequent clicks anchored to the new repo.
           linkProviderDisposable = term.registerLinkProvider(
-            createFileRefLinkProvider(term, {
-              onActivate: (ref) => {
-                const meta = terminalStore.getMetadata(props.terminalId);
-                const repoRoot = meta?.git?.repoRoot ?? null;
-                if (!repoRoot) return;
-                if (isMobile()) {
-                  // The right panel doesn't exist on mobile; route to
-                  // the Files drawer instead. `MobileCodeSheet` will
-                  // run `resolveLineRefPath` against the live
-                  // `fsListAll` paths before writing the selection
-                  // slot — terminal output emits absolute paths
-                  // (`pwd`) and cwd-relative paths that `fsReadFile`
-                  // would reject as `path escapes root` if we pushed
-                  // them in raw. The desktop helper would also write
-                  // `rightPanel.collapsed = false` to preferences —
-                  // a server-persisted mutation with no UI effect on
-                  // mobile but a stale toggle on the user's next
-                  // desktop session.
-                  openInMobileFiles({
-                    ref,
-                    repoRoot,
-                    cwd: meta?.cwd,
-                    targetMode: "browse",
-                  });
-                  return;
-                }
-                openInCodeTab({
-                  ref,
-                  repoRoot,
-                  cwd: meta?.cwd,
-                  targetMode: "browse",
-                });
-              },
-            }),
+            createFileRefLinkProvider(term, { onActivate: dispatchFileRef }),
           );
           const search = new SearchAddon();
           term.loadAddon(search);
@@ -562,16 +552,12 @@ const Terminal: Component<{
                 (m) => col >= m.index && col < m.index + m.text.length,
               );
               if (!hit) return;
-              const meta = terminalStore.getMetadata(props.terminalId);
-              const repoRoot = meta?.git?.repoRoot ?? null;
-              if (!repoRoot) return;
+              // preventDefault before dispatch so iOS doesn't synthesize
+              // a focus shift + keyboard pop between the ref hit and the
+              // front-door call. If `dispatchFileRef` no-ops (no repo
+              // root), the touch still doesn't reach the helper textarea.
               e.preventDefault();
-              openInMobileFiles({
-                ref: hit,
-                repoRoot,
-                cwd: meta?.cwd,
-                targetMode: "browse",
-              });
+              dispatchFileRef(hit);
             },
             { capture: true, passive: false },
           );
