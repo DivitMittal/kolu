@@ -36,11 +36,14 @@ const MobileChromeSheet: Component<{
   status: WsStatus;
   appTitle: string;
   onOpenPalette: () => void;
-  /** Open the mobile file-browser drawer. Owned by `MobileTileView`. */
+  /** Request the mobile file-browser drawer. `MobileTileView` owns
+   *  the cross-drawer sequencing — it closes the chrome drawer first,
+   *  watches Corvu's `transitionState` for the close to finish, then
+   *  opens the files drawer. Sheet has nothing to coordinate here. */
   onOpenFiles: () => void;
-  /** Close the drawer after the user takes an action (palette open,
-   *  files open). The drawer is otherwise dismissed by drag-down or
-   *  overlay tap, both handled by Corvu. */
+  /** Close the drawer after the user takes an action (palette open).
+   *  The drawer is otherwise dismissed by drag-down or overlay tap,
+   *  both handled by Corvu. */
   onClose: () => void;
 }> = (props) => {
   let settingsTriggerRef!: HTMLButtonElement;
@@ -108,20 +111,7 @@ const MobileChromeSheet: Component<{
           data-testid="mobile-files-trigger"
           class="h-9 w-9 flex items-center justify-center text-fg-2 bg-surface-2 rounded-lg border border-edge active:bg-surface-3"
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => {
-            // Sequence the two drawer transitions across the chrome
-            // drawer's close animation (~200ms). When both `open`
-            // signals flip in the same tick, Corvu's chrome-drawer
-            // close fires a synthetic outside-pointer event that the
-            // freshly-opened files drawer interprets as a dismiss tap
-            // — the drawer mounts and immediately tears down again,
-            // which is what users on iOS see as "Files button does
-            // nothing but pop the keyboard". The 220ms timeout lets
-            // the chrome overlay fully unmount before the files
-            // drawer mounts its own overlay.
-            props.onClose();
-            setTimeout(() => props.onOpenFiles(), 220);
-          }}
+          onClick={() => props.onOpenFiles()}
           aria-label="Browse files"
         >
           <FileBrowseIcon class="w-4 h-4" />
