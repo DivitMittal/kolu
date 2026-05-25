@@ -36,6 +36,7 @@ function meta(cwd: string, gitInfo: GitInfo | null = null): TerminalMetadata {
     cwd,
     home: "/home/u",
     git: gitInfo,
+    location: { kind: "local" },
     pr: null,
     agent: null,
     foreground: null,
@@ -44,6 +45,7 @@ function meta(cwd: string, gitInfo: GitInfo | null = null): TerminalMetadata {
     themeName: null,
     subPanel: null,
     lastActivityAt: 0,
+    connectionState: "live",
   } as unknown as TerminalMetadata;
 }
 
