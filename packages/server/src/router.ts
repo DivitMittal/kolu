@@ -276,9 +276,18 @@ export const appRouter = t.router({
         return parseSshConfigHosts(raw);
       } catch (err: unknown) {
         const code = (err as NodeJS.ErrnoException).code;
+        // No config file = legitimately no hosts; return empty list.
         if (code === "ENOENT") return [];
-        log.warn({ err, configPath }, "ssh: failed to read config");
-        return [];
+        // Anything else (EACCES, EIO, …) is a real failure the user
+        // should hear about — throw so the client's .catch() fires
+        // and the toast surfaces the message, instead of silently
+        // serving an empty list that looks like "no hosts configured".
+        log.error({ err, configPath }, "ssh: failed to read config");
+        throw new ORPCError("INTERNAL_SERVER_ERROR", {
+          message: `Failed to read ${configPath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
       }
     }),
   },
