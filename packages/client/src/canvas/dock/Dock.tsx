@@ -624,26 +624,33 @@ const RailSegment: Component<{
 };
 
 /** Annotation slot shared by all three Dock body variants — renders
- *  intent line-1 (or the branch-name fallback) as inline markdown with
- *  the slot's tint color.  Only the font-size class varies per variant. */
+ *  the first line of `intent` as inline markdown. Returns `null` when
+ *  intent is unset: before the tree projection every row carried a
+ *  repo+branch landmark and the annotation fell back to the branch
+ *  name when intent was empty, but the repo→branch headers now carry
+ *  that identity above the row, so a branch-name fallback inside the
+ *  row reads as duplication. Only the font-size class varies per
+ *  variant. */
 const DockAnnotation: Component<{
   meta: TerminalMetadata;
   info: TerminalDisplayInfo;
   class: string;
   active: boolean;
 }> = (props) => (
-  <span
-    data-testid="dock-annotation"
-    class={`${props.class} truncate min-w-0`}
-    // Drop the inline color when active so the parent body's white
-    // cascades through — an inline annotationColor wins against
-    // `!important` via specificity; undefined removes the inline.
-    style={{ color: props.active ? undefined : props.info.annotationColor }}
-  >
-    <IntentMarkdownInline
-      markdown={annotationLine(props.meta.intent, props.info.key.label)}
-    />
-  </span>
+  <Show when={props.meta.intent}>
+    {(intent) => (
+      <span
+        data-testid="dock-annotation"
+        class={`${props.class} truncate min-w-0`}
+        // Drop the inline color when active so the parent body's white
+        // cascades through — an inline annotationColor wins against
+        // `!important` via specificity; undefined removes the inline.
+        style={{ color: props.active ? undefined : props.info.annotationColor }}
+      >
+        <IntentMarkdownInline markdown={annotationLine(intent(), "")} />
+      </span>
+    )}
+  </Show>
 );
 
 /** Dispatches each row to its variant body. Bundling the variant switch
@@ -727,7 +734,7 @@ const AwaitingCardBody: Component<{
     <div
       data-testid="dock-card"
       data-terminal-id={props.id}
-      class="px-2.5 py-2.5 flex flex-col gap-1.5 transition-colors duration-200 ease-out"
+      class="px-2.5 py-1.5 flex flex-col gap-1 transition-colors duration-200 ease-out"
       classList={{
         // Active body floods to accent → main text inherits white,
         // and the dim subtitle utilities (`text-fg-2`, `text-fg-3`)
@@ -747,23 +754,15 @@ const AwaitingCardBody: Component<{
       <button
         type="button"
         onClick={() => store.activate(props.id)}
-        class="flex flex-col gap-1 text-left cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded"
+        class="flex flex-col gap-0.5 text-left cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded"
         title="Jump to this terminal"
       >
-        <div class="flex items-baseline justify-between gap-2 min-w-0">
-          <span
-            class="font-mono text-[0.7rem] font-bold uppercase tracking-[0.14em] truncate min-w-0"
-            style={{
-              color: active() ? undefined : props.info.repoColor,
-            }}
-          >
-            {props.info.key.group}
-          </span>
-          <div class="flex items-baseline gap-2 min-w-0">
+        <Show when={props.meta.intent || props.info.subCount > 0}>
+          <div class="flex items-baseline justify-between gap-2 min-w-0">
             <DockAnnotation
               meta={props.meta}
               info={props.info}
-              class="text-[0.95rem] font-semibold leading-tight"
+              class="text-[0.9rem] font-semibold leading-tight"
               active={active()}
             />
             <Show when={props.info.subCount > 0}>
@@ -774,7 +773,7 @@ const AwaitingCardBody: Component<{
               />
             </Show>
           </div>
-        </div>
+        </Show>
         <DockMetaRow meta={props.meta} />
         <PrLine meta={props.meta} />
         <IntentBody intent={props.meta.intent} testId="dock-intent" />
@@ -820,7 +819,7 @@ const WorkingPillBody: Component<{
       data-testid="dock-working"
       data-terminal-id={props.id}
       onClick={() => store.activate(props.id)}
-      class="w-full px-2.5 py-1 flex flex-col gap-0.5 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 text-left transition-colors duration-200 ease-out"
+      class="w-full px-2.5 py-0.5 flex flex-col gap-0.5 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 text-left transition-colors duration-200 ease-out"
       classList={{
         // Active body floods to accent → main text inherits white,
         // and the dim subtitle utilities (`text-fg-2`, `text-fg-3`)
@@ -838,20 +837,12 @@ const WorkingPillBody: Component<{
       }}
       title="Jump to this terminal"
     >
-      <div class="flex items-baseline justify-between gap-2 min-w-0">
-        <span
-          class="font-mono text-[0.65rem] font-bold uppercase tracking-[0.14em] truncate min-w-0"
-          style={{
-            color: active() ? undefined : props.info.repoColor,
-          }}
-        >
-          {props.info.key.group}
-        </span>
-        <div class="flex items-baseline gap-2 min-w-0">
+      <Show when={props.meta.intent || props.info.subCount > 0}>
+        <div class="flex items-baseline justify-between gap-2 min-w-0">
           <DockAnnotation
             meta={props.meta}
             info={props.info}
-            class="text-[0.85rem] font-semibold leading-tight"
+            class="text-[0.8rem] font-semibold leading-tight"
             active={active()}
           />
           <Show when={props.info.subCount > 0}>
@@ -862,7 +853,7 @@ const WorkingPillBody: Component<{
             />
           </Show>
         </div>
-      </div>
+      </Show>
       <DockMetaRow meta={props.meta} />
       <PrLine meta={props.meta} />
       <IntentBody intent={props.meta.intent} testId="dock-intent" />
@@ -893,7 +884,7 @@ const QuietRowBody: Component<{
       data-terminal-id={props.id}
       data-bucket={props.bucket}
       onClick={() => store.activate(props.id)}
-      class="w-full px-2.5 py-1 flex flex-col gap-0.5 min-w-0 cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 transition-colors duration-200 ease-out"
+      class="w-full px-2.5 py-0.5 flex flex-col gap-0 min-w-0 cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 transition-colors duration-200 ease-out"
       classList={{
         "bg-surface-1/40 hover:bg-surface-2/50": !active(),
         "bg-accent text-white [&_.text-fg-2]:text-white/85 [&_.text-fg-3]:text-white/70":
@@ -905,44 +896,45 @@ const QuietRowBody: Component<{
       }}
       title={props.info.meta.cwd}
     >
-      <div class="flex items-baseline gap-2 min-w-0">
-        <span
-          class="font-mono text-[0.6rem] font-bold uppercase tracking-[0.14em] truncate min-w-0"
-          style={{
-            color: active() ? undefined : props.info.repoColor,
-          }}
-        >
-          {props.info.key.group}
-        </span>
-        <DockAnnotation
-          meta={props.meta}
-          info={props.info}
-          class="text-[0.75rem]"
-          active={active()}
-        />
-        <Show
-          when={
-            props.info.subCount > 0 || formatTimeAgo(props.meta.lastActivityAt)
-          }
-        >
-          <div class="ml-auto flex items-baseline gap-2 shrink-0">
-            <Show when={props.info.subCount > 0}>
-              <SubCountChip
-                count={props.info.subCount}
-                active={active()}
-                testId="dock-sub-count"
-              />
-            </Show>
-            <Show when={formatTimeAgo(props.meta.lastActivityAt)}>
-              {(label) => (
-                <span class="font-mono text-[0.55rem] tabular-nums text-fg-3 shrink-0">
-                  {label()}
-                </span>
-              )}
-            </Show>
-          </div>
-        </Show>
-      </div>
+      <Show
+        when={
+          props.meta.intent ||
+          props.info.subCount > 0 ||
+          formatTimeAgo(props.meta.lastActivityAt)
+        }
+      >
+        <div class="flex items-baseline gap-2 min-w-0">
+          <DockAnnotation
+            meta={props.meta}
+            info={props.info}
+            class="text-[0.72rem]"
+            active={active()}
+          />
+          <Show
+            when={
+              props.info.subCount > 0 ||
+              formatTimeAgo(props.meta.lastActivityAt)
+            }
+          >
+            <div class="ml-auto flex items-baseline gap-2 shrink-0">
+              <Show when={props.info.subCount > 0}>
+                <SubCountChip
+                  count={props.info.subCount}
+                  active={active()}
+                  testId="dock-sub-count"
+                />
+              </Show>
+              <Show when={formatTimeAgo(props.meta.lastActivityAt)}>
+                {(label) => (
+                  <span class="font-mono text-[0.55rem] tabular-nums text-fg-3 shrink-0">
+                    {label()}
+                  </span>
+                )}
+              </Show>
+            </div>
+          </Show>
+        </div>
+      </Show>
       {/* Identity preservation for parked-but-known agent terminals:
        *  surface the AgentIndicator on the compact row so a 20h-stale
        *  `waiting` agent reads as "OpenCode · waiting · 22.0K" instead
