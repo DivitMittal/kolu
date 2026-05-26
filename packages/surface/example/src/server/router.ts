@@ -20,10 +20,10 @@ import {
   newNoteId,
   publisher,
   removeNote,
-  searchNotes,
   setPrefs,
   upsertNote,
 } from "./store";
+import { getWorker } from "./worker-client";
 
 const { router: surfaceRouter } = implementSurface(surface, {
   channel: <T>(name: string) => publisherChannel<T>(publisher, name),
@@ -42,26 +42,32 @@ const { router: surfaceRouter } = implementSurface(surface, {
       upsert: (key, value) => {
         upsertNote(key, value);
         scheduleAutosave(value);
+        // Push the new corpus to the search-index worker. Fire-and-
+        // forget: search results lag one push for the briefest moment,
+        // not a correctness concern in this example. A delta protocol
+        // would scale better; the example keeps it simple.
+        pushCorpusToWorker();
       },
-      remove: removeNote,
+      remove: (key) => {
+        removeNote(key);
+        pushCorpusToWorker();
+      },
     },
   },
 
   streams: {
     search: {
-      // One-shot per query: yield the search result for the current
-      // query and close. The client's `useStream` re-subscribes whenever
-      // its input signal changes, so each keystroke spawns a fresh
-      // subscription that runs once. The example doesn't track notes
-      // changes for live re-fire — that would either be a client-side
-      // `createMemo` over the bound notes view (zero wire) or, if
-      // genuinely needed server-side, a future "derived stream"
-      // primitive over a graph dep.
+      // Delegates to the search-index worker child process via
+      // Surface-over-stdio. Each query spawns a fresh subscription that
+      // runs once and closes — same shape as the inline implementation
+      // that this replaced, but the actual index lookup happens in a
+      // separate process. Demonstrates the framework's stdio link
+      // adapter end-to-end and the subprocess-worker pattern that's
+      // its headline user benefit.
       source: async function* (input) {
-        yield {
-          matches: searchNotes(input.query),
-          query: input.query,
-        };
+        const worker = getWorker();
+        const it = await worker.surface.search.get(input);
+        for await (const result of it) yield result;
       },
     },
   },
@@ -95,6 +101,36 @@ const { router: surfaceRouter } = implementSurface(surface, {
 });
 
 export const appRouter = surfaceRouter;
+
+/** Snapshot-replace the worker's index from the current notes corpus.
+ *  Debounced one tick so a batch of synchronous upserts (e.g. test
+ *  fixtures) results in one push, not N. */
+let pushPending = false;
+function pushCorpusToWorker(): void {
+  if (pushPending) return;
+  pushPending = true;
+  queueMicrotask(() => {
+    pushPending = false;
+    const snapshot = Array.from(allNotes().values()).map(
+      ({ id, title, body }) => ({
+        id,
+        title,
+        body,
+      }),
+    );
+    void getWorker()
+      .surface.index.update({ notes: snapshot })
+      .catch((err: unknown) => {
+        process.stderr.write(
+          `[server] worker.index.update failed: ${String(err)}\n`,
+        );
+      });
+  });
+}
+
+// Initial push at boot — populate the worker with the seed `Welcome`
+// note (and any persistence-loaded state).
+pushCorpusToWorker();
 
 // ── Helpers (autosave debounce) ────────────────────────────────────────
 

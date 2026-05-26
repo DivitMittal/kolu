@@ -13,6 +13,24 @@
  * literal. The function is transport-only; routing semantics are the
  * caller's choice.
  *
+ * **Surface integration note.** `implementSurface(...)` returns
+ * `router: { surface: <inner router> }` — a plain object wrapping a
+ * router so it can be spread into the consumer's host router alongside
+ * other namespaces. To serve that fragment directly over stdio, re-wrap
+ * with `implement(contract).router(...)` first so oRPC's
+ * `StandardRPCHandler` recognizes the top level as a proper router:
+ *
+ * ```ts
+ * const t = implement(mySurface.contract);
+ * const { router: fragment } = implementSurface(mySurface, deps);
+ * const router = t.router(fragment as any);
+ * void serveOverStdio({ router });
+ * ```
+ *
+ * Without the wrap the handler returns `Not Found` for every request
+ * because the plain-object top doesn't satisfy oRPC's router-detect
+ * checks.
+ *
  * Returns a Promise that resolves when the input stream ends. Callers
  * typically `await` it from their `--stdio` entry point so the process
  * exits cleanly when the parent closes the pipe.
