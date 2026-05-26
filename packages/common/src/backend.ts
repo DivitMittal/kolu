@@ -57,9 +57,14 @@ import type { InitialTerminalMetadata, TerminalLocation } from "./surface";
  *  `Object.assign`-shaped opt rather than seven optional fields. */
 export interface TerminalSeed extends InitialTerminalMetadata {
   /** Sub-terminal link — present when this terminal is a child of an
-   *  existing one. The lifecycle layer (terminals.ts) decides whether
-   *  to inherit the parent's location; the backend just sets the
-   *  field. */
+   *  existing one. The backend just records the link on the new
+   *  terminal's metadata; it does NOT decide which backend to spawn
+   *  on. Sub-terminal location inheritance ("a child of a remote tile
+   *  spawns on the same remote") is the resolver's job — R-2 will
+   *  extend `getBackendFor` (or a creation-time variant) to look up
+   *  `parentId`'s backend before dispatching, so the inheritance lives
+   *  at one site instead of being replicated at every
+   *  `createTerminal` caller. */
   parentId?: string;
 }
 
