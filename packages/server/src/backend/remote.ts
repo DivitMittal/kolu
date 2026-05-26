@@ -1,13 +1,22 @@
 /**
  * RemoteBackend — the `Backend` implementation for terminals living on
  * a remote SSH host. Proxies every method via oRPC over `ssh stdio` to
- * a `kolu agent --stdio` peer (see `agentContract` in kolu-common).
+ * a `kolu agent --stdio` peer (see `agentSurface` in kolu-common —
+ * Surface formulation of the agent's typed reactive surface).
  *
  * One RemoteBackend per host; the `getBackendForCreate` resolver in
  * `./index.ts` caches them. RemoteBackend doesn't own the connection
  * itself — that's `HostSession` (transport + state machine). Two
  * axes, two modules. The connection survives multiple terminals on
  * the same host.
+ *
+ * Phase 2 (Surface subsumption) migration: this file now consumes
+ * `agentSurface` via `HostSession.surfaceClient` instead of the
+ * hand-rolled `agentContract` client. The 9-channel per-terminal
+ * mirroring loop collapses to ONE subscription on the
+ * `terminalMetadata` collection — the agent's side aggregates
+ * (`agent-surface.ts:startAgentMetadataAggregator`) and the
+ * kolu-server applies updates to `entry.meta` in one place.
  *
  * **STREAM_RETRY** (`.claude/rules/streaming.md`): oRPC's
  * `ClientRetryPlugin` handles reconnect transparently — when the ssh
@@ -25,6 +34,7 @@ import type {
   TerminalChannelMap,
   TerminalHandle,
 } from "kolu-common/backend";
+import type { AgentTerminalMetadata } from "kolu-common/agentSurface";
 import type { TerminalLocation } from "kolu-common/surface";
 import { log } from "../log.ts";
 import {
@@ -33,19 +43,49 @@ import {
   type TerminalProcess,
   unregisterTerminal,
 } from "../terminal-registry.ts";
-import type { AgentClient, HostSession } from "./host-session.ts";
+import type { AgentSurfaceClient, HostSession } from "./host-session.ts";
 import { remoteHandle } from "./remote-handle.ts";
 
-/** Lazily resolve the agent client — throws a typed error if the
- *  session isn't connected yet. Each method body uses this to surface
- *  a clear failure rather than a `Cannot read properties of undefined`. */
-function clientOf(session: HostSession): AgentClient {
-  if (!session.client) {
+/** Lazily resolve the agent surface client — throws a typed error if
+ *  the session isn't connected yet. Each method body uses this to
+ *  surface a clear failure rather than a `Cannot read properties of
+ *  undefined`. */
+function surfaceClientOf(session: HostSession): AgentSurfaceClient {
+  if (!session.surfaceClient) {
     throw new Error(
       `RemoteBackend(${session.host}): not connected. Call installSshAgent / HostSession.connect first.`,
     );
   }
-  return session.client;
+  return session.surfaceClient;
+}
+
+/** Apply an agent-published metadata snapshot to the kolu-server-side
+ *  `entry.meta`. The agent only ships fields it manages
+ *  (`AgentTerminalMetadata`); the kolu-server holds the remaining
+ *  client-managed fields (themeName, canvasLayout, etc.) untouched. */
+function applyAgentMetadata(
+  metaMod: typeof import("../meta/index.ts"),
+  id: string,
+  snapshot: AgentTerminalMetadata,
+): void {
+  const entry = getTerminal(id);
+  if (!entry) return;
+  // Server-persisted fields (cwd, git, lastAgentCommand, lastActivityAt)
+  // go through `updateServerMetadata` which fires `terminals:dirty`
+  // for the autosave loop.
+  metaMod.updateServerMetadata(entry, id, (m) => {
+    m.cwd = snapshot.cwd;
+    m.git = snapshot.git;
+    m.lastAgentCommand = snapshot.lastAgentCommand;
+    m.lastActivityAt = snapshot.lastActivityAt;
+  });
+  // Live transient fields (agent, pr, foreground) go through
+  // `updateServerLiveMetadata` which does NOT fire `terminals:dirty`.
+  metaMod.updateServerLiveMetadata(entry, id, (m) => {
+    m.agent = snapshot.agent;
+    m.pr = snapshot.pr;
+    m.foreground = snapshot.foreground;
+  });
 }
 
 export class RemoteBackend implements Backend {
@@ -89,20 +129,20 @@ export class RemoteBackend implements Backend {
     this.session.registerTerminal(id);
 
     // State-listener subscriber starts immediately — it doesn't need
-    // session.client. The channel subscribers (which DO need a live
-    // client) start after `terminal.spawn` returns.
+    // session.client. The metadata subscriber (which DOES need a live
+    // client) starts after `terminal.spawn` returns.
     const stopState = this.startStateSubscriber(id, metaMod);
     entry.stopProviders = stopState;
 
     // Async tail — connect the session, RPC-spawn on the agent, then
-    // wire up channel subscribers. Errors surface via the entry's
+    // wire up the metadata subscriber. Errors surface via the entry's
     // connectionState transitioning to "disconnected" (HostSession's
     // subprocess-exit handler), which is what the DisconnectedOverlay
     // renders.
     void (async () => {
       try {
         await this.session.connect();
-        await clientOf(this.session).terminal.spawn({
+        await surfaceClientOf(this.session).surface.terminal.spawn({
           id,
           cwd: opts.cwd,
           initialMetadata: opts.initialMetadata,
@@ -111,15 +151,17 @@ export class RemoteBackend implements Backend {
         // ready so HostSession's heartbeat loop starts (deliberately
         // deferred to avoid timing out the cold `nix run` realisation).
         this.session.markReady();
-        // Now that the client is live, attach channel subscribers and
-        // compose their stop fn with the state-listener stop. If the
-        // entry was killed between subscribe and now, the subscribers
-        // self-terminate when getTerminal(id) returns undefined.
-        const stopChannels = this.startChannelSubscribers(id, metaMod);
+        // Now that the client is live, attach the metadata subscriber
+        // (collapses Phase 1's 3 separate channel-mirror loops into
+        // one subscription on the terminalMetadata collection) and
+        // compose its stop fn with the state-listener stop. If the
+        // entry was killed between subscribe and now, the subscriber
+        // self-terminates when getTerminal(id) returns undefined.
+        const stopMetadata = this.startMetadataSubscriber(id, metaMod);
         const stopStateRef = entry.stopProviders;
         entry.stopProviders = () => {
           stopStateRef();
-          stopChannels();
+          stopMetadata();
         };
       } catch (err) {
         log.error(
@@ -175,36 +217,53 @@ export class RemoteBackend implements Backend {
         },
       };
     }
-    // Per-kind dispatch — one named procedure per TerminalChannelMap key.
-    // The client's stream procedures return `Promise<AsyncIterable<T>>`;
-    // wrap so the caller sees a direct `AsyncIterable<T>`.
-    const client = clientOf(this.session);
-    const callFor = (k: Exclude<K, "connectionState">) => {
-      switch (k) {
-        case "data":
-          return client.terminal.channelData({ id: terminalId });
-        case "cwd":
-          return client.terminal.channelCwd({ id: terminalId });
-        case "title":
-          return client.terminal.channelTitle({ id: terminalId });
-        case "git":
-          return client.terminal.channelGit({ id: terminalId });
-        case "commandRun":
-          return client.terminal.channelCommandRun({ id: terminalId });
-        case "agent":
-          return client.terminal.channelAgent({ id: terminalId });
-        case "pr":
-          return client.terminal.channelPr({ id: terminalId });
-        case "foreground":
-          return client.terminal.channelForeground({ id: terminalId });
-      }
-    };
-    if (kind === "connectionState") throw new Error("unreachable");
-    const promise = callFor(kind as Exclude<K, "connectionState">);
+
+    const client = surfaceClientOf(this.session);
+
+    // Streams that have direct surface counterparts: data, commandRun,
+    // title. PTY bytes and raw OSC stream sources.
+    if (kind === "data" || kind === "commandRun" || kind === "title") {
+      const streamPromise =
+        kind === "data"
+          ? client.surface.terminalData.get({ id: terminalId })
+          : kind === "commandRun"
+            ? client.surface.terminalCommandRun.get({ id: terminalId })
+            : client.surface.terminalTitle.get({ id: terminalId });
+      return {
+        async *[Symbol.asyncIterator]() {
+          const it = await streamPromise;
+          for await (const v of it) yield v as TerminalChannelMap[K];
+        },
+      };
+    }
+
+    // Remaining channels (cwd, git, agent, pr, foreground) all live
+    // inside the aggregated `terminalMetadata` collection. Derive each
+    // by subscribing to the collection and projecting per-snapshot.
     return {
       async *[Symbol.asyncIterator]() {
-        const it = await promise;
-        for await (const v of it) yield v as TerminalChannelMap[K];
+        const it = await client.surface.terminalMetadata.get({
+          key: terminalId,
+        });
+        for await (const snapshot of it) {
+          switch (kind) {
+            case "cwd":
+              yield snapshot.cwd as TerminalChannelMap[K];
+              break;
+            case "git":
+              yield snapshot.git as TerminalChannelMap[K];
+              break;
+            case "agent":
+              yield snapshot.agent as TerminalChannelMap[K];
+              break;
+            case "pr":
+              yield snapshot.pr as TerminalChannelMap[K];
+              break;
+            case "foreground":
+              yield snapshot.foreground as TerminalChannelMap[K];
+              break;
+          }
+        }
       },
     };
   }
@@ -227,111 +286,47 @@ export class RemoteBackend implements Backend {
     });
   }
 
-  /** Channel subscribers that mirror the agent's per-terminal
-   *  metadata into the kolu server's `entry.meta`. The agent's
-   *  in-process providers (claude-code/codex/opencode/foreground)
-   *  write to ITS local entry and publish to ITS terminalChannels;
-   *  these loops tunnel those publishes via oRPC and apply them on
-   *  the kolu-server side so the browser-visible terminalMetadata
-   *  collection stays current for remote tiles.
+  /** Subscribe to the agent's `terminalMetadata` collection for this
+   *  id and mirror each snapshot to `entry.meta` on the kolu-server
+   *  side. Replaces Phase 1's three separate `for await` loops over
+   *  individual channels with one subscription that gets the
+   *  aggregated `AgentTerminalMetadata` per-snapshot — the agent's
+   *  `startAgentMetadataAggregator` does the aggregation.
    *
-   *  CALL AFTER `session.connect()` HAS RETURNED — these subscribers
-   *  invoke `this.terminalChannel(id, kind)` which calls
-   *  `clientOf(this.session)`, which throws if the client isn't
+   *  CALL AFTER `session.connect()` HAS RETURNED — invokes
+   *  `surfaceClientOf(this.session)` which throws if the client isn't
    *  built yet. Starting before connect dies on the first iteration
    *  and the subscriber never reattaches. */
-  private startChannelSubscribers(
+  private startMetadataSubscriber(
     id: string,
     metaMod: typeof import("../meta/index.ts"),
   ): () => void {
     const ctrl = new AbortController();
-
-    // Live metadata channels — `agent`, `pr`, `foreground` — each
-    // pumped through `updateServerLiveMetadata` (which doesn't fire
-    // terminals:dirty, matching the local-side behavior for these
-    // transient fields).
-    const liveSubscriber = <K extends "agent" | "pr" | "foreground">(
-      kind: K,
-      apply: (
-        m: Parameters<
-          Parameters<typeof metaMod.updateServerLiveMetadata>[2]
-        >[0],
-        v: TerminalChannelMap[K],
-      ) => void,
-    ): void => {
-      void (async () => {
-        try {
-          for await (const v of this.terminalChannel(id, kind, ctrl.signal)) {
-            const e = getTerminal(id);
-            if (!e) continue;
-            metaMod.updateServerLiveMetadata(e, id, (m) => apply(m, v));
-          }
-        } catch (err) {
+    void (async () => {
+      try {
+        const client = surfaceClientOf(this.session);
+        const it = await client.surface.terminalMetadata.get({ key: id });
+        for await (const snapshot of it) {
+          if (ctrl.signal.aborted) break;
+          applyAgentMetadata(metaMod, id, snapshot);
+        }
+      } catch (err) {
+        if (!ctrl.signal.aborted) {
           log.warn(
-            { host: this.session.host, id, kind, err },
-            "remote meta subscriber failed",
+            { host: this.session.host, id, err },
+            "RemoteBackend: terminalMetadata subscriber failed",
           );
         }
-      })();
-    };
-    liveSubscriber("agent", (m, v) => {
-      m.agent = v;
-    });
-    liveSubscriber("pr", (m, v) => {
-      m.pr = v;
-    });
-    liveSubscriber("foreground", (m, v) => {
-      m.foreground = v;
-    });
-
-    // Server-persisted fields — cwd, git — go through
-    // `updateServerMetadata` (fires terminals:dirty so the session
-    // autosave loop picks it up).
-    void (async () => {
-      try {
-        for await (const newCwd of this.terminalChannel(
-          id,
-          "cwd",
-          ctrl.signal,
-        )) {
-          const e = getTerminal(id);
-          if (!e) continue;
-          metaMod.updateServerMetadata(e, id, (m) => {
-            m.cwd = newCwd;
-          });
-        }
-      } catch (err) {
-        log.warn(
-          { host: this.session.host, id, err },
-          "remote cwd subscriber failed",
-        );
       }
     })();
-    void (async () => {
-      try {
-        for await (const info of this.terminalChannel(id, "git", ctrl.signal)) {
-          const e = getTerminal(id);
-          if (!e) continue;
-          metaMod.updateServerMetadata(e, id, (m) => {
-            m.git = info;
-          });
-        }
-      } catch (err) {
-        log.warn(
-          { host: this.session.host, id, err },
-          "remote git subscriber failed",
-        );
-      }
-    })();
-
     return () => {
       ctrl.abort();
     };
   }
 
   killTerminal(terminalId: string): boolean {
-    void clientOf(this.session)
-      .terminal.kill({ id: terminalId })
+    void surfaceClientOf(this.session)
+      .surface.terminal.kill({ id: terminalId })
       .catch((err) => {
         log.warn(
           { host: this.session.host, terminalId, err },
@@ -358,7 +353,9 @@ export class RemoteBackend implements Backend {
     name: string,
     base64Data: string,
   ): Promise<string> {
-    const { path } = await clientOf(this.session).terminal.uploadFile({
+    const { path } = await surfaceClientOf(
+      this.session,
+    ).surface.terminal.uploadFile({
       id: terminalId,
       name,
       base64Data,
@@ -368,25 +365,27 @@ export class RemoteBackend implements Backend {
 
   fs: BackendFs = {
     listAll: async (repoPath) => {
-      const { paths } = await clientOf(this.session).fs.listAll({ repoPath });
+      const { paths } = await surfaceClientOf(this.session).surface.fs.listAll({
+        repoPath,
+      });
       return paths;
     },
     readFile: async (repoPath, filePath) => {
-      const out = await clientOf(this.session).fs.readFile({
+      const out = await surfaceClientOf(this.session).surface.fs.readFile({
         repoPath,
         filePath,
       });
       // FsReadFileOutput is a discriminated union (text | binary).
       // RemoteBackend's caller (router.ts) expects {content, truncated}
       // for text reads; binary reads would need different plumbing
-      // (URL handle) that R-2 doesn't carry over the wire yet.
+      // (URL handle) that this PR doesn't carry over the wire yet.
       if ("content" in out) {
         return { content: out.content, truncated: out.truncated };
       }
       return { content: "", truncated: false };
     },
     subscribeRepoChange: (repoPath, _signal) => {
-      const promise = clientOf(this.session).fs.subscribeRepoChange({
+      const promise = surfaceClientOf(this.session).surface.fsRepoChange.get({
         repoPath,
       });
       return {
@@ -397,7 +396,7 @@ export class RemoteBackend implements Backend {
       };
     },
     subscribeFileChange: (repoPath, filePath, _signal) => {
-      const promise = clientOf(this.session).fs.subscribeFileChange({
+      const promise = surfaceClientOf(this.session).surface.fsFileChange.get({
         repoPath,
         filePath,
       });
@@ -412,13 +411,13 @@ export class RemoteBackend implements Backend {
 
   git: BackendGit = {
     getDiff: async (repoPath, filePath, mode, oldPath) =>
-      clientOf(this.session).git.getDiff({
+      surfaceClientOf(this.session).surface.git.getDiff({
         repoPath,
         filePath,
         mode,
         oldPath,
       }),
     getStatus: async (repoPath, mode) =>
-      clientOf(this.session).git.getStatus({ repoPath, mode }),
+      surfaceClientOf(this.session).surface.git.getStatus({ repoPath, mode }),
   };
 }

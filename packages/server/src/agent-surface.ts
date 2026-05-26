@@ -104,6 +104,10 @@ export function buildAgentSurface() {
         source: (input, signal) =>
           localBackend.terminalChannel(input.id, "commandRun", signal),
       },
+      terminalTitle: {
+        source: (input, signal) =>
+          localBackend.terminalChannel(input.id, "title", signal),
+      },
       fsRepoChange: {
         source: (input, signal) =>
           localBackend.fs.subscribeRepoChange(input.repoPath, signal),

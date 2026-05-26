@@ -153,6 +153,14 @@ export const agentSurface = defineSurface({
       inputSchema: z.object({ id: TerminalIdSchema }),
       outputSchema: z.string(),
     },
+    /** OSC 0/2 title updates per terminal. Consumed by the agent's
+     *  own providers (foreground process detection, command tracking)
+     *  inside the agent process; exposed on the wire for symmetry
+     *  with the legacy `channelTitle`. */
+    terminalTitle: {
+      inputSchema: z.object({ id: TerminalIdSchema }),
+      outputSchema: z.string(),
+    },
     /** Repository-wide filesystem change tick. Yields `void` per debounced
      *  change anywhere under `repoPath`. */
     fsRepoChange: {

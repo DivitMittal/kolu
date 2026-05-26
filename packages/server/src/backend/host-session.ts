@@ -28,10 +28,11 @@ import type { Readable, Writable } from "node:stream";
 import { createORPCClient } from "@orpc/client";
 import type { ContractRouterClient } from "@orpc/contract";
 import type { agentContract } from "kolu-common/agentContract";
+import type { agentSurface } from "kolu-common/agentSurface";
 import type { ConnectionState } from "kolu-common/surface";
+import { StdioRPCLink } from "@kolu/surface/links/stdio";
 import { remoteAgentCommand } from "../install.ts";
 import { log } from "../log.ts";
-import { StdioRPCLink } from "./stdio-client.ts";
 
 /** Zed-ported heartbeat constants. */
 export const HEARTBEAT_INTERVAL_MS = 5_000;
@@ -66,8 +67,14 @@ function projectExternal(s: InternalState): ConnectionState {
   }
 }
 
-/** Typed client against `agentContract`. */
+/** Typed client against `agentContract` (legacy — kept while
+ *  RemoteBackend migrates method-by-method to `agentSurface`). */
 export type AgentClient = ContractRouterClient<typeof agentContract>;
+
+/** Typed client against `agentSurface` (the migration target). */
+export type AgentSurfaceClient = ContractRouterClient<
+  typeof agentSurface.contract
+>;
 
 export class HostSession {
   private state: InternalState = { kind: "connecting" };
@@ -78,8 +85,12 @@ export class HostSession {
     | ChildProcessByStdio<Writable, Readable, Readable>
     | undefined;
   private link: StdioRPCLink | undefined;
-  /** Typed agent client — undefined until `connect()` finishes. */
+  /** Typed agent client (legacy) — undefined until `connect()` finishes. */
   client: AgentClient | undefined;
+  /** Typed surface client — undefined until `connect()` finishes. Shares
+   *  the same underlying StdioRPCLink as `client`, so both contracts go
+   *  through one ClientPeer and one stdio framing. */
+  surfaceClient: AgentSurfaceClient | undefined;
 
   constructor(public readonly host: string) {
     log.info({ host }, "HostSession: created");
@@ -171,6 +182,7 @@ export class HostSession {
       });
       this.subprocess = undefined;
       this.client = undefined;
+      this.surfaceClient = undefined;
       this.link?.dispose();
       this.link = undefined;
       if (this.heartbeatTimer) {
@@ -183,10 +195,13 @@ export class HostSession {
     });
 
     this.link = new StdioRPCLink({
-      stdin: subprocess.stdin,
-      stdout: subprocess.stdout,
+      // Framework-direction-neutral naming: the client reads from the
+      // subprocess's stdout (responses) and writes to its stdin (requests).
+      read: subprocess.stdout,
+      write: subprocess.stdin,
     });
     this.client = createORPCClient<AgentClient>(this.link);
+    this.surfaceClient = createORPCClient<AgentSurfaceClient>(this.link);
 
     // Don't transition to "connected" until we've actually heard from
     // the agent. First-time `nix run` on a cold remote can take
@@ -216,7 +231,7 @@ export class HostSession {
   }
 
   private async tickHeartbeat(): Promise<void> {
-    if (!this.client) return;
+    if (!this.surfaceClient) return;
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(
         () => reject(new Error("heartbeat timeout")),
@@ -224,7 +239,10 @@ export class HostSession {
       ),
     );
     try {
-      await Promise.race([this.client.heartbeat(), timeout]);
+      await Promise.race([
+        this.surfaceClient.surface.system.heartbeat(),
+        timeout,
+      ]);
       // Reset missed counter on success.
       if (this.state.kind === "heartbeat-missed") {
         this.transition({ kind: "connected" });
@@ -255,6 +273,7 @@ export class HostSession {
     this.link?.dispose();
     this.link = undefined;
     this.client = undefined;
+    this.surfaceClient = undefined;
 
     for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
       this.transition({ kind: "reconnecting", attempt });
