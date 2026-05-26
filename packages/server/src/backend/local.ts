@@ -118,12 +118,15 @@ function watcherToAsyncIterable(
       let pending = false;
       let resolveNext: (() => void) | null = null;
       const stop = install(() => {
+        // Always mark pending — the wait loop checks this AFTER the
+        // promise resolves to decide whether to yield. Resolving the
+        // promise without setting pending would wake the iterator into
+        // an immediate re-await (silent missed event).
+        pending = true;
         if (resolveNext) {
           const r = resolveNext;
           resolveNext = null;
           r();
-        } else {
-          pending = true;
         }
       });
       const onAbort = () => {
