@@ -42,8 +42,18 @@ type DockOrder = {
 function init(): DockOrder {
   const store = useTerminalStore();
   const isStale = useStaleCheck();
+  // Hide parked terminals entirely instead of dimming them inline.
+  // Before auto-grouping, the dimmed parked row was the visual signal
+  // "this terminal still exists but is past the activity window"; with
+  // repo→branch headers carrying the organization, leaving parked rows
+  // in just adds noise to every branch sub-section. The activity-window
+  // selector now controls visibility — picking "Show all terminals"
+  // returns `null` from `activityWindowThresholdMs()`, `isStale` then
+  // returns false for every row, and no row is bucketed as parked.
   const ranked = createMemo(() =>
-    rankDockRows(store.terminalIds(), store.getMetadata, isStale),
+    rankDockRows(store.terminalIds(), store.getMetadata, isStale).filter(
+      (row) => row.bucket !== "parked",
+    ),
   );
   const tree = createMemo(() => buildDockTree(ranked(), store.getDisplayInfo));
   const ids = createMemo(() => flattenTerminalIds(tree()));
