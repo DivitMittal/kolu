@@ -86,14 +86,19 @@ export class RemoteBackend implements Backend {
     // the listener's `getTerminal(id)` lookup must succeed for the
     // initial metadata publish to flow.
     registerTerminal(id, entry);
-    entry.stopProviders = this.startRemoteMetaSubscribers(id, metaMod);
     this.session.registerTerminal(id);
 
-    // Async tail — connect the session, RPC-spawn on the agent. Errors
-    // surface via the entry's connectionState transitioning to
-    // "disconnected" (HostSession's subprocess-exit handler), which is
-    // what the DisconnectedOverlay renders. Failures are also logged
-    // via the HostSession.connect path.
+    // State-listener subscriber starts immediately — it doesn't need
+    // session.client. The channel subscribers (which DO need a live
+    // client) start after `terminal.spawn` returns.
+    const stopState = this.startStateSubscriber(id, metaMod);
+    entry.stopProviders = stopState;
+
+    // Async tail — connect the session, RPC-spawn on the agent, then
+    // wire up channel subscribers. Errors surface via the entry's
+    // connectionState transitioning to "disconnected" (HostSession's
+    // subprocess-exit handler), which is what the DisconnectedOverlay
+    // renders.
     void (async () => {
       try {
         await this.session.connect();
@@ -106,6 +111,16 @@ export class RemoteBackend implements Backend {
         // ready so HostSession's heartbeat loop starts (deliberately
         // deferred to avoid timing out the cold `nix run` realisation).
         this.session.markReady();
+        // Now that the client is live, attach channel subscribers and
+        // compose their stop fn with the state-listener stop. If the
+        // entry was killed between subscribe and now, the subscribers
+        // self-terminate when getTerminal(id) returns undefined.
+        const stopChannels = this.startChannelSubscribers(id, metaMod);
+        const stopStateRef = entry.stopProviders;
+        entry.stopProviders = () => {
+          stopStateRef();
+          stopChannels();
+        };
       } catch (err) {
         log.error(
           { host: this.session.host, id, err },
@@ -194,32 +209,42 @@ export class RemoteBackend implements Backend {
     };
   }
 
-  /** Wire up channel subscribers that mirror the agent's per-terminal
+  /** Connection-state subscriber — pure in-process listener on
+   *  HostSession state changes, no `session.client` needed. Starts
+   *  immediately so the tile reflects "connecting" / "live" /
+   *  "disconnected" transitions even before the agent boots. */
+  private startStateSubscriber(
+    id: string,
+    metaMod: typeof import("../meta/index.ts"),
+  ): () => void {
+    return this.session.onStateChange((s) => {
+      const e = getTerminal(id);
+      if (e) {
+        metaMod.updateServerLiveMetadata(e, id, (m) => {
+          m.connectionState = s;
+        });
+      }
+    });
+  }
+
+  /** Channel subscribers that mirror the agent's per-terminal
    *  metadata into the kolu server's `entry.meta`. The agent's
    *  in-process providers (claude-code/codex/opencode/foreground)
    *  write to ITS local entry and publish to ITS terminalChannels;
-   *  this loop tunnels those publishes via oRPC and applies them on
+   *  these loops tunnel those publishes via oRPC and apply them on
    *  the kolu-server side so the browser-visible terminalMetadata
-   *  collection stays current for remote tiles. */
-  private startRemoteMetaSubscribers(
+   *  collection stays current for remote tiles.
+   *
+   *  CALL AFTER `session.connect()` HAS RETURNED — these subscribers
+   *  invoke `this.terminalChannel(id, kind)` which calls
+   *  `clientOf(this.session)`, which throws if the client isn't
+   *  built yet. Starting before connect dies on the first iteration
+   *  and the subscriber never reattaches. */
+  private startChannelSubscribers(
     id: string,
     metaMod: typeof import("../meta/index.ts"),
   ): () => void {
     const ctrl = new AbortController();
-    const stops: Array<() => void> = [];
-
-    // Connection state — driven by HostSession state machine, not by
-    // an agent channel. Snapshot-then-delta via onStateChange.
-    stops.push(
-      this.session.onStateChange((s) => {
-        const e = getTerminal(id);
-        if (e) {
-          metaMod.updateServerLiveMetadata(e, id, (m) => {
-            m.connectionState = s;
-          });
-        }
-      }),
-    );
 
     // Live metadata channels — `agent`, `pr`, `foreground` — each
     // pumped through `updateServerLiveMetadata` (which doesn't fire
@@ -301,7 +326,6 @@ export class RemoteBackend implements Backend {
 
     return () => {
       ctrl.abort();
-      for (const s of stops) s();
     };
   }
 
