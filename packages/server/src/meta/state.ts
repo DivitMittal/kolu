@@ -89,13 +89,17 @@ function publishSnapshot(entry: TerminalProcess, terminalId: string): void {
   // consumers (notably `RemoteBackend` proxying via oRPC) see the same
   // data the in-process providers produce. For local-only deployments
   // there are no subscribers to these channels, so the cost is the
-  // publisher's empty-subscriber-list branch. Required for the
-  // agent-side `LocalBackend` (the binary running on the SSH host) to
-  // surface rich metadata back to the kolu server.
+  // publisher's empty-subscriber-list branch.
+  //
+  // `connectionState` is NOT republished here (Lowy post-impl F3) —
+  // its drivers are `LocalBackend.spawnPty` (one-time "live" at spawn)
+  // and `HostSession.onStateChange` (remote state machine).
+  // Republishing in publishSnapshot would create a third write site
+  // that disagrees with neither driver but maintains stale state
+  // independently.
   terminalChannels.agent(terminalId).publish(m.agent);
   terminalChannels.pr(terminalId).publish(m.pr);
   terminalChannels.foreground(terminalId).publish(m.foreground);
-  terminalChannels.connectionState(terminalId).publish(m.connectionState);
 }
 
 /** `publishSnapshot` + fire `terminals:dirty`. Use this from any path
