@@ -150,15 +150,9 @@ export interface BackendGit {
     oldPath?: string,
   ): Promise<GitDiffOutput>;
   getStatus(repoPath: string, mode: GitDiffMode): Promise<GitStatusOutput>;
-  /** Same shape as `BackendFs.subscribeRepoChange` — kolu-git's git
-   *  watcher uses the same parcel-watcher subscription under the hood,
-   *  so this is presented as a separate name for the
-   *  not-coincidentally-identical purpose: "git state at this repo
-   *  changed." */
-  subscribeRepoChange(
-    repoPath: string,
-    signal?: AbortSignal,
-  ): AsyncIterable<void>;
+  // Subscription lives on `BackendFs.subscribeRepoChange` only —
+  // post-impl Lowy F1: the git watcher and fs watcher are the same
+  // parcel-watcher subscription, just renamed. One axis, one site.
 }
 
 /**

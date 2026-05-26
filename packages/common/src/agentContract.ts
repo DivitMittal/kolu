@@ -146,9 +146,9 @@ export const agentContract = oc.router({
   git: {
     getDiff: oc.input(GitDiffInputSchema).output(GitDiffOutputSchema),
     getStatus: oc.input(GitStatusInputSchema).output(GitStatusOutputSchema),
-    subscribeRepoChange: oc
-      .input(SubscribeRepoInputSchema)
-      .output(eventIterator(z.void())),
+    // `subscribeRepoChange` lives on `fs` only — Lowy post-impl F1.
+    // The git watcher and fs watcher are the same parcel-watcher
+    // subscription with a different name. One axis, one site.
   },
 });
 

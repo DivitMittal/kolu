@@ -157,12 +157,5 @@ export class RemoteBackend implements Backend {
       // R-3: this.session.client.git.getStatus({ ... })
       return { files: [], base: null };
     },
-    subscribeRepoChange: (_repoPath, _signal) => {
-      return {
-        async *[Symbol.asyncIterator]() {
-          /* stub */
-        },
-      };
-    },
   };
 }

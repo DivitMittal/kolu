@@ -276,11 +276,6 @@ export class LocalBackend implements Backend {
       unwrapBackendGit(await getDiff(repoPath, filePath, mode, log, oldPath)),
     getStatus: async (repoPath, mode) =>
       unwrapBackendGit(await getStatus(repoPath, mode, log)),
-    subscribeRepoChange: (repoPath, signal) =>
-      watcherToAsyncIterable(
-        (cb) => subscribeRepoChange(repoPath, cb, log),
-        signal,
-      ),
   };
 }
 
