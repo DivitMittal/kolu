@@ -183,26 +183,30 @@
 <h2 id="at-a-glance">Phases at a glance</h2>
 <p>Four phases, ordered by what unblocks what. R-1 reshapes the server spine (no user-visible change); R-1.5 lands the generic <code>@kolu/surface</code> primitives the agent transport rides on (no user-visible change); R-2 then drops the entire remote-feature surface on top (the headline user shift); R-3 adds network-blip resilience.</p>
 <table>
-  <tr><th style="width:8%">Phase</th><th>Gist</th><th>User-facing change</th></tr>
+  <tr><th style="width:7%">Phase</th><th>Gist</th><th>User-facing change</th><th style="width:14%">Prototype PR</th></tr>
   <tr>
     <td><strong>R-1</strong></td>
     <td>Server spine collapses around one <code>Backend</code> interface. <code>LocalBackend</code> wraps the in-process providers; <code>meta/*.ts</code> orchestrators dissolve into it.</td>
     <td><strong>None.</strong> Pure refactor — behavior is byte-identical.</td>
+    <td><a href="https://github.com/juspay/kolu/pull/973">#973</a></td>
   </tr>
   <tr>
     <td><strong>R-1.5</strong></td>
     <td><code>@kolu/surface</code> grows stdio link, loopback link, peer-server, and in-memory channel. Validated by a subprocess-worker demo (search-index worker) in the framework's own example app.</td>
     <td><strong>None</strong> directly. To framework consumers: "<code>@kolu/surface</code> now supports subprocess-worker patterns."</td>
+    <td><a href="https://github.com/juspay/kolu/pull/978">#978</a></td>
   </tr>
   <tr>
     <td><strong>R-2</strong></td>
     <td>Same kolu binary runs as <code>kolu --stdio</code> on the remote via <code>ssh nix run</code>. <code>RemoteBackend</code> consumes the agent's typed surface via R-1.5's primitives.</td>
     <td><strong>Everything.</strong> Remote terminals work end-to-end: PTY, branch chip, agent badge, GitHub PR, Code tab, file upload, session restore, host chip on every surface.</td>
+    <td><a href="https://github.com/juspay/kolu/pull/976">#976</a> + <a href="https://github.com/juspay/kolu/pull/978">#978</a></td>
   </tr>
   <tr>
     <td><strong>R-3</strong></td>
     <td>Stable per-session IDs persist; agent grows <code>attachPty(id)</code>; explicit contract version handshake replaces the <code>--refresh</code> hack; idle-TTL GC on abandoned remote sessions.</td>
     <td>Remote terminals <strong>survive network blips</strong> — laptop sleep, wifi drop, reconnect with full scrollback restored.</td>
+    <td>—</td>
   </tr>
 </table>
 
