@@ -7,49 +7,54 @@
  * (and the agent installed via `AgentBootstrap`) on first request,
  * then cached.
  *
+ * Consumers (`meta/git.ts`, `terminals.ts`, future `meta/github.ts`)
+ * receive a `HostSessionLike` from `getReadySession()` — the registry
+ * bakes in defer-until-ready around `call` and `subscribe`, so the
+ * per-domain provider implementations don't each hand-roll the same
+ * queue-then-replay wrapper.
+ *
  * Phase 2a deliberately does NOT release a session when the last
  * terminal for a host closes — keeping the ssh connection warm
  * amortises the connect cost for the next "New terminal on srid-box"
  * click. A future cleanup pass can add an idle TTL.
  */
 
-import type { Logger } from "kolu-shared";
+import type { HostSessionLike, Logger } from "kolu-shared";
 import { ensureAgent } from "./bootstrap.ts";
 import { HostSession } from "./host-session.ts";
 
 interface CachedSession {
-  session: HostSession;
-  /** Promise resolved when the initial connect (incl. agent install)
-   *  succeeds. Multiple concurrent callers await the same promise. */
-  ready: Promise<void>;
+  /** Resolves to the live `HostSession` once `ensureAgent` + `connect`
+   *  complete. Callers go through `getReadySession()` which wraps this
+   *  in a defer-until-ready `HostSessionLike`, so they never see the
+   *  raw `ready` promise. */
+  ready: Promise<HostSession>;
+  /** Cached `HostSessionLike` wrapper — built once on first lookup so
+   *  every caller for the same host shares the same wrapper identity
+   *  (matters for downstream consumers that key off reference equality). */
+  ready_wrapper: HostSessionLike;
 }
 
 const sessions = new Map<string, CachedSession>();
 
-/** Get (or lazily build) the HostSession for `host`. The returned
- *  session is `connected` once the awaited promise resolves; the
- *  caller's RPC calls / subscriptions wait on `ready` before flushing. */
-export function getHostSession(host: string, log: Logger): CachedSession {
+/** Get (or lazily build) a `HostSessionLike` for the given host. The
+ *  returned object queues `call` / `subscribe` until the underlying
+ *  `HostSession` is connected, then flushes through transparently.
+ *  Callers never await a ready-promise. */
+export function getReadySession(host: string, log: Logger): HostSessionLike {
   const existing = sessions.get(host);
-  if (existing) return existing;
+  if (existing) return existing.ready_wrapper;
 
-  // Build placeholder first so the closure inside `ready` can mutate
-  // `cached.session` once the real session is connected. Before
-  // `ready` resolves, `cached.session` is a placeholder that throws —
-  // any caller that tries to RPC before awaiting `ready` gets a clear
-  // error.
-  const cached: CachedSession = {
-    session: makePlaceholderSession(host),
-    ready: Promise.resolve(),
-  };
-  cached.ready = (async () => {
+  const ready = (async () => {
     const { remoteAgentPath } = await ensureAgent(host, log);
     const session = new HostSession({ host, remoteAgentPath, log });
     await session.connect();
-    cached.session = session;
+    return session;
   })();
-  sessions.set(host, cached);
-  return cached;
+
+  const wrapper = makeReadyGatedSession(ready);
+  sessions.set(host, { ready, ready_wrapper: wrapper });
+  return wrapper;
 }
 
 /** Tear down the session for `host` (if any) — used by the disconnect
@@ -59,26 +64,43 @@ export async function closeHostSession(host: string): Promise<void> {
   if (!cached) return;
   sessions.delete(host);
   try {
-    await cached.session.close();
+    const session = await cached.ready;
+    await session.close();
   } catch {
     // best-effort
   }
 }
 
-function makePlaceholderSession(host: string): HostSession {
-  const err = () => {
-    throw new Error(
-      `HostSession for ${host} not ready yet — await cached.ready first`,
-    );
-  };
-  // Cast through unknown — the placeholder satisfies HostSession's
-  // shape only structurally and only as a not-yet-ready guard.
+/** Build a `HostSessionLike` that queues `call`/`subscribe` invocations
+ *  until the underlying `HostSession` is connected. Subscription
+ *  tokens are returned synchronously (queue `update` calls; honor
+ *  early `close()` with a `closed` guard that prevents the deferred
+ *  subscribe from issuing post-close). */
+function makeReadyGatedSession(ready: Promise<HostSession>): HostSessionLike {
   return {
-    connect: err,
-    call: err,
-    subscribe: err,
-    onStateChange: err,
-    currentState: () => ({ kind: "connecting" as const }),
-    close: async () => {},
-  } as unknown as HostSession;
+    call: async (method, args) => {
+      const session = await ready;
+      return session.call(method, args);
+    },
+    subscribe: (method, args, onEvent) => {
+      let inner: ReturnType<HostSession["subscribe"]> | null = null;
+      const queuedUpdates: unknown[] = [];
+      let closed = false;
+      void ready.then((session) => {
+        if (closed) return;
+        inner = session.subscribe(method, args, onEvent);
+        for (const params of queuedUpdates) void inner.update(params);
+      });
+      return {
+        update: async (params) => {
+          if (inner) await inner.update(params);
+          else queuedUpdates.push(params);
+        },
+        close: async () => {
+          closed = true;
+          if (inner) await inner.close();
+        },
+      };
+    },
+  };
 }

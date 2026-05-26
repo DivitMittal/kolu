@@ -27,7 +27,7 @@ import {
   type PtyProvider,
   sshPtyProvider,
 } from "kolu-pty";
-import { getHostSession } from "./agent/host-registry.ts";
+import { getReadySession } from "./agent/host-registry.ts";
 import pkg from "../package.json" with { type: "json" };
 import { cleanupClipboardDir } from "./clipboard.ts";
 import { koluShellDir } from "./koluRoot.ts";
@@ -135,41 +135,9 @@ export function createTerminal(
   let ptyProvider: PtyProvider;
   if (location.kind === "ssh") {
     if (process.env.KOLU_REMOTE_PTY_VIA_AGENT === "1") {
-      const cached = getHostSession(location.host, log);
       ptyProvider = agentPtyProvider({
         host: location.host,
-        session: {
-          call: async (method, args) => {
-            await cached.ready;
-            return cached.session.call(method, args);
-          },
-          subscribe: (method, args, onEvent) => {
-            // Same defer-until-ready wrapper used by meta/git.ts; the
-            // talk-plan's "HostSession owns subscription lifetime" win
-            // applies identically for PTY streams.
-            let inner: ReturnType<typeof cached.session.subscribe> | null =
-              null;
-            const queuedUpdates: unknown[] = [];
-            let closed = false;
-            void cached.ready.then(() => {
-              if (closed) return;
-              inner = cached.session.subscribe(method, args, onEvent);
-              for (const p of queuedUpdates) void inner.update(p);
-            });
-            return {
-              update: async (p) => {
-                if (inner) await inner.update(p);
-                else queuedUpdates.push(p);
-              },
-              close: async () => {
-                closed = true;
-                if (inner) await inner.close();
-              },
-            };
-          },
-        },
-        // Reuse the remoteSessionId persisted from the prior run if
-        // session restore is replaying this terminal.
+        session: getReadySession(location.host, log),
         remoteSessionId: undefined,
         onSessionAllocated: (rid) => {
           const entry = getTerminal(id);

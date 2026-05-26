@@ -25,7 +25,7 @@
 import { type GitInfoProvider, localGitInfoProvider } from "kolu-git";
 import { remoteGitInfoProvider } from "kolu-remote-client";
 import { trackRecentRepo } from "../activity.ts";
-import { getHostSession } from "../agent/host-registry.ts";
+import { getReadySession } from "../agent/host-registry.ts";
 import { log } from "../log.ts";
 import { terminalChannels } from "../publisher.ts";
 import type { TerminalProcess } from "../terminal-registry.ts";
@@ -40,47 +40,14 @@ export function startGitProvider(
 
   // Phase 2b dispatch: local terminals run kolu-git locally; SSH
   // terminals proxy through the host's `HostSession` to the agent.
+  // The registry hands us a `HostSessionLike` with defer-until-ready
+  // baked in — no inline plumbing here.
   const host: string | null =
     entry.meta.location.kind === "ssh" ? entry.meta.location.host : null;
-  let provider: GitInfoProvider;
-  if (entry.meta.location.kind === "ssh") {
-    const cached = getHostSession(entry.meta.location.host, log);
-    // The session may still be connecting on first call; the
-    // RemoteGitInfoProvider's subscribe IS synchronous, but the
-    // underlying RPC waits on the session's ready promise behind the
-    // scenes. (Phase 2a placeholder throws if RPC fires before ready;
-    // we wrap in a one-tick await below.)
-    provider = remoteGitInfoProvider({
-      call: async (method, args) => {
-        await cached.ready;
-        return cached.session.call(method, args);
-      },
-      subscribe: (method, args, onEvent) => {
-        // Defer issuing the subscription until the session is ready —
-        // wrap in a token that buffers update/close until then.
-        let inner: ReturnType<typeof cached.session.subscribe> | null = null;
-        const pendingUpdates: unknown[] = [];
-        let pendingClose = false;
-        void cached.ready.then(() => {
-          if (pendingClose) return;
-          inner = cached.session.subscribe(method, args, onEvent);
-          for (const params of pendingUpdates) void inner.update(params);
-        });
-        return {
-          update: async (params) => {
-            if (inner) await inner.update(params);
-            else pendingUpdates.push(params);
-          },
-          close: async () => {
-            pendingClose = true;
-            if (inner) await inner.close();
-          },
-        };
-      },
-    });
-  } else {
-    provider = localGitInfoProvider;
-  }
+  const provider: GitInfoProvider =
+    entry.meta.location.kind === "ssh"
+      ? remoteGitInfoProvider(getReadySession(entry.meta.location.host, log))
+      : localGitInfoProvider;
 
   const watcher = provider.subscribe(
     entry.meta.cwd,

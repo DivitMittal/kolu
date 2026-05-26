@@ -1,14 +1,7 @@
-/** Narrow interface the remote providers depend on. Decouples this
- *  package from `kolu-server`'s `HostSession` class — tests pass in a
- *  mock with the same shape. */
-export interface HostSessionLike {
-  call(method: string, args: unknown): Promise<unknown>;
-  subscribe<UpdateParams = unknown>(
-    method: string,
-    args: unknown,
-    onEvent: (payload: unknown) => void,
-  ): {
-    update(params: UpdateParams): Promise<void>;
-    close(): Promise<void>;
-  };
-}
+/** Re-export the canonical `HostSessionLike` from kolu-shared so
+ *  call sites within this package import from a stable single source.
+ *  The interface itself lives in kolu-shared because three packages
+ *  (kolu-remote-client, kolu-pty's agentPtyProvider, kolu-server's
+ *  host-registry) depend on it — keeping the type in this package
+ *  would force a cycle. */
+export type { HostSessionLike } from "kolu-shared";

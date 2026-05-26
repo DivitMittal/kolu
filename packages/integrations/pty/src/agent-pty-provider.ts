@@ -21,25 +21,14 @@
  * `kolu-remote-agent/src/index.ts` with `TODO Phase 3` markers.
  */
 
-import type { Logger } from "kolu-shared";
+import type { HostSessionLike, Logger } from "kolu-shared";
 import type { PtyHandle, PtyProvider, PtySpawnOptions } from "./pty.ts";
 
 export interface AgentPtyProviderOptions {
   host: string;
-  /** Session handle the provider drives — exposed via the narrow
-   *  HostSessionLike-style interface so this package stays free of
-   *  kolu-server imports. */
-  session: {
-    call(method: string, args: unknown): Promise<unknown>;
-    subscribe(
-      method: string,
-      args: unknown,
-      onEvent: (payload: unknown) => void,
-    ): {
-      update(params: unknown): Promise<void>;
-      close(): Promise<void>;
-    };
-  };
+  /** Session handle the provider drives. The narrow interface lives
+   *  in kolu-shared so this package doesn't import kolu-server. */
+  session: HostSessionLike;
   /** Persisted session id from a prior run — when set, the provider
    *  calls `terminal.attach` instead of `terminal.spawn`, recovering
    *  the still-running PTY on the remote. */
