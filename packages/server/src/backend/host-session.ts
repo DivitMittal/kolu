@@ -81,7 +81,7 @@ export class HostSession {
     // prototype demonstrates the shape; the actual transport hookup
     // requires installAgent + child_process.spawn("ssh", …) + bridging
     // stdin/stdout to oRPC's standard-peer client. See
-    // `packages/server/src/backend/install.ts:remoteAgentCommand` for
+    // `packages/server/src/install.ts:remoteAgentCommand` for
     // the spawn argv.
     log.info({ host }, "HostSession: created (transport wiring is R-3)");
   }

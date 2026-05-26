@@ -73,7 +73,7 @@ export const appRouter = t.router({
     }),
     installSshAgent: t.server.installSshAgent.handler(async ({ input }) => {
       try {
-        const { installAgent } = await import("./backend/install.ts");
+        const { installAgent } = await import("./install.ts");
         await installAgent(input.host);
         return { ok: true };
       } catch (e) {

@@ -23,7 +23,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { log } from "../log.ts";
+import { log } from "./log.ts";
 
 const execFileP = promisify(execFile);
 
