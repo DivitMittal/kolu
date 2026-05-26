@@ -53,6 +53,15 @@ export function getReadySession(host: string, log: Logger): HostSessionLike {
     return session;
   })();
 
+  // Evict the cache entry if the initial connect fails — otherwise a
+  // dead `Promise.reject` lingers indefinitely and every subsequent
+  // `getReadySession(host, ...)` returns the same dead wrapper. The
+  // `.catch` is non-silencing: callers awaiting the wrapper's `call`
+  // still see the underlying rejection through the ready chain.
+  ready.catch(() => {
+    sessions.delete(host);
+  });
+
   const wrapper = makeReadyGatedSession(ready);
   sessions.set(host, { ready, ready_wrapper: wrapper });
   return wrapper;
