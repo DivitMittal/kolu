@@ -159,7 +159,7 @@ export class LocalBackend implements Backend {
   readonly id: TerminalLocation = { kind: "local" };
 
   async spawnPty(opts: PtySpawnOpts): Promise<TerminalHandle> {
-    const id = crypto.randomUUID();
+    const id = opts.id ?? crypto.randomUUID();
     const tlog = log.child({ terminal: id });
 
     const handle = spawnPty(

@@ -66,6 +66,14 @@ export interface TerminalSeed extends InitialTerminalMetadata {
 }
 
 export interface PtySpawnOpts {
+  /** Caller-supplied terminal id. Optional: backends generate one
+   *  when absent. RemoteBackend pre-generates an id so it can register
+   *  a "connecting" shadow entry on the kolu server BEFORE the agent's
+   *  spawn RPC roundtrips — that's what makes the tile appear
+   *  instantly while ssh + nix run realise the closure. The agent
+   *  honors the same id so kolu server <-> agent registries stay in
+   *  lockstep. */
+  id?: string;
   cwd?: string;
   initialMetadata?: TerminalSeed;
   /** Fires on PTY exit with `wasNatural` distinguishing shell-exited

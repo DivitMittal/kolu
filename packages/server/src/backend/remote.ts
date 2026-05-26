@@ -56,25 +56,15 @@ export class RemoteBackend implements Backend {
   }
 
   async spawnPty(opts: PtySpawnOpts): Promise<TerminalHandle> {
-    log.info({ host: this.session.host }, "RemoteBackend.spawnPty");
-    // Lazy connect — multiple concurrent spawn requests on a fresh
-    // session all await one `connect()`; subsequent calls are no-ops.
-    await this.session.connect();
-    const { id } = await clientOf(this.session).terminal.spawn({
-      cwd: opts.cwd,
-      initialMetadata: opts.initialMetadata,
-    });
-    // First successful RPC roundtrip — the agent is alive. Mark ready
-    // so HostSession's heartbeat loop starts (it was deliberately
-    // deferred to avoid timing out the cold `nix run` realisation,
-    // which can take minutes on first use).
-    this.session.markReady();
-    this.session.registerTerminal(id);
+    // Pre-generate the id so we can register a "connecting" shadow
+    // entry on the kolu server BEFORE the agent's spawn RPC roundtrips.
+    // Without this, the tile only appears after the (possibly minutes-
+    // long) cold `nix run` realisation completes — invisible-progress
+    // UX. The agent then honors the same id, keeping kolu-server <->
+    // agent registries in lockstep.
+    const id = opts.id ?? crypto.randomUUID();
+    log.info({ host: this.session.host, id }, "RemoteBackend.spawnPty");
 
-    // Register a shadow entry in the kolu server's terminal-registry so
-    // router-level operations (`terminal.attach`, `sendInput`, `resize`,
-    // `kill`, `screenState`) find the terminal. `handle` is a PtyHandle-
-    // shaped proxy that forwards via session.client.
     const handle = remoteHandle({
       id,
       cwd: opts.cwd ?? "/",
@@ -83,7 +73,8 @@ export class RemoteBackend implements Backend {
     const metaMod = await import("../meta/index.ts");
     const meta = metaMod.createMetadata(opts.cwd ?? "/", this.id);
     if (opts.initialMetadata) Object.assign(meta, opts.initialMetadata);
-    meta.connectionState = this.session.connectionState();
+    // Tile renders "Connecting…" overlay from this state.
+    meta.connectionState = "connecting";
     const entry: TerminalProcess = {
       info: { id },
       meta,
@@ -96,6 +87,32 @@ export class RemoteBackend implements Backend {
     // initial metadata publish to flow.
     registerTerminal(id, entry);
     entry.stopProviders = this.startRemoteMetaSubscribers(id, metaMod);
+    this.session.registerTerminal(id);
+
+    // Async tail — connect the session, RPC-spawn on the agent. Errors
+    // surface via the entry's connectionState transitioning to
+    // "disconnected" (HostSession's subprocess-exit handler), which is
+    // what the DisconnectedOverlay renders. Failures are also logged
+    // via the HostSession.connect path.
+    void (async () => {
+      try {
+        await this.session.connect();
+        await clientOf(this.session).terminal.spawn({
+          id,
+          cwd: opts.cwd,
+          initialMetadata: opts.initialMetadata,
+        });
+        // First successful RPC roundtrip — the agent is alive. Mark
+        // ready so HostSession's heartbeat loop starts (deliberately
+        // deferred to avoid timing out the cold `nix run` realisation).
+        this.session.markReady();
+      } catch (err) {
+        log.error(
+          { host: this.session.host, id, err },
+          "RemoteBackend.spawnPty: async connect/spawn failed",
+        );
+      }
+    })();
 
     return {
       id,

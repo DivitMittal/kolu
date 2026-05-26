@@ -61,6 +61,7 @@ function buildAgentRouter() {
     terminal: {
       spawn: t.terminal.spawn.handler(async ({ input }) => {
         const handle = await localBackend.spawnPty({
+          id: input.id,
           cwd: input.cwd,
           initialMetadata: input.initialMetadata,
         });

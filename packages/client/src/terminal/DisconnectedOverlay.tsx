@@ -27,20 +27,29 @@ export function DisconnectedOverlay(props: {
   onReconnect: () => void;
   onClose: () => void;
 }) {
-  const visible = () =>
+  const disconnected = () =>
     props.location.kind === "ssh" && props.connectionState === "disconnected";
-  const reconnecting = () =>
+  const connecting = () =>
     props.location.kind === "ssh" && props.connectionState === "connecting";
+  const host = () => (props.location.kind === "ssh" ? props.location.host : "");
   return (
-    <Show when={visible() || reconnecting()}>
+    <Show when={disconnected() || connecting()}>
       <div class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/60 text-white backdrop-blur-sm">
-        <div class="text-sm font-mono opacity-70">
-          {props.location.kind === "ssh" ? props.location.host : ""}
-        </div>
-        <div class="text-base font-semibold">
-          {reconnecting() ? "Reconnecting…" : "Disconnected"}
-        </div>
-        <Show when={!reconnecting()}>
+        <Show when={connecting()}>
+          {/* Visible progress signal while ssh + nix-run realises the
+             closure on a cold remote (first connect can take minutes).
+             Pulse + spinner make it clear something IS happening — the
+             alternative is a blank tile that feels frozen. */}
+          <div class="w-7 h-7 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+          <div class="text-base font-semibold">Connecting to {host()}…</div>
+          <div class="text-xs text-white/60 max-w-[28ch] text-center">
+            First connect realises the kolu agent's nix closure on the remote;
+            this can take a moment.
+          </div>
+        </Show>
+        <Show when={disconnected()}>
+          <div class="text-sm font-mono opacity-70">{host()}</div>
+          <div class="text-base font-semibold">Disconnected</div>
           <div class="flex gap-2 mt-2">
             <button
               type="button"

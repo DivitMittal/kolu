@@ -49,6 +49,11 @@ import { PrResultSchema } from "kolu-github/schemas";
 // ── Terminal lifecycle ────────────────────────────────────────────────
 
 export const AgentTerminalSpawnInputSchema = z.object({
+  /** Caller-supplied id — the kolu server pre-generates this so it
+   *  can register a "connecting" tile before the spawn RPC
+   *  roundtrips. The agent uses it as the new terminal's id in its
+   *  own registry, keeping kolu-server <-> agent ids in lockstep. */
+  id: z.string(),
   cwd: z.string().optional(),
   initialMetadata: InitialTerminalMetadataSchema.extend({
     parentId: z.string().optional(),
