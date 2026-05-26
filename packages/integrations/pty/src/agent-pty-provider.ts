@@ -21,6 +21,7 @@
  * `kolu-remote-agent/src/index.ts` with `TODO Phase 3` markers.
  */
 
+import { AgentPtyMessageSchema } from "kolu-remote-agent/protocol";
 import type { HostSessionLike } from "kolu-remote-client";
 import type { Logger } from "kolu-shared";
 import type { PtyHandle, PtyProvider, PtySpawnOptions } from "./pty.ts";
@@ -41,15 +42,6 @@ export interface AgentPtyProviderOptions {
   onSessionAllocated?: (remoteSessionId: string) => void;
 }
 
-/** Tagged-union event payload streamed by the agent for an open PTY
- *  session. The agent emits `spawned` as the first event after a
- *  `terminal.spawn` subscription is registered, carrying the
- *  `remoteSessionId` the persisted schema reattaches by. */
-type AgentPtyMessage =
-  | { kind: "spawned"; remoteSessionId: string }
-  | { kind: "data"; payload: string }
-  | { kind: "exit"; payload: number };
-
 export function agentPtyProvider(opts: AgentPtyProviderOptions): PtyProvider {
   return {
     spawn(
@@ -66,8 +58,16 @@ export function agentPtyProvider(opts: AgentPtyProviderOptions): PtyProvider {
       // a fresh spawn, carries the remote session id), `data` (PTY
       // bytes), `exit` (PTY exited). For `terminal.attach` the agent
       // skips the `spawned` frame — the caller already has the id.
+      // Validate via the protocol schema rather than casting so the
+      // wire-contract drift surfaces here instead of as a silent
+      // miss-dispatch (e.g. agent bumps schema, client falls behind).
       const onEvent = (raw: unknown): void => {
-        const msg = raw as AgentPtyMessage;
+        const parsed = AgentPtyMessageSchema.safeParse(raw);
+        if (!parsed.success) {
+          tlog.warn({ raw, issues: parsed.error.issues }, "agent pty event");
+          return;
+        }
+        const msg = parsed.data;
         if (msg.kind === "spawned") {
           allocatedSessionId = msg.remoteSessionId;
           opts.onSessionAllocated?.(msg.remoteSessionId);

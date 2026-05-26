@@ -124,3 +124,26 @@ export const TerminalSpawnResultSchema = z.object({
 export const TerminalAttachInputSchema = z.object({
   remoteSessionId: z.string().uuid(),
 });
+
+/** Stream-event payload from the agent for an open terminal session.
+ *  The agent emits one of these per `RpcEvent.payload` for the
+ *  `terminal.spawn` / `terminal.attach` subscriptions:
+ *    - `spawned` — first frame after a fresh spawn, carries the
+ *      `remoteSessionId` the persisted schema reattaches by.
+ *      (`attach` skips this — the caller already has the id.)
+ *    - `data`    — raw PTY bytes (the local headless xterm parses
+ *      OSC sequences out of this on the client side).
+ *    - `exit`    — PTY exited with the given numeric code.
+ *
+ *  Single schema — both the agent's emitter and the client's parser
+ *  (`agentPtyProvider.onEvent`) consume it via `safeParse`, so the
+ *  wire contract has one source of truth. */
+export const AgentPtyMessageSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("spawned"),
+    remoteSessionId: z.string().uuid(),
+  }),
+  z.object({ kind: z.literal("data"), payload: z.string() }),
+  z.object({ kind: z.literal("exit"), payload: z.number().int() }),
+]);
+export type AgentPtyMessage = z.infer<typeof AgentPtyMessageSchema>;
