@@ -24,6 +24,13 @@
 
 import { z } from "zod";
 
+/** Single source of truth for the agent's wire-protocol version.
+ *  Imported by both the agent (`kolu-remote-agent/src/index.ts` —
+ *  emitted on `version` RPC) and the server-side bootstrap
+ *  (`packages/server/src/agent/bootstrap.ts` — used to gate the
+ *  "already-installed" probe). Bumping in one place flows to both. */
+export const AGENT_VERSION = "0.1.0";
+
 // ── Request / response envelopes ──────────────────────────────────────
 
 export const RpcRequestSchema = z.object({

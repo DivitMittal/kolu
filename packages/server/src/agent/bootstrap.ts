@@ -23,9 +23,10 @@
  */
 
 import { spawn } from "node:child_process";
+import { AGENT_VERSION } from "kolu-remote-agent/protocol";
 import type { Logger } from "kolu-shared";
 
-const EXPECTED_AGENT_VERSION = "0.1.0";
+const EXPECTED_AGENT_VERSION = AGENT_VERSION;
 
 /** Absolute path on the remote where the agent lives. Phase 2a
  *  conventions: `~/.local/share/kolu/remote-agent/<version>/index.js`.

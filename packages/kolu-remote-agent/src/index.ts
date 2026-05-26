@@ -26,6 +26,7 @@ import { localGitInfoProvider, type GitInfoSubscription } from "kolu-git";
 import type { Logger } from "kolu-shared";
 import { createInterface } from "node:readline";
 import {
+  AGENT_VERSION,
   GitSubscribeInfoInputSchema,
   type RpcEvent,
   RpcRequestSchema,
@@ -34,8 +35,6 @@ import {
   SubscriptionUpdateInputSchema,
   VersionResultSchema,
 } from "./protocol.ts";
-
-const AGENT_VERSION = "0.1.0";
 
 /** Active server-side subscriptions, keyed by the integer handle the
  *  client tracks. Closing the wire (ssh dropped) drains the map and
