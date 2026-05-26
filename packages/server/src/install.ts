@@ -137,10 +137,12 @@ export async function installAgent(host: string): Promise<void> {
   log.info({ host, storePath }, "installAgent: done");
 }
 
-/** Build the remote command that runs `kolu agent --stdio` from the
+/** Build the remote command that runs `kolu --stdio` from the
  *  copied store path. Used by `HostSession` when spawning the ssh
- *  subprocess. */
+ *  subprocess. The kolu CLI dispatches on the `--stdio` flag (see
+ *  `index.ts`) — no positional subcommand is parsed by cleye in
+ *  `strictFlags: true` mode. */
 export async function remoteAgentCommand(host: string): Promise<string[]> {
   const storePath = await getKoluStorePath();
-  return ["ssh", host, `${storePath}/bin/kolu`, "agent", "--stdio"];
+  return ["ssh", host, `${storePath}/bin/kolu`, "--stdio"];
 }

@@ -87,6 +87,13 @@ const argv = cli({
 // shares everything (logger, koluRoot, configureNixShellEnv) but never
 // touches the Hono/WebSocket server.
 if (argv.flags.stdio) {
+  // The agent process is spawned via ssh and inherits no env. Provide
+  // a sensible KOLU_STATE_DIR default so `state.ts` can initialize —
+  // agent state is ephemeral per-session so XDG-style under the
+  // remote user's home is enough.
+  if (!process.env.KOLU_STATE_DIR) {
+    process.env.KOLU_STATE_DIR = `${process.env.HOME ?? "/tmp"}/.config/kolu-agent`;
+  }
   configureNixShellEnv(argv.flags.allowNixShellWithEnvWhitelist);
   ensureKoluRoot();
   if (argv.flags.verbose) log.level = "debug";

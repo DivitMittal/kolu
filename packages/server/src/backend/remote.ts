@@ -15,10 +15,6 @@
  * snapshot-then-delta first yield re-syncs client state. No bespoke
  * reconnect logic needed in this file; HostSession's state machine
  * only governs *whether* to try reconnecting.
- *
- * Prototype scope: method bodies sketch the intended oRPC calls; the
- * actual `client` object is left wired-to-undefined until R-3 plumbs
- * the standard-peer transport.
  */
 
 import type {
@@ -31,7 +27,19 @@ import type {
 } from "kolu-common/backend";
 import type { TerminalLocation } from "kolu-common/surface";
 import { log } from "../log.ts";
-import type { HostSession } from "./host-session.ts";
+import type { AgentClient, HostSession } from "./host-session.ts";
+
+/** Lazily resolve the agent client — throws a typed error if the
+ *  session isn't connected yet. Each method body uses this to surface
+ *  a clear failure rather than a `Cannot read properties of undefined`. */
+function clientOf(session: HostSession): AgentClient {
+  if (!session.client) {
+    throw new Error(
+      `RemoteBackend(${session.host}): not connected. Call installSshAgent / HostSession.connect first.`,
+    );
+  }
+  return session.client;
+}
 
 export class RemoteBackend implements Backend {
   readonly id: TerminalLocation;
@@ -42,53 +50,122 @@ export class RemoteBackend implements Backend {
 
   async spawnPty(opts: PtySpawnOpts): Promise<TerminalHandle> {
     log.info({ host: this.session.host }, "RemoteBackend.spawnPty");
-    // R-3: `const { id } = await this.session.client.terminal.spawn({
-    //   cwd: opts.cwd, initialMetadata: opts.initialMetadata })`
-    // Then register `id` with the session so HostSession state changes
-    // publish to this terminal's connectionState channel.
-    const id = crypto.randomUUID(); // stub
+    // Lazy connect — multiple concurrent spawn requests on a fresh
+    // session all await one `connect()`; subsequent calls are no-ops.
+    await this.session.connect();
+    const { id } = await clientOf(this.session).terminal.spawn({
+      cwd: opts.cwd,
+      initialMetadata: opts.initialMetadata,
+    });
     this.session.registerTerminal(id);
     return {
       id,
-      write: (_data) => {
-        // R-3: this.session.client.terminal.write({ id, data: _data })
+      write: (data) => {
+        void clientOf(this.session)
+          .terminal.write({ id, data })
+          .catch((err) => {
+            log.warn(
+              { host: this.session.host, id, err },
+              "remote write failed",
+            );
+          });
       },
-      resize: (_cols, _rows) => {
-        // R-3: this.session.client.terminal.resize({ id, cols, rows })
+      resize: (cols, rows) => {
+        void clientOf(this.session)
+          .terminal.resize({ id, cols, rows })
+          .catch((err) => {
+            log.warn(
+              { host: this.session.host, id, err },
+              "remote resize failed",
+            );
+          });
       },
     };
   }
 
   terminalChannel<K extends keyof TerminalChannelMap>(
     terminalId: string,
-    _kind: K,
+    kind: K,
     _signal?: AbortSignal,
   ): AsyncIterable<TerminalChannelMap[K]> {
-    // R-3: route per kind:
-    //   "data" → this.session.client.terminal.channelData({ id: terminalId })
-    //   "agent" → this.session.client.terminal.channelAgent({ id })
-    //   "connectionState" → tap session.onStateChange (in-process, no RPC)
-    //   …etc per the agentContract channels.
-    //
-    // For `connectionState` we intercept at this layer rather than
-    // going over the wire — the agent doesn't know what state the
-    // local server perceives the connection in. HostSession's state
-    // machine is the truth.
-    log.warn(
-      { host: this.session.host, terminalId, kind: _kind },
-      "RemoteBackend.terminalChannel: prototype stub",
-    );
-    // Return an empty iterator that respects abort.
+    // `connectionState` is in-process — the kolu server's view of the
+    // session's state, not something to fetch from the agent.
+    if (kind === "connectionState") {
+      const session = this.session;
+      return {
+        async *[Symbol.asyncIterator]() {
+          let resolve: ((v: TerminalChannelMap[K]) => void) | null = null;
+          const queue: TerminalChannelMap[K][] = [];
+          const stop = session.onStateChange((s) => {
+            if (resolve) {
+              const r = resolve;
+              resolve = null;
+              r(s as TerminalChannelMap[K]);
+            } else {
+              queue.push(s as TerminalChannelMap[K]);
+            }
+          });
+          try {
+            while (true) {
+              if (queue.length > 0) {
+                const v = queue.shift();
+                if (v !== undefined) yield v;
+              } else {
+                yield await new Promise<TerminalChannelMap[K]>((r) => {
+                  resolve = r;
+                });
+              }
+            }
+          } finally {
+            stop();
+          }
+        },
+      };
+    }
+    // Per-kind dispatch — one named procedure per TerminalChannelMap key.
+    // The client's stream procedures return `Promise<AsyncIterable<T>>`;
+    // wrap so the caller sees a direct `AsyncIterable<T>`.
+    const client = clientOf(this.session);
+    const callFor = (k: Exclude<K, "connectionState">) => {
+      switch (k) {
+        case "data":
+          return client.terminal.channelData({ id: terminalId });
+        case "cwd":
+          return client.terminal.channelCwd({ id: terminalId });
+        case "title":
+          return client.terminal.channelTitle({ id: terminalId });
+        case "git":
+          return client.terminal.channelGit({ id: terminalId });
+        case "commandRun":
+          return client.terminal.channelCommandRun({ id: terminalId });
+        case "agent":
+          return client.terminal.channelAgent({ id: terminalId });
+        case "pr":
+          return client.terminal.channelPr({ id: terminalId });
+        case "foreground":
+          return client.terminal.channelForeground({ id: terminalId });
+      }
+    };
+    if (kind === "connectionState") throw new Error("unreachable");
+    const promise = callFor(kind as Exclude<K, "connectionState">);
     return {
       async *[Symbol.asyncIterator]() {
-        // R-3 stub: yields nothing.
+        const it = await promise;
+        for await (const v of it) yield v as TerminalChannelMap[K];
       },
     };
   }
 
-  killTerminal(_terminalId: string): boolean {
-    // R-3: await this.session.client.terminal.kill({ id: _terminalId })
-    this.session.unregisterTerminal(_terminalId);
+  killTerminal(terminalId: string): boolean {
+    void clientOf(this.session)
+      .terminal.kill({ id: terminalId })
+      .catch((err) => {
+        log.warn(
+          { host: this.session.host, terminalId, err },
+          "remote kill failed",
+        );
+      });
+    this.session.unregisterTerminal(terminalId);
     return true;
   }
 
@@ -97,65 +174,76 @@ export class RemoteBackend implements Backend {
     handle: { dispose(): void };
     stopProviders: () => void;
   }): void {
-    // For RemoteBackend the local `entry.handle.dispose` is a no-op
-    // proxy; the real kill is the RPC. The `stopProviders` call
-    // tears down any local subscribers (the metadata aggregator).
     entry.stopProviders();
-    void this.killTerminal(entry.info.id);
+    this.killTerminal(entry.info.id);
   }
 
   async uploadFile(
     terminalId: string,
-    _name: string,
-    _base64Data: string,
+    name: string,
+    base64Data: string,
   ): Promise<string> {
-    // R-3: const { path } = await this.session.client.terminal.uploadFile({
-    //   id: terminalId, name: _name, base64Data: _base64Data
-    // })
-    // return path
-    log.warn({ terminalId }, "RemoteBackend.uploadFile: prototype stub");
-    return `/tmp/kolu-agent-stub/${terminalId}/${_name}`;
+    const { path } = await clientOf(this.session).terminal.uploadFile({
+      id: terminalId,
+      name,
+      base64Data,
+    });
+    return path;
   }
 
   fs: BackendFs = {
-    listAll: async (_repoPath) => {
-      // R-3: return this.session.client.fs.listAll({ repoPath: _repoPath })
-      return [];
+    listAll: async (repoPath) => {
+      const { paths } = await clientOf(this.session).fs.listAll({ repoPath });
+      return paths;
     },
-    readFile: async (_repoPath, _filePath) => {
-      // R-3: return this.session.client.fs.readFile({ repoPath, filePath })
+    readFile: async (repoPath, filePath) => {
+      const out = await clientOf(this.session).fs.readFile({
+        repoPath,
+        filePath,
+      });
+      // FsReadFileOutput is a discriminated union (text | binary).
+      // RemoteBackend's caller (router.ts) expects {content, truncated}
+      // for text reads; binary reads would need different plumbing
+      // (URL handle) that R-2 doesn't carry over the wire yet.
+      if ("content" in out) {
+        return { content: out.content, truncated: out.truncated };
+      }
       return { content: "", truncated: false };
     },
-    subscribeRepoChange: (_repoPath, _signal) => {
-      // R-3: iterate this.session.client.fs.subscribeRepoChange({ repoPath })
+    subscribeRepoChange: (repoPath, _signal) => {
+      const promise = clientOf(this.session).fs.subscribeRepoChange({
+        repoPath,
+      });
       return {
         async *[Symbol.asyncIterator]() {
-          /* stub */
+          const it = await promise;
+          for await (const _ of it) yield;
         },
       };
     },
-    subscribeFileChange: (_repoPath, _filePath, _signal) => {
+    subscribeFileChange: (repoPath, filePath, _signal) => {
+      const promise = clientOf(this.session).fs.subscribeFileChange({
+        repoPath,
+        filePath,
+      });
       return {
         async *[Symbol.asyncIterator]() {
-          /* stub */
+          const it = await promise;
+          for await (const _ of it) yield;
         },
       };
     },
   };
 
   git: BackendGit = {
-    getDiff: async (_repoPath, _filePath, _mode, _oldPath) => {
-      // R-3: this.session.client.git.getDiff({ ... })
-      return {
-        oldFileName: null,
-        newFileName: null,
-        hunks: [],
-        binary: false,
-      };
-    },
-    getStatus: async (_repoPath, _mode) => {
-      // R-3: this.session.client.git.getStatus({ ... })
-      return { files: [], base: null };
-    },
+    getDiff: async (repoPath, filePath, mode, oldPath) =>
+      clientOf(this.session).git.getDiff({
+        repoPath,
+        filePath,
+        mode,
+        oldPath,
+      }),
+    getStatus: async (repoPath, mode) =>
+      clientOf(this.session).git.getStatus({ repoPath, mode }),
   };
 }

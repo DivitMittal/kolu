@@ -24,10 +24,15 @@
  */
 
 import { implement, ORPCError } from "@orpc/server";
+import { StandardRPCHandler } from "@orpc/server/standard";
+import { createServerPeerHandleRequestFn } from "@orpc/server/standard-peer";
+import { ServerPeer } from "@orpc/standard-server-peer";
 import { agentContract } from "kolu-common/agentContract";
 import type { TerminalChannelMap } from "kolu-common/backend";
 import { localBackend } from "./backend/local.ts";
+import { makeStdioSend, readStdioMessages } from "./backend/stdio-peer.ts";
 import { log } from "./log.ts";
+import { getTerminal } from "./terminal-registry.ts";
 
 /** Body of every per-channel handler. The kind literal is the single
  *  binding-site source of typo risk — TS catches a mismatched key. */
@@ -64,22 +69,23 @@ function buildAgentRouter() {
       kill: t.terminal.kill.handler(async ({ input }) =>
         localBackend.killTerminal(input.id),
       ),
-      // Lowy post-impl finding F4: silent no-op handlers violate the
-      // contract — RemoteBackend's caller would receive success while
-      // the PTY received no input (silent data loss). Honest prototype
-      // contract throws until R-3 plumbs terminal-id-keyed control on
-      // LocalBackend.
-      write: t.terminal.write.handler(async () => {
-        throw new ORPCError("NOT_IMPLEMENTED", {
-          message:
-            "terminal.write on the agent contract is R-3 — LocalBackend doesn't expose terminal-id-keyed write today; the handle.write() path is in-process only.",
-        });
+      write: t.terminal.write.handler(async ({ input }) => {
+        const entry = getTerminal(input.id);
+        if (!entry) {
+          throw new ORPCError("NOT_FOUND", {
+            message: `terminal ${input.id} not found on agent`,
+          });
+        }
+        entry.handle.write(input.data);
       }),
-      resize: t.terminal.resize.handler(async () => {
-        throw new ORPCError("NOT_IMPLEMENTED", {
-          message:
-            "terminal.resize on the agent contract is R-3 — same as write.",
-        });
+      resize: t.terminal.resize.handler(async ({ input }) => {
+        const entry = getTerminal(input.id);
+        if (!entry) {
+          throw new ORPCError("NOT_FOUND", {
+            message: `terminal ${input.id} not found on agent`,
+          });
+        }
+        entry.handle.resize(input.cols, input.rows);
       }),
       uploadFile: t.terminal.uploadFile.handler(async ({ input }) => ({
         path: await localBackend.uploadFile(
@@ -184,20 +190,44 @@ function buildAgentRouter() {
  */
 export async function runAgent(): Promise<void> {
   const router = buildAgentRouter();
-  log.info(
-    { procedures: Object.keys(router).length },
-    "kolu agent: built router",
+  // biome-ignore lint/suspicious/noExplicitAny: implement() returns a typed
+  // router; StandardRPCHandler accepts the broader oRPC `Router` shape.
+  // Runtime structure is compatible — same cast pattern as `index.ts`.
+  const handler = new StandardRPCHandler(router as any, {});
+  const peerHandle = createServerPeerHandleRequestFn(handler, {
+    context: {},
+  });
+  const peer = new ServerPeer(makeStdioSend(process.stdout));
+  log.info("kolu agent --stdio: serving on stdin/stdout");
+
+  const stop = readStdioMessages(
+    process.stdin,
+    async (msg) => {
+      try {
+        await peer.message(msg, peerHandle);
+      } catch (err) {
+        log.error({ err }, "kolu agent: message handler error");
+      }
+    },
+    () => {
+      log.info("kolu agent: stdin closed, shutting down");
+      peer.close();
+      // Clean up any spawned terminals before exiting.
+      void import("./terminals.ts").then(({ killAllTerminals }) => {
+        killAllTerminals();
+        process.exit(0);
+      });
+    },
   );
-  log.warn(
-    "kolu agent --stdio: standard-peer transport wiring is R-3. " +
-      "Router shape is in place. Agent exits immediately in prototype mode.",
-  );
-  // R-3:
-  //   const handler = new StandardRPCHandler(router as unknown as Router, { plugins });
-  //   const peerHandle = createServerPeerHandleRequestFn(handler, { context: {} });
-  //   const peer = new ServerPeer({
-  //     send: (msg) => process.stdout.write(JSON.stringify(msg) + "\n"),
-  //     receive: <iterator from process.stdin lines>,
-  //   });
-  //   await peer.serve(peerHandle);
+
+  // Resume stdin to start data flowing. node defaults paused for raw streams.
+  process.stdin.resume();
+
+  // Keep the event loop alive until stdin closes.
+  await new Promise<void>((resolve) => {
+    process.stdin.once("close", () => {
+      stop();
+      resolve();
+    });
+  });
 }

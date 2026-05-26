@@ -3,7 +3,7 @@
  * `kolu agent --stdio` peer plus the connection state machine.
  *
  * One HostSession per host; multiple terminals on the same host share
- * one session. The state machine + heartbeat live here (R-2 pre-impl
+ * one session. State machine + heartbeat live here (R-2 pre-impl
  * finding W1: HostSession and RemoteBackend are two axes — transport
  * vs. Backend-interface adapter).
  *
@@ -21,22 +21,17 @@
  *   HEARTBEAT_TIMEOUT   = 5s
  *   MAX_MISSED          = 5
  *   MAX_RECONNECT_ATTEMPTS = 3
- *
- * **Per-terminal `connectionState` write seam** (R-2 finding D / W4):
- * The state machine fires `connectionStateChanged(newState)` events.
- * Each terminal known to this session gets the per-terminal
- * `connectionState` channel published. Subscribers (typically the
- * kolu server's metadata-aggregator wired into `RemoteBackend`)
- * propagate to `entry.meta.connectionState`.
- *
- * Prototype scope: the state machine + heartbeat are sketched
- * functionally but lifecycle (subprocess spawn, oRPC peer wiring,
- * reconnect logic) are marked TODO. The shape is what matters for
- * Plan B evaluation.
  */
 
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
+import { createORPCClient } from "@orpc/client";
+import type { ContractRouterClient } from "@orpc/contract";
+import type { agentContract } from "kolu-common/agentContract";
 import type { ConnectionState } from "kolu-common/surface";
+import { remoteAgentCommand } from "../install.ts";
 import { log } from "../log.ts";
+import { StdioRPCLink } from "./stdio-client.ts";
 
 /** Zed-ported heartbeat constants. */
 export const HEARTBEAT_INTERVAL_MS = 5_000;
@@ -44,9 +39,6 @@ export const HEARTBEAT_TIMEOUT_MS = 5_000;
 export const MAX_MISSED_HEARTBEATS = 5;
 export const MAX_RECONNECT_ATTEMPTS = 3;
 
-/** Internal state machine state. The wire-visible `ConnectionState`
- *  enum (`"live" | "connecting" | "disconnected"`) is a projection —
- *  see `projectExternal()` below. */
 type InternalState =
   | { kind: "connecting" }
   | { kind: "connected" }
@@ -54,7 +46,11 @@ type InternalState =
   | { kind: "reconnecting"; attempt: number }
   | {
       kind: "disconnected";
-      reason: "exhausted" | "server-not-running" | "user-closed";
+      reason:
+        | "exhausted"
+        | "server-not-running"
+        | "user-closed"
+        | "init-failed";
     };
 
 function projectExternal(s: InternalState): ConnectionState {
@@ -70,25 +66,25 @@ function projectExternal(s: InternalState): ConnectionState {
   }
 }
 
+/** Typed client against `agentContract`. */
+export type AgentClient = ContractRouterClient<typeof agentContract>;
+
 export class HostSession {
   private state: InternalState = { kind: "connecting" };
-  private terminals = new Set<string>();
-  private stateListeners = new Set<(s: ConnectionState) => void>();
+  private readonly terminals = new Set<string>();
+  private readonly stateListeners = new Set<(s: ConnectionState) => void>();
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private subprocess:
+    | ChildProcessByStdio<Writable, Readable, Readable>
+    | undefined;
+  private link: StdioRPCLink | undefined;
+  /** Typed agent client — undefined until `connect()` finishes. */
+  client: AgentClient | undefined;
 
   constructor(public readonly host: string) {
-    // Subprocess spawn + oRPC peer wiring is the R-3 follow-up. The
-    // prototype demonstrates the shape; the actual transport hookup
-    // requires installAgent + child_process.spawn("ssh", …) + bridging
-    // stdin/stdout to oRPC's standard-peer client. See
-    // `packages/server/src/install.ts:remoteAgentCommand` for
-    // the spawn argv.
-    log.info({ host }, "HostSession: created (transport wiring is R-3)");
+    log.info({ host }, "HostSession: created");
   }
 
-  /** Register a terminal as belonging to this session — when the
-   *  state machine transitions, this terminal's `connectionState`
-   *  channel gets published. */
   registerTerminal(id: string): void {
     this.terminals.add(id);
   }
@@ -97,17 +93,13 @@ export class HostSession {
     this.terminals.delete(id);
   }
 
-  /** External state for the connection. */
   connectionState(): ConnectionState {
     return projectExternal(this.state);
   }
 
-  /** Subscribe to state changes — `RemoteBackend.terminalChannel(id,
-   *  "connectionState")` consumers and the per-terminal metadata
-   *  aggregator both listen here. Returns the unsubscribe fn. */
   onStateChange(cb: (s: ConnectionState) => void): () => void {
     this.stateListeners.add(cb);
-    cb(this.connectionState()); // snapshot-then-delta
+    cb(this.connectionState());
     return () => this.stateListeners.delete(cb);
   }
 
@@ -133,46 +125,139 @@ export class HostSession {
     }
   }
 
-  /** Initial connect. Sketched — full implementation:
+  /**
+   * Spawn `ssh -tt $host kolu --stdio` and wire the oRPC client to its
+   * stdio. Caller (e.g. `installSshAgent` RPC handler) should call
+   * `installAgent(host)` first to ensure the binary is on the remote.
    *
-   *  1. await installAgent(host)
-   *  2. spawn `ssh -tt host kolu agent --stdio` subprocess
-   *  3. wire stdio to oRPC standard-peer client
-   *  4. set state to `connected`, start heartbeat loop
-   *  5. on `ssh` subprocess exit → reconnect attempt
+   * Returns once the subprocess is spawned and the typed client is
+   * ready. State transitions to `connected`. If spawn fails, transitions
+   * to `disconnected` with `reason: "init-failed"` and rethrows.
    */
   async connect(): Promise<void> {
-    log.warn(
-      { host: this.host },
-      "HostSession.connect: prototype stub — full impl in R-3",
-    );
-    // Sketch: the wiring chain.
-    // await installAgent(this.host);
-    // this.subprocess = spawn("ssh", await remoteAgentCommand(this.host), { stdio: ["pipe","pipe","inherit"] });
-    // this.client = createClient<typeof agentContract>(...);
-    // this.transition({ kind: "connected" });
-    // this.startHeartbeat();
+    if (this.subprocess) {
+      log.warn({ host: this.host }, "HostSession.connect: already connected");
+      return;
+    }
+    const argv = await remoteAgentCommand(this.host);
+    log.info({ host: this.host, argv }, "HostSession: spawning ssh subprocess");
+
+    // First arg is "ssh", rest are args. spawn() takes them split.
+    const [cmd, ...args] = argv;
+    if (!cmd) {
+      this.transition({ kind: "disconnected", reason: "init-failed" });
+      throw new Error("HostSession.connect: empty remoteAgentCommand");
+    }
+    const subprocess = spawn(cmd, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    }) as ChildProcessByStdio<Writable, Readable, Readable>;
+    this.subprocess = subprocess;
+
+    // Pipe stderr to our log so ssh errors / agent log lines are visible.
+    subprocess.stderr.on("data", (chunk: Buffer) => {
+      log.warn(
+        { host: this.host, msg: chunk.toString("utf8").trim() },
+        "HostSession: subprocess stderr",
+      );
+    });
+    subprocess.on("exit", (code, signal) => {
+      log.info(
+        { host: this.host, code, signal },
+        "HostSession: subprocess exited",
+      );
+      this.transition({
+        kind: "disconnected",
+        reason: code === 0 ? "user-closed" : "server-not-running",
+      });
+      this.subprocess = undefined;
+      this.client = undefined;
+      this.link?.dispose();
+      this.link = undefined;
+      if (this.heartbeatTimer) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = undefined;
+      }
+    });
+    subprocess.on("error", (err) => {
+      log.error({ host: this.host, err }, "HostSession: subprocess error");
+    });
+
+    this.link = new StdioRPCLink({
+      stdin: subprocess.stdin,
+      stdout: subprocess.stdout,
+    });
+    this.client = createORPCClient<AgentClient>(this.link);
+
     this.transition({ kind: "connected" });
     this.startHeartbeat();
   }
 
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
-      // Real impl: `await this.client.heartbeat()` with HEARTBEAT_TIMEOUT.
-      // On timeout/throw, increment heartbeat-missed; on success, reset.
-      // After MAX_MISSED, transition to reconnecting and try MAX_RECONNECT_ATTEMPTS.
       void this.tickHeartbeat();
     }, HEARTBEAT_INTERVAL_MS);
   }
 
   private async tickHeartbeat(): Promise<void> {
-    // Prototype stub. Real implementation calls
-    // `this.client.heartbeat()` with timeout HEARTBEAT_TIMEOUT_MS.
+    if (!this.client) return;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("heartbeat timeout")),
+        HEARTBEAT_TIMEOUT_MS,
+      ),
+    );
+    try {
+      await Promise.race([this.client.heartbeat(), timeout]);
+      // Reset missed counter on success.
+      if (this.state.kind === "heartbeat-missed") {
+        this.transition({ kind: "connected" });
+      }
+    } catch (err) {
+      const missed =
+        this.state.kind === "heartbeat-missed" ? this.state.count + 1 : 1;
+      log.warn(
+        { host: this.host, missed, err },
+        "HostSession: heartbeat missed",
+      );
+      if (missed >= MAX_MISSED_HEARTBEATS) {
+        this.transition({ kind: "reconnecting", attempt: 1 });
+        void this.attemptReconnect();
+      } else {
+        this.transition({ kind: "heartbeat-missed", count: missed });
+      }
+    }
   }
 
-  /** Tear down. */
+  private async attemptReconnect(): Promise<void> {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+    this.subprocess?.kill();
+    this.subprocess = undefined;
+    this.link?.dispose();
+    this.link = undefined;
+    this.client = undefined;
+
+    for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
+      this.transition({ kind: "reconnecting", attempt });
+      try {
+        await this.connect();
+        return;
+      } catch (err) {
+        log.warn(
+          { host: this.host, attempt, err },
+          "HostSession: reconnect attempt failed",
+        );
+      }
+    }
+    this.transition({ kind: "disconnected", reason: "exhausted" });
+  }
+
   dispose(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.subprocess?.kill();
+    this.link?.dispose();
     this.transition({ kind: "disconnected", reason: "user-closed" });
     this.stateListeners.clear();
     this.terminals.clear();

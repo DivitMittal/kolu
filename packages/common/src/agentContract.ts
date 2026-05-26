@@ -29,7 +29,6 @@ import { eventIterator, oc } from "@orpc/contract";
 import {
   FsListAllInputSchema,
   FsListAllOutputSchema,
-  FsReadFileInputSchema,
   FsReadFileOutputSchema,
   GitDiffInputSchema,
   GitDiffOutputSchema,
@@ -102,6 +101,15 @@ const SubscribeFileInputSchema = z.object({
   filePath: z.string(),
 });
 
+/** Agent-side fs.readFile input. Drops `terminalId` from
+ *  `kolu-git/schemas:FsReadFileInputSchema` — the agent doesn't
+ *  construct URLs (no iframe-preview route on the agent side), so the
+ *  terminal-id field is dead weight over the wire. */
+const AgentReadFileInputSchema = z.object({
+  repoPath: z.string(),
+  filePath: z.string(),
+});
+
 // ── The agent contract ───────────────────────────────────────────────
 
 export const agentContract = oc.router({
@@ -134,7 +142,7 @@ export const agentContract = oc.router({
 
   fs: {
     listAll: oc.input(FsListAllInputSchema).output(FsListAllOutputSchema),
-    readFile: oc.input(FsReadFileInputSchema).output(FsReadFileOutputSchema),
+    readFile: oc.input(AgentReadFileInputSchema).output(FsReadFileOutputSchema),
     subscribeRepoChange: oc
       .input(SubscribeRepoInputSchema)
       .output(eventIterator(z.void())),

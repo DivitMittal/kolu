@@ -107,12 +107,11 @@ export async function createTerminal(
   cwd?: string,
   parentId?: string,
   initial?: InitialTerminalMetadata,
+  location?: import("kolu-common/surface").TerminalLocation,
 ): Promise<TerminalInfo> {
-  // R-2 finding (Hickey post-impl): route through the resolver so
-  // sub-terminals inherit the parent's location and (in R-3) remote
-  // requests land on the right backend. R-1's `localBackend` direct
-  // call left `getBackendForCreate` as dead code.
-  const backend = getBackendForCreate({ parentId });
+  // Route through the resolver so sub-terminals inherit the parent's
+  // location and explicit-location requests land on the right backend.
+  const backend = getBackendForCreate({ parentId, location });
   const handle = await backend.spawnPty({
     cwd,
     initialMetadata: {
