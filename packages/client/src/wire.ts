@@ -29,6 +29,7 @@ import {
   surface,
 } from "kolu-common/surface";
 import { WebSocket as PartySocket } from "partysocket";
+import { createSignal } from "solid-js";
 import { toast } from "solid-sonner";
 
 const { protocol, host } = window.location;
@@ -105,15 +106,17 @@ export const terminalListSub = _terminalList.sub;
 // SSH host list — discovered from ~/.ssh/config server-side. Loaded
 // once at startup; the command palette reads from this cached list.
 // Phase 1 of kolu#951; Phase 2a may switch to a live-watched cell.
-let _sshHosts: string[] = [];
+//
+// SolidJS reactive signal: consumers in `commands.tsx` are inside a
+// createMemo, so the post-fetch update must flow through the reactive
+// graph — a plain `let` would silently miss the late population.
+const [_sshHosts, setSshHosts] = createSignal<string[]>([]);
 client.ssh
   .hosts()
-  .then((hosts: string[]) => {
-    _sshHosts = hosts;
-  })
+  .then((hosts: string[]) => setSshHosts(hosts))
   .catch((err: Error) => {
     // Non-fatal: if we can't list hosts, the SSH submenu is empty but
     // the rest of the app keeps working.
     toast.warning(`SSH host discovery failed: ${err.message}`);
   });
-export const sshHosts = (): string[] => _sshHosts;
+export const sshHosts = _sshHosts;
