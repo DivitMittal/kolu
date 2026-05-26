@@ -32,6 +32,10 @@ let
       ./packages/transcript-core
       ./packages/transcript-html
       ./packages/artifact-sdk
+      # Phase 2a/2b of kolu#951 — remote-agent binary + RPC stubs the
+      # local server talks to over ssh stdio.
+      ./packages/kolu-remote-agent
+      ./packages/kolu-remote-client
     ];
   };
 
