@@ -20,11 +20,11 @@ import type {
   Backend,
   BackendFs,
   BackendGit,
-  BackendId,
   PtySpawnOpts,
   TerminalChannelMap,
   TerminalHandle,
 } from "kolu-common/backend";
+import type { TerminalLocation } from "kolu-common/surface";
 import { DEFAULT_SCROLLBACK } from "kolu-common/config";
 import {
   type GitResult,
@@ -77,7 +77,7 @@ function unwrap<T>(result: GitResult<T>): T {
 }
 
 export class LocalBackend implements Backend {
-  readonly id: BackendId = { kind: "local" };
+  readonly id: TerminalLocation = { kind: "local" };
 
   /**
    * Spawn a new terminal on this backend.

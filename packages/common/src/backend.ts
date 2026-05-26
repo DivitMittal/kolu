@@ -63,13 +63,6 @@ export interface TerminalSeed extends InitialTerminalMetadata {
   parentId?: string;
 }
 
-/**
- * Stable identity for a backend instance. Persisted to disk as part of
- * `ServerPersistedTerminalFields.location` so restore picks the same
- * backend a terminal previously lived on.
- */
-export type BackendId = TerminalLocation;
-
 /** Inputs for `Backend.spawnPty`. Mirrors today's `createTerminal` shape
  *  without any backend-specific extras — both LocalBackend and
  *  RemoteBackend accept the same options.
@@ -160,7 +153,11 @@ export interface BackendGit {
  * than through this interface.
  */
 export interface Backend {
-  readonly id: BackendId;
+  /** Stable identity for this backend instance — `{ kind: "local" }` or
+   *  `{ kind: "ssh", host }`. Persisted on each terminal's
+   *  `ServerPersistedTerminalFields.location` so session restore picks
+   *  the same backend a terminal previously lived on. */
+  readonly id: TerminalLocation;
 
   /** Create a new terminal owned by this backend. */
   spawnPty(opts: PtySpawnOpts): Promise<TerminalHandle>;
