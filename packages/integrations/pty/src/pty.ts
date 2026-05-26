@@ -112,6 +112,18 @@ export const localPtyProvider: PtyProvider = {
   spawn: spawnPty,
 };
 
+/** Optional override for the program + args spawnPty execs. When present,
+ *  bypasses kolu's local shell-init injection (rc files, ZDOTDIR) — used
+ *  by `sshPtyProvider` so the local node-pty drives an `ssh -tt` client
+ *  instead of a login shell. The remote shell sources its own rc; the
+ *  kolu rc gets installed on the remote via Phase 2a's agent bootstrap.
+ *  Phase 1 limits the override to "I want to run this program with these
+ *  args" — `cleanEnv()` + `koluIdentityEnv()` still apply. */
+export interface PtyProcessOverride {
+  program: string;
+  programArgs: string[];
+}
+
 /** Spawn a shell in a PTY, calling back on data, exit, CWD, and title changes. */
 export function spawnPty(
   tlog: Logger,
@@ -137,6 +149,7 @@ export function spawnPty(
     onCommandRun?: (command: string) => void;
   },
   spawnCwd?: string,
+  processOverride?: PtyProcessOverride,
 ): PtyHandle {
   // Env layering, ordered from least to most authoritative:
   //   1. cleanEnv()         — parent env passthrough (Nix devshell filtering).
@@ -150,16 +163,29 @@ export function spawnPty(
 
   Object.assign(env, koluIdentityEnv(opts.termProgramVersion));
 
-  const shellInit = prepareShellInit({
-    shell,
-    home: env.HOME,
-    terminalId,
-    rcDir: opts.rcDir,
-  });
-  Object.assign(env, shellInit.env);
-
-  tlog.debug({ shell, cwd }, "spawning pty");
-  const proc = pty.spawn(shell, shellInit.args, {
+  let program: string;
+  let args: string[];
+  let cleanupShellInit: () => void = () => {};
+  if (processOverride) {
+    // SSH path: skip kolu rc injection — the remote shell sources its
+    // own. The local ssh client doesn't read bash/zsh rc.
+    program = processOverride.program;
+    args = processOverride.programArgs;
+    tlog.debug({ program, args, cwd }, "spawning pty (process override)");
+  } else {
+    const shellInit = prepareShellInit({
+      shell,
+      home: env.HOME,
+      terminalId,
+      rcDir: opts.rcDir,
+    });
+    Object.assign(env, shellInit.env);
+    program = shell;
+    args = shellInit.args;
+    cleanupShellInit = shellInit.cleanup;
+    tlog.debug({ shell, cwd }, "spawning pty");
+  }
+  const proc = pty.spawn(program, args, {
     name: "xterm-256color",
     cols: DEFAULT_COLS,
     rows: DEFAULT_ROWS,
@@ -288,7 +314,7 @@ export function spawnPty(
       exitDisposable.dispose();
       proc.kill();
       headless.dispose();
-      shellInit.cleanup();
+      cleanupShellInit();
     },
   };
 }

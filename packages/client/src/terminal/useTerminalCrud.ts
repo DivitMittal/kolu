@@ -7,6 +7,7 @@ import type {
   CanvasLayout,
   InitialTerminalMetadata,
   TerminalId,
+  TerminalLocation,
 } from "kolu-common/surface";
 import { toast } from "solid-sonner";
 import { availableThemes, pickTheme, resolveThemeBgs } from "terminal-themes";
@@ -108,6 +109,9 @@ export function useTerminalCrud(deps: {
   async function handleCreate(
     cwd?: string,
     initial?: InitialTerminalMetadata,
+    /** Where the terminal spawns. Omit for local. Set from the command
+     *  palette's "New terminal on <host>" picker for SSH targets. */
+    location?: TerminalLocation,
   ): Promise<TerminalId> {
     if (store.activeMeta()?.git) showTipOnce(CONTEXTUAL_TIPS.worktree);
 
@@ -134,6 +138,7 @@ export function useTerminalCrud(deps: {
         rightPanel: initial?.rightPanel,
         lastActivityAt: initial?.lastActivityAt,
         intent: initial?.intent,
+        location,
       })
       .catch((err: Error) => {
         toast.error(`Failed to create terminal: ${err.message}`);

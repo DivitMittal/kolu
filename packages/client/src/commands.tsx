@@ -1,6 +1,11 @@
 /** Command palette registry — declarative list of all app-level actions. */
 
-import type { RecentAgent, TerminalId } from "kolu-common/surface";
+import type {
+  InitialTerminalMetadata,
+  RecentAgent,
+  TerminalId,
+  TerminalLocation,
+} from "kolu-common/surface";
 import { WorktreeNameSchema } from "kolu-git/schemas";
 import { randomName } from "memorable-names";
 import type { Accessor, Component } from "solid-js";
@@ -23,7 +28,7 @@ import {
 } from "./input/actions";
 import { iconForCommand } from "./ui/agentDisplay";
 import { TerminalIcon } from "./ui/Icons";
-import { recentAgents, recentRepos } from "./wire";
+import { recentAgents, recentRepos, sshHosts } from "./wire";
 
 /** Body component factory for the "Search workspaces" group. Captures
  *  the entries accessor + recency lookup in a closure so the palette
@@ -170,12 +175,28 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
       section: "workspaces",
       children: (): PaletteItem[] => {
         const repos = recentRepos();
+        const hosts = sshHosts();
         return [
           {
             kind: "action",
             name: "In current directory",
             onSelect: () => deps.handleCreate(deps.activeMeta()?.cwd),
           },
+          // One entry per discovered SSH host. Phase 1 of kolu#951:
+          // picking a host opens a remote terminal whose shell lives
+          // on that machine via `ssh -tt host`. Sub-terminals inherit
+          // the host server-side, so we don't surface them here.
+          ...hosts.map(
+            (host): PaletteAction => ({
+              kind: "action",
+              name: `New terminal on ${host}`,
+              onSelect: () =>
+                deps.handleCreate(undefined, undefined, {
+                  kind: "ssh",
+                  host,
+                }),
+            }),
+          ),
           ...repos.map(
             (r): PaletteValueInput => ({
               kind: "value",

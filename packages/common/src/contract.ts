@@ -27,6 +27,7 @@ import {
   TerminalAttachInputSchema,
   TerminalIdSchema,
   TerminalInfoSchema,
+  TerminalLocationSchema,
 } from "./surface";
 import {
   ExportTranscriptHtmlInputSchema,
@@ -39,8 +40,17 @@ export const TerminalCreateInputSchema = z
   .object({
     cwd: z.string().optional(),
     parentId: TerminalIdSchema.optional(),
+    /** Which host the terminal spawns on. Omit for local (the default).
+     *  For SSH terminals, the client passes the discovered host alias
+     *  from `~/.ssh/config` (via `ssh.hosts`). Sub-terminals omit this
+     *  — the server inherits the parent's location. */
+    location: TerminalLocationSchema.optional(),
   })
   .merge(InitialTerminalMetadataSchema);
+
+/** Output of `ssh.hosts` — host aliases discovered in `~/.ssh/config`,
+ *  filtered to drop git-provider domains. */
+export const SshHostListSchema = z.array(z.string());
 
 export const TerminalResizeInputSchema = z.object({
   id: TerminalIdSchema,
@@ -161,5 +171,12 @@ export const contract = oc.router({
       .input(WorktreeCreateInputSchema)
       .output(WorktreeCreateOutputSchema),
     worktreeRemove: oc.input(WorktreeRemoveInputSchema).output(z.void()),
+  },
+  ssh: {
+    /** Read + parse ~/.ssh/config; return the host-alias list with
+     *  git-provider domains filtered out. Phase 1 of kolu#951 reads
+     *  once on demand from the command palette; Phase 2a may switch
+     *  this to a live-watched cell. */
+    hosts: oc.output(SshHostListSchema),
   },
 });

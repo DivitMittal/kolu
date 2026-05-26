@@ -49,7 +49,12 @@ export function createMetadata(
     agent: null,
     foreground: null,
     lastActivityAt: 0,
-    connectionState: "live",
+    // Local terminals are immediately live (spawnPty returns a running
+    // child); SSH terminals are still in the ssh handshake when spawnPty
+    // returns, so they start in "connecting" and transition to "live"
+    // when the first byte of remote output arrives. Phase 1 wires the
+    // transition in terminals.ts via the onData callback.
+    connectionState: location.kind === "local" ? "live" : "connecting",
   };
 }
 

@@ -18,9 +18,16 @@ import {
   type SavedTerminal,
   type TerminalId,
   type TerminalInfo,
+  type TerminalLocation,
 } from "kolu-common/surface";
 import { DEFAULT_SCROLLBACK } from "kolu-common/config";
-import { localPtyProvider } from "kolu-pty";
+import {
+  agentPtyProvider,
+  localPtyProvider,
+  type PtyProvider,
+  sshPtyProvider,
+} from "kolu-pty";
+import { getHostSession } from "./agent/host-registry.ts";
 import pkg from "../package.json" with { type: "json" };
 import { cleanupClipboardDir } from "./clipboard.ts";
 import { koluShellDir } from "./koluRoot.ts";
@@ -29,6 +36,7 @@ import {
   createMetadata,
   startProviders,
   updateClientMetadata,
+  updateServerLiveMetadata,
   updateServerMetadata,
 } from "./meta/index.ts";
 import { terminalChannels, terminalsDirtyChannel } from "./publisher.ts";
@@ -103,19 +111,83 @@ export function createTerminal(
   cwd?: string,
   parentId?: string,
   initial?: InitialTerminalMetadata,
+  /** Explicit location override — passed by the SSH host picker. When
+   *  set, takes precedence over the parent's location. For sub-terminals
+   *  (no explicit location, parentId set) the server inherits the
+   *  parent's location instead. */
+  explicitLocation?: TerminalLocation,
 ): TerminalInfo {
   const id = crypto.randomUUID();
   const tlog = log.child({ terminal: id });
 
-  // Sub-terminal inheritance: a sub-terminal spawns on the same host as
-  // its parent. Phase 0 always resolves to `local` because no SSH host
-  // picker exists yet — but the lookup IS the structural seam for
-  // Phase 1, so it lives here, not at the call site. Falls back to
-  // `local` if the parent has been killed mid-create.
+  // Location resolution order: explicit (from API caller) → parent's
+  // (sub-terminal inheritance, Phase 0) → DEFAULT (local).
   const parentEntry = parentId ? getTerminal(parentId) : undefined;
-  const location = parentEntry?.meta.location ?? DEFAULT_TERMINAL_LOCATION;
+  const location: TerminalLocation =
+    explicitLocation ?? parentEntry?.meta.location ?? DEFAULT_TERMINAL_LOCATION;
 
-  const handle = localPtyProvider.spawn(
+  // Phase 3: SSH terminals use `agentPtyProvider` so the PTY lives on
+  // the remote `kolu-remote-agent` and survives ssh drops. Phase 1's
+  // `sshPtyProvider` is the fallback when the agent isn't reachable —
+  // for now controlled by `KOLU_REMOTE_PTY_VIA_AGENT=1` so we can ship
+  // the Phase 3 wiring without forcing users onto the agent path
+  // before the agent's `terminal.spawn` handler is fully implemented.
+  let ptyProvider: PtyProvider;
+  if (location.kind === "ssh") {
+    if (process.env.KOLU_REMOTE_PTY_VIA_AGENT === "1") {
+      const cached = getHostSession(location.host, log);
+      ptyProvider = agentPtyProvider({
+        host: location.host,
+        session: {
+          call: async (method, args) => {
+            await cached.ready;
+            return cached.session.call(method, args);
+          },
+          subscribe: (method, args, onEvent) => {
+            // Same defer-until-ready wrapper used by meta/git.ts; the
+            // talk-plan's "HostSession owns subscription lifetime" win
+            // applies identically for PTY streams.
+            let inner: ReturnType<typeof cached.session.subscribe> | null =
+              null;
+            const queuedUpdates: unknown[] = [];
+            let closed = false;
+            void cached.ready.then(() => {
+              if (closed) return;
+              inner = cached.session.subscribe(method, args, onEvent);
+              for (const p of queuedUpdates) void inner.update(p);
+            });
+            return {
+              update: async (p) => {
+                if (inner) await inner.update(p);
+                else queuedUpdates.push(p);
+              },
+              close: async () => {
+                closed = true;
+                if (inner) await inner.close();
+              },
+            };
+          },
+        },
+        // Reuse the remoteSessionId persisted from the prior run if
+        // session restore is replaying this terminal.
+        remoteSessionId: undefined,
+        onSessionAllocated: (rid) => {
+          const entry = getTerminal(id);
+          if (entry) {
+            updateServerMetadata(entry, id, (m) => {
+              m.remoteSessionId = rid;
+            });
+          }
+        },
+      });
+    } else {
+      ptyProvider = sshPtyProvider(location.host);
+    }
+  } else {
+    ptyProvider = localPtyProvider;
+  }
+
+  const handle = ptyProvider.spawn(
     tlog,
     id,
     {
@@ -123,6 +195,18 @@ export function createTerminal(
       termProgramVersion: pkg.version,
       scrollback: DEFAULT_SCROLLBACK,
       onData: (data) => {
+        // SSH terminals transition connecting → live on the first byte
+        // of remote output (matches the user's mental model: "the
+        // remote shell has shown me something, the connection works").
+        // No-op for already-live terminals.
+        if (location.kind !== "local") {
+          const entry = getTerminal(id);
+          if (entry && entry.meta.connectionState === "connecting") {
+            updateServerLiveMetadata(entry, id, (m) => {
+              m.connectionState = "live";
+            });
+          }
+        }
         terminalChannels.data(id).publish(data);
       },
       // On natural exit: notify clients, then remove from server state
@@ -130,6 +214,15 @@ export function createTerminal(
         tlog.info({ exitCode }, "exited");
         const entry = getTerminal(id);
         if (entry) {
+          // For SSH terminals, surface the connection drop in
+          // connectionState before tearing down — the client renders a
+          // disconnected overlay on the tile. Local terminals don't
+          // need this (the exit toast covers it).
+          if (location.kind !== "local") {
+            updateServerLiveMetadata(entry, id, (m) => {
+              m.connectionState = "disconnected";
+            });
+          }
           entry.stopProviders();
           cleanupClipboardDir(id);
         }

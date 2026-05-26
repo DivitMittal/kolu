@@ -10,10 +10,14 @@
  */
 
 import { ORPCError } from "@orpc/server";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { loadClaudeCodeTranscript } from "kolu-claude-code";
 import { loadCodexTranscript } from "kolu-codex";
 import type { Transcript, TranscriptPr } from "kolu-common/transcript";
 import { TerminalNotFoundError } from "kolu-common/errors";
+import { parseSshConfigHosts } from "kolu-common/ssh-config";
 import { worktreeCreate, worktreeRemove } from "kolu-git";
 import { prValue } from "kolu-github/schemas";
 import { loadOpenCodeTranscript } from "kolu-opencode";
@@ -56,14 +60,19 @@ export const appRouter = t.router({
   },
   terminal: {
     create: t.terminal.create.handler(async ({ input }) =>
-      createTerminal(input.cwd, input.parentId, {
-        themeName: input.themeName,
-        canvasLayout: input.canvasLayout,
-        subPanel: input.subPanel,
-        rightPanel: input.rightPanel,
-        lastActivityAt: input.lastActivityAt,
-        intent: input.intent,
-      }),
+      createTerminal(
+        input.cwd,
+        input.parentId,
+        {
+          themeName: input.themeName,
+          canvasLayout: input.canvasLayout,
+          subPanel: input.subPanel,
+          rightPanel: input.rightPanel,
+          lastActivityAt: input.lastActivityAt,
+          intent: input.intent,
+        },
+        input.location,
+      ),
     ),
 
     resize: t.terminal.resize.handler(async ({ input }) => {
@@ -257,6 +266,20 @@ export const appRouter = t.router({
     worktreeRemove: t.git.worktreeRemove.handler(async ({ input }) => {
       log.info({ worktree: input.worktreePath }, "worktree remove");
       unwrapGit(await worktreeRemove(input.worktreePath, log));
+    }),
+  },
+  ssh: {
+    hosts: t.ssh.hosts.handler(async () => {
+      const configPath = join(homedir(), ".ssh", "config");
+      try {
+        const raw = await readFile(configPath, "utf-8");
+        return parseSshConfigHosts(raw);
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return [];
+        log.warn({ err, configPath }, "ssh: failed to read config");
+        return [];
+      }
     }),
   },
 });

@@ -22,8 +22,10 @@
  * deltas without needing to know about cwd-change semantics.
  */
 
-import { localGitInfoProvider } from "kolu-git";
+import { type GitInfoProvider, localGitInfoProvider } from "kolu-git";
+import { remoteGitInfoProvider } from "kolu-remote-client";
 import { trackRecentRepo } from "../activity.ts";
+import { getHostSession } from "../agent/host-registry.ts";
 import { log } from "../log.ts";
 import { terminalChannels } from "../publisher.ts";
 import type { TerminalProcess } from "../terminal-registry.ts";
@@ -34,25 +36,53 @@ export function startGitProvider(
   terminalId: string,
 ): () => void {
   const plog = log.child({ provider: "git", terminal: terminalId });
+  plog.debug({ cwd: entry.meta.cwd, location: entry.meta.location }, "started");
 
-  // Local kernel reads only — `localGitInfoProvider` resolves cwd against
-  // the local filesystem. For an SSH-wrapped tile that's the wrong
-  // machine. Skip cleanly until Phase 2b lands `remoteGitInfoProvider`.
-  // Matches the early-return pattern in agent/github/process.
-  if (entry.meta.location.kind !== "local") {
-    plog.debug({ location: entry.meta.location }, "skipping non-local");
-    return () => {};
+  // Phase 2b dispatch: local terminals run kolu-git locally; SSH
+  // terminals proxy through the host's `HostSession` to the agent.
+  const host: string | null =
+    entry.meta.location.kind === "ssh" ? entry.meta.location.host : null;
+  let provider: GitInfoProvider;
+  if (entry.meta.location.kind === "ssh") {
+    const cached = getHostSession(entry.meta.location.host, log);
+    // The session may still be connecting on first call; the
+    // RemoteGitInfoProvider's subscribe IS synchronous, but the
+    // underlying RPC waits on the session's ready promise behind the
+    // scenes. (Phase 2a placeholder throws if RPC fires before ready;
+    // we wrap in a one-tick await below.)
+    provider = remoteGitInfoProvider({
+      call: async (method, args) => {
+        await cached.ready;
+        return cached.session.call(method, args);
+      },
+      subscribe: (method, args, onEvent) => {
+        // Defer issuing the subscription until the session is ready —
+        // wrap in a token that buffers update/close until then.
+        let inner: ReturnType<typeof cached.session.subscribe> | null = null;
+        const pendingUpdates: unknown[] = [];
+        let pendingClose = false;
+        void cached.ready.then(() => {
+          if (pendingClose) return;
+          inner = cached.session.subscribe(method, args, onEvent);
+          for (const params of pendingUpdates) void inner.update(params);
+        });
+        return {
+          update: async (params) => {
+            if (inner) await inner.update(params);
+            else pendingUpdates.push(params);
+          },
+          close: async () => {
+            pendingClose = true;
+            if (inner) await inner.close();
+          },
+        };
+      },
+    });
+  } else {
+    provider = localGitInfoProvider;
   }
 
-  plog.debug({ cwd: entry.meta.cwd }, "started");
-
-  // Only local terminals reach this point in Phase 0, so the host tag on
-  // the wrapped channel payload is unconditionally null. Phase 2b will
-  // resolve it from `entry.meta.location` when the dispatch grows the
-  // remote branch.
-  const host: string | null = null;
-
-  const watcher = localGitInfoProvider.subscribe(
+  const watcher = provider.subscribe(
     entry.meta.cwd,
     (git) => {
       if (git) trackRecentRepo(git.mainRepoRoot, git.repoName);

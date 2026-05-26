@@ -169,6 +169,11 @@ export const ServerPersistedTerminalFieldsSchema = z.object({
    *  saved before this field existed and for fresh terminals created
    *  without an explicit host. */
   location: TerminalLocationSchema.default(DEFAULT_TERMINAL_LOCATION),
+  /** For Phase 3 ssh terminals: stable id of the PTY session running on
+   *  the remote agent, used to reattach across ssh drops. Absent for
+   *  local terminals and for ssh terminals whose PTY is still owned by
+   *  a local `ssh -tt` subprocess (Phase 1 / Phase 2 transitional). */
+  remoteSessionId: z.string().uuid().optional(),
   /** Normalized agent CLI invocation last observed in this terminal (e.g.
    *  `"claude --model sonnet"`). Preserved across intervening non-agent
    *  input; drives the "resume agent on restore" offer in EmptyState.

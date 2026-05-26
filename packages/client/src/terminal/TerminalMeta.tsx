@@ -19,6 +19,7 @@ import { annotationLine } from "../intent/text";
 import { PrStateIcon, WorktreeIcon } from "../ui/Icons";
 import Tip from "../ui/Tip";
 import ChecksIndicator from "./ChecksIndicator";
+import { HostChip } from "./HostChip";
 import { PrUnavailableButton } from "./PrUnavailablePopover";
 import type { TerminalDisplayInfo } from "./terminalDisplay";
 
@@ -58,6 +59,7 @@ const TerminalMeta: Component<{
             <Show when={info().meta.git?.isWorktree}>
               <WorktreeBadge />
             </Show>
+            <HostChip location={info().meta.location} />
             {/* Foreground process title — OSC 2 string when present.
              *  Replaces what used to be the cwd slot; cwd is now a
              *  tooltip on the repo name. `flex-1` so it fills until

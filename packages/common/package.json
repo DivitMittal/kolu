@@ -14,6 +14,7 @@
     "./html": "./src/html.ts",
     "./terminalKey": "./src/terminalKey.ts",
     "./transcript": "./src/transcript.ts",
+    "./ssh-config": "./src/ssh-config.ts",
     "./test-hooks": "./src/test-hooks.ts"
   },
   "scripts": {

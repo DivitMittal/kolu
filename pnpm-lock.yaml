@@ -437,6 +437,59 @@ importers:
         specifier: ^4.1.2
         version: 4.1.2(@types/node@22.19.15)(vite@6.4.2(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.47.1)(tsx@4.21.0)(yaml@2.8.3))
 
+  packages/kolu-remote-agent:
+    dependencies:
+      kolu-git:
+        specifier: workspace:*
+        version: link:../integrations/git
+      kolu-github:
+        specifier: workspace:*
+        version: link:../integrations/github
+      kolu-pty:
+        specifier: workspace:*
+        version: link:../integrations/pty
+      kolu-shared:
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: ^4.0.0
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.2
+        version: 4.1.2(@types/node@22.19.15)(vite@6.4.2(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.47.1)(tsx@4.21.0)(yaml@2.8.3))
+
+  packages/kolu-remote-client:
+    dependencies:
+      kolu-git:
+        specifier: workspace:*
+        version: link:../integrations/git
+      kolu-github:
+        specifier: workspace:*
+        version: link:../integrations/github
+      kolu-remote-agent:
+        specifier: workspace:*
+        version: link:../kolu-remote-agent
+      kolu-shared:
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.2
+        version: 4.1.2(@types/node@22.19.15)(vite@6.4.2(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.47.1)(tsx@4.21.0)(yaml@2.8.3))
+
   packages/memorable-names:
     dependencies:
       nonempty:
@@ -521,6 +574,12 @@ importers:
       kolu-pty:
         specifier: workspace:*
         version: link:../integrations/pty
+      kolu-remote-agent:
+        specifier: workspace:*
+        version: link:../kolu-remote-agent
+      kolu-remote-client:
+        specifier: workspace:*
+        version: link:../kolu-remote-client
       kolu-shared:
         specifier: workspace:*
         version: link:../shared

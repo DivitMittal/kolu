@@ -829,8 +829,34 @@ const Terminal: Component<{
     })();
   });
 
+  /** Phase 1 of kolu#951: render a "Connecting to <host>…" overlay
+   *  while an SSH terminal's ssh subprocess is mid-handshake. The
+   *  server flips connectionState from "connecting" → "live" on the
+   *  first byte of remote output; "disconnected" surfaces ssh exit. */
+  const connectionState = () =>
+    terminalStore.getMetadata(props.terminalId)?.connectionState ?? "live";
+  const remoteLocation = () => {
+    const loc = terminalStore.getMetadata(props.terminalId)?.location;
+    return loc?.kind === "ssh" ? loc : null;
+  };
+
   return (
     <div class="w-full h-full relative" classList={{ hidden: !props.visible }}>
+      <Show when={remoteLocation() && connectionState() !== "live"}>
+        <div
+          class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
+          style="background: var(--terminal-bg, rgba(0,0,0,0.6));"
+        >
+          <div class="text-fg-2 text-sm font-mono">
+            <Show
+              when={connectionState() === "disconnected"}
+              fallback={<>Connecting to {remoteLocation()?.host}…</>}
+            >
+              Disconnected from {remoteLocation()?.host}
+            </Show>
+          </div>
+        </div>
+      </Show>
       <Show when={searchAddon()}>
         {(addon) => (
           <SearchBar

@@ -101,3 +101,19 @@ const _terminalList = app.cells.terminalList.use({
 });
 /** Subscription handle for the live terminal list. */
 export const terminalListSub = _terminalList.sub;
+
+// SSH host list — discovered from ~/.ssh/config server-side. Loaded
+// once at startup; the command palette reads from this cached list.
+// Phase 1 of kolu#951; Phase 2a may switch to a live-watched cell.
+let _sshHosts: string[] = [];
+client.ssh
+  .hosts()
+  .then((hosts: string[]) => {
+    _sshHosts = hosts;
+  })
+  .catch((err: Error) => {
+    // Non-fatal: if we can't list hosts, the SSH submenu is empty but
+    // the rest of the app keeps working.
+    toast.warning(`SSH host discovery failed: ${err.message}`);
+  });
+export const sshHosts = (): string[] => _sshHosts;

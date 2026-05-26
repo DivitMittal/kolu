@@ -10,8 +10,14 @@ export {
   getScreenText,
   localPtyProvider,
   type PtyHandle,
+  type PtyProcessOverride,
   type PtyProvider,
   type PtySpawnOptions,
   spawnPty,
 } from "./pty.ts";
 export { configureNixShellEnv, NIX_ENV_WHITELIST } from "./shell.ts";
+export { sshPtyProvider } from "./ssh-pty-provider.ts";
+export {
+  agentPtyProvider,
+  type AgentPtyProviderOptions,
+} from "./agent-pty-provider.ts";

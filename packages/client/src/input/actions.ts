@@ -10,7 +10,12 @@
  * via `actionPaletteCommand`.
  */
 
-import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
+import type {
+  InitialTerminalMetadata,
+  TerminalId,
+  TerminalLocation,
+  TerminalMetadata,
+} from "kolu-common/surface";
 import { nonEmpty } from "nonempty";
 import type { Accessor, Setter } from "solid-js";
 import type { PaletteAction, SectionId } from "../CommandPalette";
@@ -33,7 +38,11 @@ export interface ActionContext {
   /** Terminal IDs in most-recently-used order; used for Alt+Tab / Ctrl+Tab cycling. */
   mruOrder: Accessor<TerminalId[]>;
   activeMeta: Accessor<TerminalMetadata | null>;
-  handleCreate: (cwd?: string) => void;
+  handleCreate: (
+    cwd?: string,
+    initial?: InitialTerminalMetadata,
+    location?: TerminalLocation,
+  ) => void;
   handleCreateSubTerminal: (parentId: TerminalId, cwd?: string) => void;
   openNewTerminalMenu: () => void;
   openWorkspaceSwitcher: () => void;
