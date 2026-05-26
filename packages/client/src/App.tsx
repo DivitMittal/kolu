@@ -27,7 +27,7 @@ import CanvasWatermark from "./canvas/CanvasWatermark";
 import { useCanvasArrange } from "./canvas/useCanvasArrange";
 import { buildWorkspaceEntries } from "./canvas/dockModel";
 import { toggleRailCards } from "./canvas/dock/Dock";
-import { rankDockRows } from "./canvas/dock/dockRowRanking";
+import { useDockOrder } from "./canvas/dock/useDockOrder";
 import TerminalCanvas from "./canvas/TerminalCanvas";
 import TileTitleActions from "./canvas/TileTitleActions";
 import { createCommands } from "./commands";
@@ -54,7 +54,6 @@ import TipBanner from "./settings/TipBanner";
 import { useColorScheme } from "./settings/useColorScheme";
 import { useTips } from "./settings/useTips";
 import { useVisualViewportHeight } from "./useVisualViewportHeight";
-import { useStaleCheck } from "./terminal/staleness";
 import TerminalContent from "./terminal/TerminalContent";
 import TerminalMeta from "./terminal/TerminalMeta";
 import { useSubPanel } from "./terminal/useSubPanel";
@@ -87,8 +86,9 @@ const App: Component = () => {
 
   // Workspace search feeds — the live-terminal source list and recency
   // accessor consumed by the unified command palette's "Search
-  // workspaces" group. `rankDockRows` shares row order with the dock
-  // so the `Cmd+1..9` shortcut targets the same row the dock paints.
+  // workspaces" group. `useDockOrder` is the same singleton memo the
+  // desktop dock and mobile drawer read, so `Cmd+1..9` targets the
+  // exact row the dock paints (group-bucketed, parked rows filtered).
   const workspaceEntries = createMemo(() =>
     buildWorkspaceEntries(
       store.terminalIds(),
@@ -98,12 +98,14 @@ const App: Component = () => {
   );
   const recencyOf = (id: TerminalId): number =>
     store.getMetadata(id)?.lastActivityAt ?? 0;
-  const isStale = useStaleCheck();
-  const orderedIds = createMemo(() =>
-    rankDockRows(store.terminalIds(), store.getMetadata, isStale).map(
-      (row) => row.id,
-    ),
-  );
+  const dockTree = useDockOrder();
+  // `dockTree` is already a singleton memo and `.flatRows` is a stable
+  // projection per memo run; a second `createMemo` here just adds a
+  // reactive node without any recomputation benefit. The id-only view
+  // is computed at read time so `ActionContext` keeps its narrow
+  // `TerminalId[]` shape — rail and cards still consume the full
+  // `RankedDockRow` list directly via `dockTree().flatRows`.
+  const orderedIds = (): TerminalId[] => dockTree().flatRows.map((r) => r.id);
 
   // Fetch server identity for document title, watermark, and PWA chrome color.
   const [identity, setIdentity] = createSignal<ServerIdentity>();
@@ -183,20 +185,10 @@ const App: Component = () => {
     if (id) store.activate(id);
   }
 
-  // Intent editor singleton — bound to store accessors + RPC. The dialog
+  // Intent editor singleton — reads store + RPC directly. The dialog
   // is mounted at the App root; the chip in TerminalMeta and the palette
   // command both call `intentEditor.openTerminal(id)` to surface it.
-  const intentEditor = useIntentEditor({
-    activeId: store.activeId,
-    getTerminalIntent: (id) => store.getMetadata(id)?.intent,
-    setTerminalIntent: (id, intent) => {
-      void client.terminal
-        .setIntent({ id, intent })
-        .catch((err: Error) =>
-          toast.error(`Failed to save intent: ${err.message}`),
-        );
-    },
-  });
+  const intentEditor = useIntentEditor();
 
   const arrange = useCanvasArrange({
     store,
