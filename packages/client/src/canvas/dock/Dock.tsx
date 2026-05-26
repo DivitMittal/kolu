@@ -168,6 +168,16 @@ function toggleGroupFold(key: string): void {
   );
 }
 
+/** Stable string key per render item so `<For>` can preserve identity
+ *  across tree recomputations. The kind prefix keeps terminal ids and
+ *  group keys in disjoint namespaces (a group named after a UUID
+ *  doesn't collide with a terminal of the same UUID). */
+function renderItemKey(
+  item: ReturnType<typeof flattenForRender>[number],
+): string {
+  return item.kind === "terminal" ? `t:${item.node.id}` : `g:${item.group.key}`;
+}
+
 const Dock: Component<{
   /** Opens the command palette pre-drilled into "Search workspaces" —
    *  invoked by the dock's search-icon button. */
@@ -184,6 +194,26 @@ const Dock: Component<{
   const renderItems = createMemo(() =>
     flattenForRender(order.tree(), isGroupFolded),
   );
+
+  // Parallel list of stable string keys for `<For>` to iterate. Without
+  // this, every memo re-evaluation (e.g. the 60s stale ticker) hands
+  // `<For>` a fresh array of fresh DockRenderItem objects, Solid's
+  // reference-keyed diff treats every row as new, and every DockRow
+  // remounts — which means AwaitingCardBody's locally-held draft reply
+  // text gets wiped once a minute. Strings have value equality in JS,
+  // so iterating keys gives Solid a stable identity per row even when
+  // the underlying tree objects are fresh.
+  const renderKeys = createMemo(() => renderItems().map(renderItemKey));
+
+  // Lookup so the `<For>` body can resolve fresh data from the stable
+  // key. Reactive — re-evaluates whenever renderItems changes — so the
+  // row's props update reactively even though its component instance
+  // is preserved.
+  const itemByKey = createMemo(() => {
+    const map = new Map<string, ReturnType<typeof flattenForRender>[number]>();
+    for (const it of renderItems()) map.set(renderItemKey(it), it);
+    return map;
+  });
 
   // Live group keys derived from EVERY terminal in the store — parked,
   // sub-terminals filtered by the metadata layer, and visible alike —
@@ -249,7 +279,8 @@ const Dock: Component<{
       >
         <RailOrCards
           mode={dockMode()}
-          renderItems={renderItems()}
+          renderKeys={renderKeys()}
+          itemByKey={itemByKey()}
           onCreate={props.onCreate}
           onOpenWorkspaceSearch={props.onOpenWorkspaceSearch}
         />
@@ -260,12 +291,13 @@ const Dock: Component<{
 
 /** Rail / cards body — vertical stack of group headers + dock rows
  *  preceded by a header with the `+` new-terminal button and the mode
- *  chevron. `renderItems` is the flattened tree (group headers + terminal
- *  slots in depth-first order, with folded groups' children omitted but
- *  their index slots preserved for `Cmd+N` consistency). */
+ *  chevron. Iterates over stable string keys so `<For>` preserves
+ *  component identity across tree recomputations; the matching render
+ *  data is looked up from `itemByKey` reactively. */
 const RailOrCards: Component<{
   mode: DockMode;
-  renderItems: ReturnType<typeof flattenForRender>;
+  renderKeys: string[];
+  itemByKey: Map<string, ReturnType<typeof flattenForRender>[number]>;
   onCreate: () => void;
   onOpenWorkspaceSearch: () => void;
 }> = (props) => {
@@ -277,10 +309,15 @@ const RailOrCards: Component<{
         onOpenWorkspaceSearch={props.onOpenWorkspaceSearch}
       />
       <div class="flex flex-col overflow-y-auto overflow-x-hidden scrollbar-none flex-1 min-h-0">
-        <For each={props.renderItems}>
-          {(item) => (
+        <For each={props.renderKeys}>
+          {(key) => (
             <Switch>
-              <Match when={item.kind === "group-header" && item}>
+              <Match
+                when={(() => {
+                  const item = props.itemByKey.get(key);
+                  return item?.kind === "group-header" ? item : false;
+                })()}
+              >
                 {(g) => (
                   <DockGroupHeader
                     group={g().group}
@@ -289,7 +326,12 @@ const RailOrCards: Component<{
                   />
                 )}
               </Match>
-              <Match when={item.kind === "terminal" && item}>
+              <Match
+                when={(() => {
+                  const item = props.itemByKey.get(key);
+                  return item?.kind === "terminal" ? item : false;
+                })()}
+              >
                 {(t) => (
                   <DockRow
                     id={t().node.id}
