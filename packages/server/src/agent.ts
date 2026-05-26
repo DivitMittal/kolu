@@ -29,6 +29,7 @@ import { createServerPeerHandleRequestFn } from "@orpc/server/standard-peer";
 import { ServerPeer } from "@orpc/standard-server-peer";
 import { agentContract } from "kolu-common/agentContract";
 import type { TerminalChannelMap } from "kolu-common/backend";
+import { buildAgentSurface, setAgentSurfaceCtx } from "./agent-surface.ts";
 import { localBackend } from "./backend/local.ts";
 import { makeStdioSend, readStdioMessages } from "./backend/stdio-peer.ts";
 import { log } from "./log.ts";
@@ -190,11 +191,26 @@ function buildAgentRouter() {
  * handler. Sketched for the prototype.
  */
 export async function runAgent(): Promise<void> {
-  const router = buildAgentRouter();
-  // biome-ignore lint/suspicious/noExplicitAny: implement() returns a typed
-  // router; StandardRPCHandler accepts the broader oRPC `Router` shape.
-  // Runtime structure is compatible — same cast pattern as `index.ts`.
-  const handler = new StandardRPCHandler(router as any, {});
+  // Build both routers and merge. The agent serves the legacy
+  // `agentContract` (top-level: heartbeat, terminal, fs, git) AND the
+  // new `agentSurface` (under `surface.*`) on the same stdio peer.
+  // Existing clients keep working through agentContract while
+  // RemoteBackend migrates method-by-method to agentSurface. Once
+  // RemoteBackend is fully on agentSurface, this file deletes the
+  // contract router and the merged shape collapses to just the
+  // surface fragment.
+  const contractRouter = buildAgentRouter();
+  const { router: surfaceFragment, ctx: surfaceCtx } = buildAgentSurface();
+  setAgentSurfaceCtx(surfaceCtx);
+
+  // biome-ignore lint/suspicious/noExplicitAny: see comment below.
+  const router = { ...contractRouter, ...surfaceFragment } as any;
+  // The merged plain-object router walks under StandardRPCHandler's
+  // recursive path descent — `heartbeat`, `terminal.*`, `fs.*`,
+  // `git.*` resolve to contractRouter entries; `surface.*` resolves
+  // through the surface fragment. No path collision (agentContract
+  // doesn't use `surface` as a key).
+  const handler = new StandardRPCHandler(router, {});
   const peerHandle = createServerPeerHandleRequestFn(handler, {
     context: {},
   });
