@@ -42,11 +42,11 @@ export function startGitProvider(
   // terminals proxy through the host's `HostSession` to the agent.
   // The registry hands us a `HostSessionLike` with defer-until-ready
   // baked in — no inline plumbing here.
-  const host: string | null =
-    entry.meta.location.kind === "ssh" ? entry.meta.location.host : null;
+  const loc = entry.meta.location;
+  const host: string | null = loc.kind === "ssh" ? loc.host : null;
   const provider: GitInfoProvider =
-    entry.meta.location.kind === "ssh"
-      ? remoteGitInfoProvider(getReadySession(entry.meta.location.host, log))
+    loc.kind === "ssh"
+      ? remoteGitInfoProvider(getReadySession(loc.host, log))
       : localGitInfoProvider;
 
   const watcher = provider.subscribe(
