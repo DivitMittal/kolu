@@ -303,7 +303,7 @@
 
 <h3>Risk mitigation</h3>
 <ul>
-  <li><strong>No dual path.</strong> The legacy <code>meta/*</code> orchestrators get deleted in the same PR that lands <code>LocalBackend</code>. A feature flag would mean two implementations in master with their own drift; the bet is that <code>LocalBackend</code> wraps the same calls the legacy path made, and the test suite is the safety net.</li>
+  <li><strong>Atomic refactor — single PR.</strong> R-1 introduces <code>LocalBackend</code> AND removes the per-orchestrator files it absorbs (<code>meta/agent.ts</code>, <code>meta/cwd.ts</code>, <code>meta/git.ts</code>, <code>meta/github.ts</code>, <code>meta/process.ts</code>) in one commit on the PR. Behavior is preserved because <code>LocalBackend</code> invokes the same integration-package functions (<code>kolu-claude-code</code>, <code>kolu-git</code>, etc.) the orchestrators called; the existing test suite is the safety net. No transitional state, no feature flag — anything that survives into R-1's HEAD is part of the new shape, not residue.</li>
   <li><strong>Session migration exhaustively tested.</strong> Every persisted-shape revision in <code>git log packages/common/src/surface.ts</code> gets a golden fixture; round-trip + property tests cover migration; e2e loads each historical fixture in a real kolu and verifies the canvas matches.</li>
 </ul>
 
