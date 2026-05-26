@@ -244,13 +244,65 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
               ),
             };
           }
-          const { content, truncated } = unwrapGit(
-            await readFile(input.repoPath, input.filePath, log),
+          // R-2: route through Backend.fs so remote tiles' Code tab
+          // reads the agent's filesystem, not the kolu server's local
+          // FS. `terminalId` carries the dispatch axis. Falls back to
+          // localBackend if the terminal isn't found (e.g. race with
+          // unregister).
+          const { getBackendFor, localBackend } = await import(
+            "./backend/index.ts"
+          );
+          const { getTerminal } = await import("./terminal-registry.ts");
+          const entry = getTerminal(input.terminalId);
+          const backend = entry
+            ? getBackendFor(entry.meta.location)
+            : localBackend;
+          const { content, truncated } = await backend.fs.readFile(
+            input.repoPath,
+            input.filePath,
           );
           return { kind: "text", content, truncated };
         },
-        install: (input, cb) =>
-          subscribeFileChange(input.repoPath, input.filePath, cb, log),
+        install: (input, cb) => {
+          // Route the file watcher through Backend.fs too — remote
+          // tiles' Code tab watches the agent's filesystem changes.
+          let stopped = false;
+          let stopFn: (() => void) | undefined;
+          void (async () => {
+            const { getBackendFor, localBackend } = await import(
+              "./backend/index.ts"
+            );
+            const { getTerminal } = await import("./terminal-registry.ts");
+            const entry = getTerminal(input.terminalId);
+            const backend = entry
+              ? getBackendFor(entry.meta.location)
+              : localBackend;
+            const ctrl = new AbortController();
+            stopFn = () => ctrl.abort();
+            if (stopped) {
+              ctrl.abort();
+              return;
+            }
+            try {
+              for await (const _ of backend.fs.subscribeFileChange(
+                input.repoPath,
+                input.filePath,
+                ctrl.signal,
+              )) {
+                cb();
+              }
+            } catch (err) {
+              log.error(
+                { err, input },
+                "fsReadFile.install: watcher iterator threw",
+              );
+            }
+          })();
+          return () => {
+            stopped = true;
+            stopFn?.();
+          };
+        },
         isEqual: fsReadFileOutputEqual,
       },
     },

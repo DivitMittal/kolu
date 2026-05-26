@@ -90,14 +90,7 @@ export class RemoteBackend implements Backend {
     // the listener's `getTerminal(id)` lookup must succeed for the
     // initial metadata publish to flow.
     registerTerminal(id, entry);
-    entry.stopProviders = this.session.onStateChange((s) => {
-      const e = getTerminal(id);
-      if (e) {
-        metaMod.updateServerLiveMetadata(e, id, (m) => {
-          m.connectionState = s;
-        });
-      }
-    });
+    entry.stopProviders = this.startRemoteMetaSubscribers(id, metaMod);
 
     return {
       id,
@@ -176,6 +169,117 @@ export class RemoteBackend implements Backend {
         const it = await promise;
         for await (const v of it) yield v as TerminalChannelMap[K];
       },
+    };
+  }
+
+  /** Wire up channel subscribers that mirror the agent's per-terminal
+   *  metadata into the kolu server's `entry.meta`. The agent's
+   *  in-process providers (claude-code/codex/opencode/foreground)
+   *  write to ITS local entry and publish to ITS terminalChannels;
+   *  this loop tunnels those publishes via oRPC and applies them on
+   *  the kolu-server side so the browser-visible terminalMetadata
+   *  collection stays current for remote tiles. */
+  private startRemoteMetaSubscribers(
+    id: string,
+    metaMod: typeof import("../meta/index.ts"),
+  ): () => void {
+    const ctrl = new AbortController();
+    const stops: Array<() => void> = [];
+
+    // Connection state — driven by HostSession state machine, not by
+    // an agent channel. Snapshot-then-delta via onStateChange.
+    stops.push(
+      this.session.onStateChange((s) => {
+        const e = getTerminal(id);
+        if (e) {
+          metaMod.updateServerLiveMetadata(e, id, (m) => {
+            m.connectionState = s;
+          });
+        }
+      }),
+    );
+
+    // Live metadata channels — `agent`, `pr`, `foreground` — each
+    // pumped through `updateServerLiveMetadata` (which doesn't fire
+    // terminals:dirty, matching the local-side behavior for these
+    // transient fields).
+    const liveSubscriber = <K extends "agent" | "pr" | "foreground">(
+      kind: K,
+      apply: (
+        m: Parameters<
+          Parameters<typeof metaMod.updateServerLiveMetadata>[2]
+        >[0],
+        v: TerminalChannelMap[K],
+      ) => void,
+    ): void => {
+      void (async () => {
+        try {
+          for await (const v of this.terminalChannel(id, kind, ctrl.signal)) {
+            const e = getTerminal(id);
+            if (!e) continue;
+            metaMod.updateServerLiveMetadata(e, id, (m) => apply(m, v));
+          }
+        } catch (err) {
+          log.warn(
+            { host: this.session.host, id, kind, err },
+            "remote meta subscriber failed",
+          );
+        }
+      })();
+    };
+    liveSubscriber("agent", (m, v) => {
+      m.agent = v;
+    });
+    liveSubscriber("pr", (m, v) => {
+      m.pr = v;
+    });
+    liveSubscriber("foreground", (m, v) => {
+      m.foreground = v;
+    });
+
+    // Server-persisted fields — cwd, git — go through
+    // `updateServerMetadata` (fires terminals:dirty so the session
+    // autosave loop picks it up).
+    void (async () => {
+      try {
+        for await (const newCwd of this.terminalChannel(
+          id,
+          "cwd",
+          ctrl.signal,
+        )) {
+          const e = getTerminal(id);
+          if (!e) continue;
+          metaMod.updateServerMetadata(e, id, (m) => {
+            m.cwd = newCwd;
+          });
+        }
+      } catch (err) {
+        log.warn(
+          { host: this.session.host, id, err },
+          "remote cwd subscriber failed",
+        );
+      }
+    })();
+    void (async () => {
+      try {
+        for await (const info of this.terminalChannel(id, "git", ctrl.signal)) {
+          const e = getTerminal(id);
+          if (!e) continue;
+          metaMod.updateServerMetadata(e, id, (m) => {
+            m.git = info;
+          });
+        }
+      } catch (err) {
+        log.warn(
+          { host: this.session.host, id, err },
+          "remote git subscriber failed",
+        );
+      }
+    })();
+
+    return () => {
+      ctrl.abort();
+      for (const s of stops) s();
     };
   }
 

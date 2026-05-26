@@ -92,6 +92,23 @@ async function getKoluStorePath(): Promise<string> {
   return stdout.trim();
 }
 
+/** Build the kolu derivation for a specific Nix system tuple — used
+ *  when the remote's `currentSystem` differs from ours. Returns the
+ *  resulting store path. Falls back to "binary cache miss" error if
+ *  the local builder can't cross-compile and no substituter has the
+ *  artifact. */
+async function buildKoluForSystem(system: string): Promise<string> {
+  const { stdout } = await execFileP("nix", [
+    "build",
+    "--print-out-paths",
+    "--no-link",
+    "--system",
+    system,
+    `.#kolu`,
+  ]);
+  return stdout.trim();
+}
+
 /**
  * Install the kolu agent on `host`. Idempotent — if the store path is
  * already realised on the remote, returns early.
@@ -113,17 +130,24 @@ export async function installAgent(host: string): Promise<void> {
     localSystem(),
   ]);
 
+  let storePath: string;
   if (remoteSystem !== lSystem) {
-    throw new Error(
-      `installAgent(${host}): cross-system not yet implemented (R-3). ` +
-        `Local: ${lSystem}, remote: ${remoteSystem}. Build the remote-system ` +
-        `derivation locally first: nix build .#packages.${remoteSystem}.kolu`,
+    // Cross-arch: build kolu for the remote's system tuple locally
+    // before copying. Requires either a remote builder, a binary
+    // cache that has the derivation, or a local builder that can
+    // cross-compile. The `nix build --system` invocation surfaces
+    // the failure clearly if none of those are available.
+    log.info(
+      { host, localSystem: lSystem, remoteSystem },
+      "installAgent: cross-system build",
     );
+    storePath = await buildKoluForSystem(remoteSystem);
+  } else {
+    storePath = await getKoluStorePath();
   }
 
-  const storePath = await getKoluStorePath();
   log.info(
-    { host, storePath, system: lSystem },
+    { host, storePath, system: remoteSystem },
     "installAgent: probing remote",
   );
 
