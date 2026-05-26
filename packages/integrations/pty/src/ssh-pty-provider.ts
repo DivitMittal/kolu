@@ -29,10 +29,11 @@ function buildRemoteCommand(spawnCwd: string | undefined): string {
   let cdSegment = "";
   if (spawnCwd) {
     if (spawnCwd.startsWith("~/")) {
-      const remainder = spawnCwd.slice(2);
-      cdSegment = remainder
-        ? `cd "$HOME"/'${remainder.replace(/'/g, "'\\''")}' && `
-        : `cd "$HOME" && `;
+      // `~/foo` → `"$HOME"/'foo'` so $HOME expands on the remote.
+      // `~/` alone → `"$HOME"` (no trailing slash confusion).
+      const tail = spawnCwd.slice(2);
+      const quotedTail = tail ? `/'${tail.replace(/'/g, "'\\''")}'` : "";
+      cdSegment = `cd "$HOME"${quotedTail} && `;
     } else {
       cdSegment = `cd '${spawnCwd.replace(/'/g, "'\\''")}' && `;
     }
