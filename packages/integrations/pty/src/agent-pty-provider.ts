@@ -92,6 +92,15 @@ export function agentPtyProvider(opts: AgentPtyProviderOptions): PtyProvider {
         : { cwd: spawnCwd, cols: 80, rows: 24 };
       token = opts.session.subscribe(method, args, onEvent);
 
+      /** Best-effort RPC call — logs but does not throw on failure.
+       *  Both `write` and `resize` are fire-and-forget. */
+      const rpc = (method: string, args: object, label: string) => {
+        if (disposed) return;
+        void opts.session
+          .call(method, args)
+          .catch((err: Error) => tlog.warn({ err }, label));
+      };
+
       return {
         // For agent-owned PTYs there's no local OS pid that maps to
         // the remote shell; we synthesize a positive number from the
@@ -106,27 +115,18 @@ export function agentPtyProvider(opts: AgentPtyProviderOptions): PtyProvider {
         localProcess: "ssh",
         localForegroundPid: undefined,
         write: (data: string) => {
-          if (disposed) return;
-          void opts.session
-            .call("terminal.write", {
-              remoteSessionId: allocatedSessionId,
-              data,
-            })
-            .catch((err: Error) => {
-              tlog.warn({ err }, "agent terminal.write failed");
-            });
+          rpc(
+            "terminal.write",
+            { remoteSessionId: allocatedSessionId, data },
+            "agent terminal.write failed",
+          );
         },
         resize: (cols: number, rows: number) => {
-          if (disposed) return;
-          void opts.session
-            .call("terminal.resize", {
-              remoteSessionId: allocatedSessionId,
-              cols,
-              rows,
-            })
-            .catch((err: Error) => {
-              tlog.warn({ err }, "agent terminal.resize failed");
-            });
+          rpc(
+            "terminal.resize",
+            { remoteSessionId: allocatedSessionId, cols, rows },
+            "agent terminal.resize failed",
+          );
         },
         // Phase 3 prototype: getScreenState / getScreenText return empty
         // strings — late-join clients need the agent's scrollback
