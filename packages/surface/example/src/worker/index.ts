@@ -129,11 +129,6 @@ const statsStore = inMemoryStore<{
   indexed: 0,
   startedAt,
 });
-const statsBus = inMemoryChannel<{
-  pid: number;
-  indexed: number;
-  startedAt: number;
-}>();
 
 const { router: routerFragment } = implementSurface(workerSurface, {
   // biome-ignore lint/suspicious/noExplicitAny: untyped framework channel factory
@@ -173,7 +168,6 @@ const { router: routerFragment } = implementSurface(workerSurface, {
 // Silence unused-import warning while keeping the package's
 // side-effect-free assertion intact.
 void _defineSurface;
-void statsBus;
 
 // ── Serve on process stdin/stdout ──────────────────────────────────────
 
