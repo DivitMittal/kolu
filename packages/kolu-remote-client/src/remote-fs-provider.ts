@@ -13,10 +13,26 @@
  * end-to-end with no changes here.
  */
 
-import type { FsProvider } from "kolu-git";
-import type { GitResult } from "kolu-git";
+import type { FsProvider, GitResult } from "kolu-git";
 import type { Logger } from "kolu-shared";
 import type { HostSessionLike } from "./host-session.ts";
+
+/** Minimal runtime guard at the wire boundary. The agent's handlers
+ *  return `GitResult<T>` by construction (they run the LOCAL fs
+ *  provider), but the wire payload arrives here as `unknown`.
+ *  Throwing on a malformed shape is strictly better than letting a
+ *  corrupted GitResult flow into downstream null-dereferences. A
+ *  full Zod schema in `kolu-remote-agent/protocol.ts` per fs result
+ *  would be the ideal fix once Phase 2b's agent handlers land — for
+ *  now this catches structural drift loudly. */
+function assertGitResultShape<T>(value: unknown, method: string): GitResult<T> {
+  if (value === null || typeof value !== "object" || !("ok" in value)) {
+    throw new Error(
+      `remoteFsProvider.${method}: agent returned non-GitResult shape`,
+    );
+  }
+  return value as GitResult<T>;
+}
 
 export function remoteFsProvider(session: HostSessionLike): FsProvider {
   return {
@@ -25,9 +41,7 @@ export function remoteFsProvider(session: HostSessionLike): FsProvider {
       _log?: Logger,
     ): Promise<GitResult<string[]>> {
       const result = await session.call("fs.listAll", { repoPath });
-      // The agent's handler already returns `GitResult<string[]>` (the
-      // local listAll's shape); we forward it verbatim.
-      return result as GitResult<string[]>;
+      return assertGitResultShape<string[]>(result, "listAll");
     },
     async readFile(
       repoPath: string,
@@ -35,7 +49,10 @@ export function remoteFsProvider(session: HostSessionLike): FsProvider {
       _log?: Logger,
     ): Promise<GitResult<{ content: string; truncated: boolean }>> {
       const result = await session.call("fs.readFile", { repoPath, filePath });
-      return result as GitResult<{ content: string; truncated: boolean }>;
+      return assertGitResultShape<{ content: string; truncated: boolean }>(
+        result,
+        "readFile",
+      );
     },
     async statFileMtimeMs(
       repoPath: string,
@@ -46,7 +63,7 @@ export function remoteFsProvider(session: HostSessionLike): FsProvider {
         repoPath,
         filePath,
       });
-      return result as GitResult<number>;
+      return assertGitResultShape<number>(result, "statFileMtimeMs");
     },
   };
 }
