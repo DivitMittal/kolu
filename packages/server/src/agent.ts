@@ -23,10 +23,23 @@
  *  3. On stdin EOF, killAll local terminals + exit 0.
  */
 
-import { implement } from "@orpc/server";
+import { implement, ORPCError } from "@orpc/server";
 import { agentContract } from "kolu-common/agentContract";
+import type { TerminalChannelMap } from "kolu-common/backend";
 import { localBackend } from "./backend/local.ts";
 import { log } from "./log.ts";
+
+/** Body of every per-channel handler. The kind literal is the single
+ *  binding-site source of typo risk — TS catches a mismatched key. */
+async function* relayChannel<K extends keyof TerminalChannelMap>(
+  id: string,
+  kind: K,
+  signal: AbortSignal | undefined,
+): AsyncGenerator<TerminalChannelMap[K]> {
+  for await (const v of localBackend.terminalChannel(id, kind, signal)) {
+    yield v;
+  }
+}
 
 /**
  * The agent's oRPC router — every method delegates to `localBackend`.
@@ -48,21 +61,25 @@ function buildAgentRouter() {
         });
         return { id: handle.id };
       }),
-      // The remaining terminal handlers (kill, write, resize, uploadFile,
-      // channel*) follow the same shape: thin wrappers around localBackend
-      // methods. Sketched stubs for prototype scope; the architectural
-      // intent (the agent IS just LocalBackend wrapped in oRPC) is
-      // visible in `spawn` above.
       kill: t.terminal.kill.handler(async ({ input }) =>
         localBackend.killTerminal(input.id),
       ),
+      // Lowy post-impl finding F4: silent no-op handlers violate the
+      // contract — RemoteBackend's caller would receive success while
+      // the PTY received no input (silent data loss). Honest prototype
+      // contract throws until R-3 plumbs terminal-id-keyed control on
+      // LocalBackend.
       write: t.terminal.write.handler(async () => {
-        // localBackend doesn't expose a write-by-id today; the handle's
-        // write() is the path. R-3 will adjust LocalBackend to expose
-        // terminal-id-keyed control methods.
+        throw new ORPCError("NOT_IMPLEMENTED", {
+          message:
+            "terminal.write on the agent contract is R-3 — LocalBackend doesn't expose terminal-id-keyed write today; the handle.write() path is in-process only.",
+        });
       }),
       resize: t.terminal.resize.handler(async () => {
-        // Same as write.
+        throw new ORPCError("NOT_IMPLEMENTED", {
+          message:
+            "terminal.resize on the agent contract is R-3 — same as write.",
+        });
       }),
       uploadFile: t.terminal.uploadFile.handler(async ({ input }) => ({
         path: await localBackend.uploadFile(
@@ -71,115 +88,36 @@ function buildAgentRouter() {
           input.base64Data,
         ),
       })),
-      // channel* handlers iterate localBackend.terminalChannel(id, kind)
-      // and yield via async generators. Sketched here; the per-kind
-      // explicitness keeps the agentContract typed.
-      channelData: t.terminal.channelData.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const data of localBackend.terminalChannel(
-          input.id,
-          "data",
-          signal,
-        )) {
-          yield data;
-        }
-      }),
-      channelCwd: t.terminal.channelCwd.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const v of localBackend.terminalChannel(
-          input.id,
-          "cwd",
-          signal,
-        )) {
-          yield v;
-        }
-      }),
-      channelTitle: t.terminal.channelTitle.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const v of localBackend.terminalChannel(
-          input.id,
-          "title",
-          signal,
-        )) {
-          yield v;
-        }
-      }),
-      channelGit: t.terminal.channelGit.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const v of localBackend.terminalChannel(
-          input.id,
-          "git",
-          signal,
-        )) {
-          yield v;
-        }
-      }),
-      channelCommandRun: t.terminal.channelCommandRun.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const v of localBackend.terminalChannel(
-          input.id,
-          "commandRun",
-          signal,
-        )) {
-          yield v;
-        }
-      }),
-      channelAgent: t.terminal.channelAgent.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const v of localBackend.terminalChannel(
-          input.id,
-          "agent",
-          signal,
-        )) {
-          yield v;
-        }
-      }),
-      channelPr: t.terminal.channelPr.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const v of localBackend.terminalChannel(
-          input.id,
-          "pr",
-          signal,
-        )) {
-          yield v;
-        }
-      }),
-      channelForeground: t.terminal.channelForeground.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const v of localBackend.terminalChannel(
-          input.id,
-          "foreground",
-          signal,
-        )) {
-          yield v;
-        }
-      }),
+      // One handler per TerminalChannelMap key; the body is one line
+      // that delegates to `relayChannel`. The kind literal is the only
+      // varying piece per row — typos cost a type error.
+      channelData: t.terminal.channelData.handler(({ input, signal }) =>
+        relayChannel(input.id, "data", signal),
+      ),
+      channelCwd: t.terminal.channelCwd.handler(({ input, signal }) =>
+        relayChannel(input.id, "cwd", signal),
+      ),
+      channelTitle: t.terminal.channelTitle.handler(({ input, signal }) =>
+        relayChannel(input.id, "title", signal),
+      ),
+      channelGit: t.terminal.channelGit.handler(({ input, signal }) =>
+        relayChannel(input.id, "git", signal),
+      ),
+      channelCommandRun: t.terminal.channelCommandRun.handler(
+        ({ input, signal }) => relayChannel(input.id, "commandRun", signal),
+      ),
+      channelAgent: t.terminal.channelAgent.handler(({ input, signal }) =>
+        relayChannel(input.id, "agent", signal),
+      ),
+      channelPr: t.terminal.channelPr.handler(({ input, signal }) =>
+        relayChannel(input.id, "pr", signal),
+      ),
+      channelForeground: t.terminal.channelForeground.handler(
+        ({ input, signal }) => relayChannel(input.id, "foreground", signal),
+      ),
       channelConnectionState: t.terminal.channelConnectionState.handler(
-        async function* ({ input, signal }) {
-          for await (const v of localBackend.terminalChannel(
-            input.id,
-            "connectionState",
-            signal,
-          )) {
-            yield v;
-          }
-        },
+        ({ input, signal }) =>
+          relayChannel(input.id, "connectionState", signal),
       ),
     },
 
@@ -231,17 +169,6 @@ function buildAgentRouter() {
       getStatus: t.git.getStatus.handler(async ({ input }) =>
         localBackend.git.getStatus(input.repoPath, input.mode),
       ),
-      subscribeRepoChange: t.git.subscribeRepoChange.handler(async function* ({
-        input,
-        signal,
-      }) {
-        for await (const _ of localBackend.git.subscribeRepoChange(
-          input.repoPath,
-          signal,
-        )) {
-          yield;
-        }
-      }),
     },
   });
 }
