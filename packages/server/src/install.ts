@@ -15,8 +15,11 @@
  * remote's binaries).
  *
  * **Configuration**: `KOLU_AGENT_FLAKE_REF` env var (default
- * `github:juspay/kolu/remote-terminals-plan-b-r2`). For dev: set it to
- * a local-pushed branch. For prod: pin to a tag.
+ * `github:juspay/kolu/surface-subsumption-r2-stack` — the branch on
+ * which kolu-server learned to speak `agentSurface`). For dev: set it
+ * to a local-pushed branch. For prod: pin to a tag. **Bump the default
+ * whenever the wire contract changes**, otherwise the kolu-server's
+ * typed client and the remote agent diverge and every RPC 404s.
  *
  * **Why not `nix copy` from local?** The earlier draft built kolu for
  * the remote system locally (`nix build --system <remoteSystem>`) and
@@ -35,13 +38,14 @@ import { log } from "./log.ts";
 const execFileP = promisify(execFile);
 
 /** Flake ref that exposes the kolu `default` package. Settable via
- *  `KOLU_AGENT_FLAKE_REF` env var; defaults to the remote-terminals
- *  branch on juspay/kolu (the only branch with `kolu --stdio` until
- *  R-2 lands on master). */
+ *  `KOLU_AGENT_FLAKE_REF` env var; defaults to this PR's branch
+ *  (the one that speaks `agentSurface`). Without this update, a
+ *  kolu-server built from this branch would spawn an old agent from
+ *  PR #976 and every `surface.*` call would 404. */
 function getAgentFlakeRef(): string {
   return (
     process.env.KOLU_AGENT_FLAKE_REF ??
-    "github:juspay/kolu/remote-terminals-plan-b-r2"
+    "github:juspay/kolu/surface-subsumption-r2-stack"
   );
 }
 
