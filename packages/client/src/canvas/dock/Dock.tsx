@@ -174,6 +174,7 @@ const Dock: Component<{
   onOpenWorkspaceSearch: () => void;
   onCreate: () => void;
 }> = (props) => {
+  const store = useTerminalStore();
   const order = useDockOrder();
   const posture = useViewPosture();
 
@@ -184,18 +185,40 @@ const Dock: Component<{
     flattenForRender(order.tree(), isGroupFolded),
   );
 
-  // Prune stale fold keys whenever the tree changes — repos/branches that
-  // no longer exist should not accumulate in localStorage indefinitely.
-  createEffect(() => {
-    const liveKeys = new Set<string>();
-    for (const node of order.tree()) {
-      if (node.kind !== "group") continue;
-      liveKeys.add(node.key);
-      for (const child of node.children) {
-        if (child.kind === "group") liveKeys.add(child.key);
-      }
+  // Live group keys derived from EVERY terminal in the store — parked,
+  // sub-terminals filtered by the metadata layer, and visible alike —
+  // so the prune effect below doesn't decide that a temporarily-hidden
+  // group (parked by the activity window, or its parent has children
+  // still loading) is dead. Splitting this out from `order.tree()` is
+  // the fix for two prune-effect bugs the reviewer flagged:
+  //   1. On startup `order.tree()` is empty while subscriptions load —
+  //      computing live keys from the unfiltered terminal id list lets
+  //      the early-return below catch that window.
+  //   2. The new "hide parked" filter means `order.tree()` excludes
+  //      parked branches, so without this we'd prune fold-keys for
+  //      branches that come back the moment the activity window widens.
+  const liveGroupKeys = createMemo(() => {
+    const keys = new Set<string>();
+    for (const id of store.terminalIds()) {
+      const info = store.getDisplayInfo(id);
+      if (!info) continue;
+      keys.add(info.key.group);
+      keys.add(`${info.key.group}/${info.key.label}`);
     }
-    setFoldedGroups((prev) => prev.filter((k) => liveKeys.has(k)));
+    return keys;
+  });
+
+  // Prune stale fold keys when groups disappear from the live set —
+  // repos/branches the user no longer has any terminals in shouldn't
+  // accumulate in localStorage indefinitely. Skip while
+  // `terminalListSub` hasn't fired yet (no terminals known === can't
+  // distinguish "loading" from "user has zero terminals"; either way
+  // there's nothing to prune in that window).
+  createEffect(() => {
+    if (store.listSub() === undefined) return;
+    const keys = liveGroupKeys();
+    if (keys.size === 0) return;
+    setFoldedGroups((prev) => prev.filter((k) => keys.has(k)));
   });
 
   // Maximized = flush sidebar; tiled = floating overlay. Two distinct
