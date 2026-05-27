@@ -21,11 +21,6 @@ import pino, { type Logger } from "pino";
 import { serverHostname, serverProcessId } from "./hostname.ts";
 
 const level = process.env.LOG_LEVEL ?? "info";
-const base = {
-  pid: process.pid,
-  hostname: serverHostname,
-  serverId: serverProcessId,
-};
 
 /** True when this process is the stdio agent (`kolu --stdio`). Read at
  *  module load so the logger destination can be decided before any
@@ -33,14 +28,29 @@ const base = {
  *  decision (no second `process.argv.includes(...)` site to drift). */
 export const isStdioAgent = process.argv.includes("--stdio");
 
+/** `serverId` correlates HTTP-server log lines across one process run —
+ *  the diag dir name is `YYYYMMDDTHHMMSS-$$` but ties back to the
+ *  serverId logged at startup. The agent has no analogous correlation
+ *  workflow (parent already tags forwarded lines with `[host:<host>
+ *  remote] …`), so its base drops the field. */
+const baseHttp = {
+  pid: process.pid,
+  hostname: serverHostname,
+  serverId: serverProcessId,
+};
+const baseAgent = {
+  pid: process.pid,
+  hostname: serverHostname,
+};
+
 export const log: Logger = isStdioAgent
-  ? pino({ level, base }, pino.destination({ dest: 2, sync: true }))
+  ? pino({ level, base: baseAgent }, pino.destination({ dest: 2, sync: true }))
   : pino(
       process.env.NODE_ENV === "production"
-        ? { level, base }
+        ? { level, base: baseHttp }
         : {
             level,
-            base,
+            base: baseHttp,
             transport: {
               target: "pino-pretty",
               options: { colorize: true, singleLine: true },
