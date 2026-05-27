@@ -149,11 +149,17 @@ const DesktopHost: Component<HostProps> = (props) => {
           // every available pixel.
           [`${POSTURED_TILED_FLOAT} right-4 bottom-4`]:
             !posture.maximized() && !rightPanel.collapsed(),
-          // Maximized: real flex sibling of the canvas — flush right
-          // sidebar with a hard separator on its left edge. Canvas
-          // reflows into the remaining width via its `flex-1`.
+          // Maximized + expanded: real flex sibling of the canvas —
+          // flush right sidebar with a hard separator on its left edge.
+          // Canvas reflows into the remaining width via its `flex-1`.
           [`${POSTURED_MAXIMIZED_FLUSH} border-l border-edge`]:
-            posture.maximized(),
+            posture.maximized() && !rightPanel.collapsed(),
+          // Maximized + collapsed: flex sibling with no border and zero
+          // width. Without dropping `border-l`, the 1px edge would
+          // render as a ghost line at the canvas's right boundary even
+          // with the panel fully collapsed.
+          [POSTURED_MAXIMIZED_FLUSH]:
+            posture.maximized() && rightPanel.collapsed(),
           // Tiled + collapsed: drop out of layout. Component stays
           // mounted (CodeTab's Pierre tree expansion survives) but
           // the floating shadow doesn't leak as a visual sliver.
