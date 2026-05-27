@@ -163,7 +163,7 @@ const Dock: Component<{
           // between rows or behind the rounded corners. Shared chrome
           // lives in `posturedSurfaceChrome.ts` so a chrome-bar height
           // change (`top-20`) updates one constant, not two surfaces.
-          [`${POSTURED_TILED_FLOAT} left-4`]: !posture.maximized(),
+          [`${POSTURED_TILED_FLOAT} top-20 left-4`]: !posture.maximized(),
           "max-h-[calc(100vh-22rem)]": !posture.maximized(),
           // Maximized: real left-panel flex sibling of the canvas. The
           // canvas takes the remaining space via `flex-1` next to us

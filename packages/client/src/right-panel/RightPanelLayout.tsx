@@ -116,12 +116,28 @@ const DesktopHost: Component<HostProps> = (props) => {
     >
       <Resizable
         orientation="horizontal"
+        // Tiled mode pulls the right panel out of flex flow (`absolute`
+        // float over the canvas), so Corvu's flex-basis must release
+        // the panel's slot to the canvas — otherwise the canvas
+        // `Resizable.Panel` only paints to `(1 - panelSize)` of the
+        // container and the canvas grid stops short of the floating
+        // card, leaving a blank strip in the reserved-but-empty area.
+        // Collapsed (any posture) also gives all width to the canvas.
         sizes={
-          rightPanel.collapsed()
+          rightPanel.collapsed() || !posture.maximized()
             ? [1, 0]
             : [1 - rightPanel.panelSize(), rightPanel.panelSize()]
         }
         onSizesChange={(sizes) => {
+          // Only forward drag-driven changes from the maximized
+          // `Resizable.Handle`. In tiled mode (sizes prop locked to
+          // `[1, 0]`) Corvu still fires `onSizesChange([1, 0])` on
+          // every render — without this guard each tick clobbers the
+          // user's persisted `panelSize` with `0` (which then clamps
+          // up to `MIN_PANEL_FRACTION`). The custom tiled handle
+          // writes through `setPanelSize` directly via the pointer
+          // gesture, so we don't lose any input by ignoring it here.
+          if (!posture.maximized() || rightPanel.collapsed()) return;
           if (sizes[1] !== undefined) rightPanel.setPanelSize(sizes[1]);
         }}
         class="flex-1 min-h-0 overflow-hidden"
@@ -142,9 +158,13 @@ const DesktopHost: Component<HostProps> = (props) => {
          *  edge below. Same `data-testid="right-panel-handle"` so the
          *  attached-handle e2e assertion finds whichever is mounted. */}
         <Show when={!rightPanel.collapsed() && posture.maximized()}>
+          {/* `before:z-50` lifts the hit zone above the maximized
+           *  canvas tile (`z-40` in `CanvasTile.tsx`); without it the
+           *  tile covers the pseudo's `-4px` left extension and the
+           *  user can't actually grab the handle. */}
           <Resizable.Handle
             data-testid="right-panel-handle"
-            class="shrink-0 w-0 relative before:absolute before:inset-y-0 before:-left-1 before:w-2 before:cursor-col-resize before:hover:bg-accent/30 before:transition-colors"
+            class="shrink-0 w-0 relative z-50 before:absolute before:inset-y-0 before:-left-1.5 before:w-3 before:cursor-col-resize before:hover:bg-accent/30 before:transition-colors"
             aria-label="Resize inspector panel"
           />
         </Show>
@@ -159,12 +179,14 @@ const DesktopHost: Component<HostProps> = (props) => {
             // floating rounded card over the canvas grid, anchored
             // top-right. Mirrors the dock's tiled-mode treatment on the
             // opposite edge — both surfaces share `POSTURED_TILED_FLOAT`
-            // so a chrome-bar height change ripples through one
-            // constant. Vertical extent diverges intentionally: the
-            // dock uses `max-h-[calc(100vh-22rem)]` (shrink-to-content
-            // for finite row lists), the panel uses `bottom-4` because
-            // the Code tab's file tree benefits from every pixel.
-            [`${POSTURED_TILED_FLOAT} right-4 bottom-4`]:
+            // (z-order, corner radius, shadow). Top anchor is
+            // per-surface: the dock can sit `top-20` because its
+            // shrink-to-content card is short; the right panel uses
+            // `top-12` (4 px below the chrome bar) so its taller
+            // bottom-4 card doesn't appear pushed-to-bottom against
+            // empty space above. Vertical extent diverges
+            // intentionally — Code-tab file tree wants every pixel.
+            [`${POSTURED_TILED_FLOAT} top-12 right-4 bottom-4`]:
               !posture.maximized() && !rightPanel.collapsed(),
             // Maximized + expanded: flush right sidebar with a hard
             // left separator. Canvas reflows into the remaining width
