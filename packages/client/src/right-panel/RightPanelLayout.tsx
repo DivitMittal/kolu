@@ -28,14 +28,7 @@
 
 import Drawer from "@corvu/drawer";
 import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
-import {
-  type Component,
-  createEffect,
-  createSignal,
-  type JSX,
-  on,
-  Show,
-} from "solid-js";
+import { type Component, createEffect, type JSX, on, Show } from "solid-js";
 import {
   POSTURED_MAXIMIZED_FLUSH,
   POSTURED_TILED_FLOAT,
@@ -62,7 +55,9 @@ type HostProps = {
 const DesktopHost: Component<HostProps> = (props) => {
   const rightPanel = useRightPanel();
   const posture = useViewPosture();
-  const [containerEl, setContainerEl] = createSignal<HTMLDivElement>();
+  // Plain ref — only read inside `onResizeStart` (a non-reactive event
+  // handler), so a signal would just add a tracked atom for no reader.
+  let containerEl: HTMLDivElement | undefined;
   // Held across gestures so a re-entry (touch+mouse cross-fire, retriggered
   // pointerdown before the prior `pointerup` lands) aborts the previous
   // listener pair before installing a new one. Matches the pattern every
@@ -93,9 +88,8 @@ const DesktopHost: Component<HostProps> = (props) => {
   const onResizeStart = (e: PointerEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    const container = containerEl();
-    if (!container) return;
-    const cw = container.getBoundingClientRect().width;
+    if (!containerEl) return;
+    const cw = containerEl.getBoundingClientRect().width;
     if (cw <= 0) return;
     const startX = e.clientX;
     const startSize = rightPanel.panelSize();
@@ -126,7 +120,9 @@ const DesktopHost: Component<HostProps> = (props) => {
 
   return (
     <div
-      ref={setContainerEl}
+      ref={(el) => {
+        containerEl = el;
+      }}
       class="flex-1 min-h-0 min-w-0 flex overflow-hidden relative"
     >
       <div class={`flex-1 min-w-0 min-h-0 flex ${props.contentClass ?? ""}`}>
