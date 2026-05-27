@@ -1,15 +1,16 @@
 /** RightPanelLayout — picks the host that surfaces the right panel.
  *
  *  Two hosts, one content subtree:
- *  - Desktop (`DesktopHost`): mirrors the dock's posture pairing. In tiled
- *    canvas mode the panel floats as a rounded card anchored top-right
- *    over the canvas grid; in maximized-tile mode it collapses to a flush
- *    right sidebar with a hard separator and the canvas reflows beside
- *    it. Visibility is the persisted `preferences.rightPanel.collapsed`
- *    bit; width comes from the persisted `preferences.rightPanel.size`
- *    fraction. A single `<aside>` swaps classList on posture — no DOM
- *    remount, so CodeTab's local Pierre tree state survives both the
- *    collapse toggle and the posture flip.
+ *  - Desktop (`DesktopHost`): `@corvu/resizable` horizontal split owns
+ *    width and visibility (collapsed → `sizes=[1,0]`). On top of that
+ *    split, the right `Resizable.Panel` mirrors the dock's posture
+ *    pairing via classList — in maximized mode it sits in the flex flow
+ *    as a flush right sidebar with a hard separator; in tiled mode it
+ *    floats over the canvas grid as a rounded card while the canvas
+ *    `Resizable.Panel` claims the full container width. Keeping the
+ *    Resizable shell across both postures preserves master's stable
+ *    interaction surface (xterm-link click handling depends on the
+ *    flush-mounted sibling layout) — only the visual chrome flips.
  *  - Mobile (`MobileDrawerHost`): `@corvu/drawer side="bottom"`. Visibility
  *    is the session-local `useRightPanel.drawerOpen()` signal — dismissing
  *    the drawer on a phone is not the same volatility as toggling the
@@ -27,6 +28,7 @@
  *  `foo.html` already selected. */
 
 import Drawer from "@corvu/drawer";
+import Resizable from "@corvu/resizable";
 import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
 import { type Component, createEffect, type JSX, on, Show } from "solid-js";
 import {
@@ -34,7 +36,6 @@ import {
   POSTURED_TILED_FLOAT,
 } from "../canvas/posturedSurfaceChrome";
 import { useViewPosture } from "../canvas/useViewPosture";
-import { capturePointerGesture } from "../canvas/viewport/capturePointerGesture";
 import { isMobile } from "../useMobile";
 import { pendingOpen } from "./openInCodeTab";
 import RightPanel from "./RightPanel";
@@ -55,15 +56,6 @@ type HostProps = {
 const DesktopHost: Component<HostProps> = (props) => {
   const rightPanel = useRightPanel();
   const posture = useViewPosture();
-  // Plain ref — only read inside `onResizeStart` (a non-reactive event
-  // handler), so a signal would just add a tracked atom for no reader.
-  let containerEl: HTMLDivElement | undefined;
-  // Held across gestures so a re-entry (touch+mouse cross-fire, retriggered
-  // pointerdown before the prior `pointerup` lands) aborts the previous
-  // listener pair before installing a new one. Matches the pattern every
-  // other `capturePointerGesture` caller uses (`TerminalCanvas` tile
-  // resize, `viewport/gestures.ts` canvas pan, `minimapGestures.ts`).
-  let abortResize: AbortController | null = null;
 
   // Producer arrivals (terminal `path:line` taps, comments-tray jumps)
   // uncollapse the side panel — visibility used to live inside
@@ -79,106 +71,73 @@ const DesktopHost: Component<HostProps> = (props) => {
     ),
   );
 
-  // Pointer-driven drag handle on the panel's left edge. Wiring + teardown
-  // delegate to `capturePointerGesture` — the same primitive tile-resize,
-  // canvas pan, and minimap drag use — so future changes to gesture
-  // semantics (cursor handling, cancel keys, escape-to-revert) land once.
-  // Container width is read on `pointerdown` (not tracked reactively) so
-  // the gesture doesn't pay an observer subscription for the steady state.
-  const onResizeStart = (e: PointerEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    if (!containerEl) return;
-    const cw = containerEl.getBoundingClientRect().width;
-    if (cw <= 0) return;
-    const startX = e.clientX;
-    const startSize = rightPanel.panelSize();
-    abortResize?.abort();
-    abortResize = new AbortController();
-    capturePointerGesture(
-      {
-        onMove: (ev) => {
-          const delta = (startX - ev.clientX) / cw;
-          rightPanel.setPanelSize(startSize + delta);
-        },
-        onEnd: () => {
-          abortResize = null;
-        },
-      },
-      abortResize,
-    );
-  };
-
-  // Width rendered as percentage so first paint matches the persisted
-  // size with no observer-driven flash. Maximized+collapsed gets an
-  // explicit 0px so the flex sibling fully releases its share to the
-  // canvas; tiled+collapsed uses `hidden` instead (see classList).
-  const panelWidthStyle = () => {
-    if (rightPanel.collapsed() && posture.maximized()) return "0px";
-    return `${rightPanel.panelSize() * 100}%`;
-  };
-
   return (
-    <div
-      ref={(el) => {
-        containerEl = el;
-      }}
-      class="flex-1 min-h-0 min-w-0 flex overflow-hidden relative"
-    >
-      <div class={`flex-1 min-w-0 min-h-0 flex ${props.contentClass ?? ""}`}>
-        {props.children}
-      </div>
-      <aside
-        data-testid="right-panel-shell"
-        data-maximized={posture.maximized() ? "" : undefined}
-        data-collapsed={rightPanel.collapsed() ? "" : undefined}
-        class="bg-surface-0 flex overflow-hidden"
-        classList={{
-          // Tiled: float over the canvas grid as a rounded card, mirroring
-          // the dock's tiled-mode treatment on the opposite edge — both
-          // surfaces share `POSTURED_TILED_FLOAT` (z-order, `top-20`,
-          // corner radius, shadow) so a chrome-bar height change ripples
-          // through one constant, not two surfaces. Vertical extent
-          // diverges intentionally: the dock uses `max-h-[calc(100vh-22rem)]`
-          // (shrink-to-content for finite row lists), the panel uses
-          // `bottom-4` because the Code tab's file tree benefits from
-          // every available pixel.
-          [`${POSTURED_TILED_FLOAT} right-4 bottom-4`]:
-            !posture.maximized() && !rightPanel.collapsed(),
-          // Maximized + expanded: real flex sibling of the canvas —
-          // flush right sidebar with a hard separator on its left edge.
-          // Canvas reflows into the remaining width via its `flex-1`.
-          [`${POSTURED_MAXIMIZED_FLUSH} border-l border-edge`]:
-            posture.maximized() && !rightPanel.collapsed(),
-          // Maximized + collapsed: flex sibling with no border and zero
-          // width. Without dropping `border-l`, the 1px edge would
-          // render as a ghost line at the canvas's right boundary even
-          // with the panel fully collapsed.
-          [POSTURED_MAXIMIZED_FLUSH]:
-            posture.maximized() && rightPanel.collapsed(),
-          // Tiled + collapsed: drop out of layout. Component stays
-          // mounted (CodeTab's Pierre tree expansion survives) but
-          // the floating shadow doesn't leak as a visual sliver.
-          hidden: !posture.maximized() && rightPanel.collapsed(),
+    <div class="flex-1 min-h-0 min-w-0 flex overflow-hidden relative">
+      <Resizable
+        orientation="horizontal"
+        sizes={
+          rightPanel.collapsed()
+            ? [1, 0]
+            : [1 - rightPanel.panelSize(), rightPanel.panelSize()]
+        }
+        onSizesChange={(sizes) => {
+          if (sizes[1] !== undefined) rightPanel.setPanelSize(sizes[1]);
         }}
-        style={{ width: panelWidthStyle() }}
+        class="flex-1 min-h-0 overflow-hidden"
       >
+        <Resizable.Panel
+          as="div"
+          class={`min-w-0 min-h-0 flex ${props.contentClass ?? ""}`}
+          minSize={0.3}
+        >
+          {props.children}
+        </Resizable.Panel>
         <Show when={!rightPanel.collapsed()}>
-          {/* Pointer-only drag affordance. The prior Corvu
-           *  `Resizable.Handle` carried `role="separator"` but didn't
-           *  wire keyboard arrow-key resize, so taking the role here
-           *  would promise a11y behaviour the gesture surface doesn't
-           *  deliver. Kept as a styled hit-zone with `title` for hover
-           *  discovery — screen-reader users have no productive
-           *  interaction here regardless. */}
-          <div
+          <Resizable.Handle
             data-testid="right-panel-handle"
-            title="Resize inspector panel"
-            class="shrink-0 w-0 relative before:absolute before:inset-y-0 before:-left-1 before:w-2 before:cursor-col-resize before:hover:bg-accent/30 before:transition-colors before:z-10"
-            onPointerDown={onResizeStart}
+            class="shrink-0 w-0 relative before:absolute before:inset-y-0 before:-left-1 before:w-2 before:cursor-col-resize before:hover:bg-accent/30 before:transition-colors"
+            aria-label="Resize inspector panel"
           />
         </Show>
-        <div class="flex-1 min-w-0 min-h-0 overflow-hidden">
+        <Resizable.Panel
+          as="div"
+          data-testid="right-panel-shell"
+          data-maximized={posture.maximized() ? "" : undefined}
+          data-collapsed={rightPanel.collapsed() ? "" : undefined}
+          class="min-w-0 min-h-0 overflow-hidden"
+          classList={{
+            // Tiled + expanded: lift the panel out of flex flow as a
+            // floating rounded card over the canvas grid, anchored
+            // top-right. Mirrors the dock's tiled-mode treatment on the
+            // opposite edge — both surfaces share `POSTURED_TILED_FLOAT`
+            // so a chrome-bar height change ripples through one
+            // constant. Vertical extent diverges intentionally: the
+            // dock uses `max-h-[calc(100vh-22rem)]` (shrink-to-content
+            // for finite row lists), the panel uses `bottom-4` because
+            // the Code tab's file tree benefits from every pixel.
+            [`${POSTURED_TILED_FLOAT} right-4 bottom-4`]:
+              !posture.maximized() && !rightPanel.collapsed(),
+            // Maximized + expanded: flush right sidebar with a hard
+            // left separator. Canvas reflows into the remaining width
+            // via Resizable's flex split.
+            [`${POSTURED_MAXIMIZED_FLUSH} border-l border-edge`]:
+              posture.maximized() && !rightPanel.collapsed(),
+          }}
+          // Tiled mode lifts the panel out of flex flow, so its flex-basis
+          // (which Resizable manages) no longer drives the visible width.
+          // Re-derive an explicit pixel-percentage width from `panelSize`
+          // so the floating card still reflects the persisted fraction.
+          style={
+            !posture.maximized() && !rightPanel.collapsed()
+              ? { width: `${rightPanel.panelSize() * 100}%` }
+              : undefined
+          }
+          minSize={0}
+        >
+          {/* Render unconditionally so CodeTab's selectedPath signal and
+           *  Pierre's tree expansion survive collapse — Resizable already
+           *  shrinks this panel to zero width via sizes=[1,0] above. An
+           *  inner <Show> would unmount and discard that state. */}
           <RightPanel
             terminalId={props.terminalId}
             meta={props.meta}
@@ -187,8 +146,8 @@ const DesktopHost: Component<HostProps> = (props) => {
             onThemeClick={props.onThemeClick}
             visible={!rightPanel.collapsed()}
           />
-        </div>
-      </aside>
+        </Resizable.Panel>
+      </Resizable>
     </div>
   );
 };
