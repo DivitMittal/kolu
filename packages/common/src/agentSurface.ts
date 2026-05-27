@@ -53,7 +53,7 @@ export const agentSurface = defineSurface({
   },
 });
 
-export type AgentSurface = SurfaceTypes<typeof agentSurface.spec>;
+type AgentSurface = SurfaceTypes<typeof agentSurface.spec>;
 export type AgentTerminalMetadata =
   AgentSurface["collections"]["terminalMetadata"]["Value"];
 export type AgentContract = typeof agentSurface.contract;

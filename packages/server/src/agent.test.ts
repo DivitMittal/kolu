@@ -20,10 +20,9 @@
 import { createLoopbackPair } from "@kolu/surface/links/loopback";
 import { createStdioCellsClient } from "@kolu/surface/links/stdio";
 import { inMemoryChannelByName } from "@kolu/surface/server";
-import {
-  agentSurface,
-  type AgentContract,
-  type AgentTerminalMetadata,
+import type {
+  AgentContract,
+  AgentTerminalMetadata,
 } from "kolu-common/agentSurface";
 import type { TerminalId } from "kolu-common/surface";
 import { describe, expect, it } from "vitest";
