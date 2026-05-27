@@ -29,6 +29,7 @@ import {
   surface,
 } from "kolu-common/surface";
 import { WebSocket as PartySocket } from "partysocket";
+import { createSignal } from "solid-js";
 import { toast } from "solid-sonner";
 
 const { protocol, host } = window.location;
@@ -85,6 +86,31 @@ export const recentRepos = (): RecentRepo[] =>
   _activityFeed.value()?.recentRepos ?? [];
 export const recentAgents = (): RecentAgent[] =>
   _activityFeed.value()?.recentAgents ?? [];
+
+/** SSH-config aliases the operator has defined locally — populates the
+ *  "New terminal on remote" host picker. Resolved on first call (one
+ *  RPC per kolu process); the file is parsed server-side. */
+let _sshHostsPromise: Promise<
+  Awaited<ReturnType<typeof client.server.listSshHosts>>
+> | null = null;
+const [sshHostsAcc, setSshHostsAcc] = createSignal<
+  Awaited<ReturnType<typeof client.server.listSshHosts>>
+>([]);
+export function ensureSshHosts(): void {
+  if (_sshHostsPromise !== null) return;
+  _sshHostsPromise = client.server
+    .listSshHosts()
+    .then((hosts) => {
+      setSshHostsAcc(hosts);
+      return hosts;
+    })
+    .catch((err: Error) => {
+      toast.error(`Failed to list SSH hosts: ${err.message}`);
+      _sshHostsPromise = null;
+      return [];
+    });
+}
+export const sshHosts = sshHostsAcc;
 
 const _savedSession = app.cells.session.use({
   onError: (err) =>

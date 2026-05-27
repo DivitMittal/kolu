@@ -24,6 +24,7 @@ import { saveTerminalFile } from "./terminalScratch.ts";
 import { serverHostname, serverProcessId } from "./hostname.ts";
 import { log } from "./log.ts";
 import { pwaIdentityForHostname } from "./pwaIdentity.ts";
+import { listSshHosts } from "./sshConfig.ts";
 import { unwrapGit } from "./gitUnwrap.ts";
 import { surfaceRouter, t } from "./surface.ts";
 import { getTerminalBackendFor } from "./terminalBackend/index.ts";
@@ -69,6 +70,7 @@ export const appRouter = t.router({
       identity: pwaIdentityForHostname(serverHostname),
       processId: serverProcessId,
     })),
+    listSshHosts: t.server.listSshHosts.handler(async () => listSshHosts()),
   },
   terminal: {
     create: t.terminal.create.handler(async ({ input }) =>

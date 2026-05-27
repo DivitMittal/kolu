@@ -54,10 +54,15 @@ import { log } from "./log.ts";
 import { publisher } from "./publisher.ts";
 import { cancelPendingAutosave, getSavedSession } from "./session.ts";
 import { store } from "./state.ts";
-import { getTerminalBackendFor } from "./terminalBackend/index.ts";
+// Import the local backend directly (not via getTerminalBackendFor) to
+// avoid a cyclic import: getTerminalBackendFor → remote.ts → metadata.ts
+// → surface.ts. The parent surface's fs/git streams always read from
+// the local backend today (cross-host Code-tab routing is the next
+// refinement once `meta.location` is plumbed into the stream sources).
+import { localTerminalBackend } from "./terminalBackend/local.ts";
 import { getTerminal, listTerminals } from "./terminal-registry.ts";
 
-const localBackend = getTerminalBackendFor({ kind: "local" });
+const localBackend = localTerminalBackend;
 
 // `t` is the host router builder; both `surfaceRouter` and the raw oRPC
 // handlers in `router.ts` plug procedures into it. Exported so `router.ts`

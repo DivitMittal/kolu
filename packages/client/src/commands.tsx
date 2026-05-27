@@ -23,7 +23,7 @@ import {
 } from "./input/actions";
 import { iconForCommand } from "./ui/agentDisplay";
 import { TerminalIcon } from "./ui/Icons";
-import { recentAgents, recentRepos } from "./wire";
+import { ensureSshHosts, recentAgents, recentRepos, sshHosts } from "./wire";
 
 /** Body component factory for the "Search workspaces" group. Captures
  *  the entries accessor + recency lookup in a closure so the palette
@@ -152,6 +152,11 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
     deps.activate,
   );
 
+  // Prime the SSH host list once — the palette's "New terminal" group
+  // renders dynamically from this signal, so the fetch needs to fire
+  // at least once per kolu session.
+  ensureSshHosts();
+
   return createMemo((): PaletteCommand[] => [
     // --- Workspaces ---
     ...(deps.terminalIds().length > 0
@@ -179,13 +184,19 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
             name: "In current directory",
             onSelect: () => deps.handleCreate(deps.activeMeta()?.cwd),
           },
-          {
-            kind: "action",
-            name: "On sincereintent (remote)",
-            description:
-              "Spawn a terminal on the SSH host `sincereintent` via `kolu --stdio` (requires KOLU_AGENT_FLAKE_REF)",
-            onSelect: () => deps.handleCreateRemote("sincereintent"),
-          },
+          ...sshHosts().map(
+            (h): PaletteItem => ({
+              kind: "action",
+              name: `On ${h.alias} (remote)`,
+              description:
+                h.hostName && h.user
+                  ? `${h.user}@${h.hostName} — via \`ssh ${h.alias} kolu --stdio\` (requires KOLU_AGENT_FLAKE_REF)`
+                  : h.hostName
+                    ? `${h.hostName} — via \`ssh ${h.alias} kolu --stdio\` (requires KOLU_AGENT_FLAKE_REF)`
+                    : `via \`ssh ${h.alias} kolu --stdio\` (requires KOLU_AGENT_FLAKE_REF)`,
+              onSelect: () => deps.handleCreateRemote(h.alias),
+            }),
+          ),
           ...repos.map(
             (r): PaletteValueInput => ({
               kind: "value",

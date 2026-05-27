@@ -132,12 +132,24 @@ export const ServerInfoSchema = z.object({
   processId: z.string().uuid(),
 });
 
+/** One entry in the ssh-config-derived host picker. `hostName` /
+ *  `user` are shown as secondary lines in the palette so aliases that
+ *  point at the same host stay distinguishable. */
+export const SshHostSchema = z.object({
+  alias: z.string(),
+  hostName: z.string().optional(),
+  user: z.string().optional(),
+});
+
 // ── The contract ──────────────────────────────────────────────────────
 
 export const contract = oc.router({
   ...surface.contract,
   server: {
     info: oc.output(ServerInfoSchema),
+    /** SSH-config aliases the operator has defined locally. Used by
+     *  the client's "New terminal on remote" host picker. */
+    listSshHosts: oc.output(z.array(SshHostSchema)),
   },
   terminal: {
     create: oc.input(TerminalCreateInputSchema).output(TerminalInfoSchema),
