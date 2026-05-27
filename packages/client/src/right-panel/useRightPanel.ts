@@ -133,11 +133,11 @@ export function useRightPanel() {
     },
     /** Vertical split fraction inside the Code tab — tree pane occupies
      *  this share, content pane gets the rest. Persisted across reload. */
-    codeTabTreeSize: () => rp().codeTabTreeSize,
+    codeTabTreeSize: () =>
+      Math.min(MAX_TREE_SIZE, Math.max(MIN_TREE_SIZE, rp().codeTabTreeSize)),
     setCodeTabTreeSize: (size: number) => {
-      if (size >= MIN_TREE_SIZE && size <= MAX_TREE_SIZE) {
-        updatePreferences({ rightPanel: { codeTabTreeSize: size } });
-      }
+      const clamped = Math.min(MAX_TREE_SIZE, Math.max(MIN_TREE_SIZE, size));
+      updatePreferences({ rightPanel: { codeTabTreeSize: clamped } });
     },
 
     // ── Mobile drawer (session-local) ────────────────────────────────
