@@ -40,7 +40,7 @@ import { CommentTextSurface } from "../comments/CommentTextSurface";
 import { useComposer } from "../comments/composerState";
 import { useCommentScrollRequest } from "../comments/scrollRequest";
 import { useColorScheme } from "../settings/useColorScheme";
-import { app } from "../wire";
+import { app, client } from "../wire";
 import { FileBrowseIcon, FileDiffIcon, GitBranchIcon } from "../ui/Icons";
 import {
   renderTreeContextMenu,
@@ -51,7 +51,7 @@ import {
   pierreIconConfig,
   pierreTreesStyle,
 } from "../ui/pierreTheme";
-import { resolveLineRefPath } from "../ui/lineRef";
+import { lineRefCandidates, resolveLineRefPath } from "../ui/lineRef";
 import BrowseFileDispatcher from "./BrowseFileDispatcher";
 import CodeMenuFrame from "./CodeMenuFrame";
 import {
@@ -227,9 +227,16 @@ const CodeTab: Component<{
   // request here lets `selectedRange` derive its value without
   // re-running `resolveLineRefPath` (single resolution site per
   // request).
+  //
+  // `outOfTree` distinguishes selections that came from the disk-probe
+  // fallback (the gitignored / freshly-created case below) from those
+  // that matched the live `fsListAll` set. The membership-clear effect
+  // further down reads this so it doesn't wipe a selection that the
+  // tree filter correctly excludes.
   const [handled, setHandled] = createSignal<{
     request: OpenInCodeTabRequest;
     resolvedPath: string | null;
+    outOfTree: boolean;
   } | null>(null);
 
   // Honor every `openInCodeTab` request — terminal file-ref clicks,
@@ -239,6 +246,15 @@ const CodeTab: Component<{
   // a request fired during boot would toast "not found" on a path
   // that just hasn't been enumerated yet. `openInCodeTab` flips the
   // panel to browse mode itself; this effect only sets `selectedPath`.
+  //
+  // Two-stage resolution: first against the tree's file list (cheap,
+  // sync, and preserves the basename-uniqueness fallback for compiler
+  // output like `Foo.hs:42`); on miss, probe each composed candidate
+  // against the server's filesystem via `client.git.fsExists`. The
+  // second stage opens gitignored files (build artifacts, scratch
+  // HTML, log files) and freshly-created untracked files the stream
+  // snapshot hasn't picked up yet — both legitimate click targets the
+  // tree filter intentionally hides.
   createEffect(
     on(
       () => {
@@ -258,17 +274,50 @@ const CodeTab: Component<{
           cwd: req.cwd,
           repoPaths: paths,
         });
-        if (rel === null) {
-          toast.error(`File reference not found: ${req.ref.path}`);
-          setHandled({ request: req, resolvedPath: null });
+        if (rel !== null) {
+          setSelectedPath(rel);
+          setHandled({ request: req, resolvedPath: rel, outOfTree: false });
           return;
         }
-        setSelectedPath(rel);
-        setHandled({ request: req, resolvedPath: rel });
+        // Tree miss — fall through to a disk probe before giving up.
+        // Stay synchronous inside the effect body (SolidJS reactive
+        // tracking ends at the first `await`); fire the probe and
+        // resolve in `.then`, re-checking that this request is still
+        // the latest before writing so a superseding click can't get
+        // stomped by a stale fallback result.
+        setHandled({ request: req, resolvedPath: null, outOfTree: false });
+        void resolveByDiskProbe(req, repo);
       },
       { defer: true },
     ),
   );
+
+  async function resolveByDiskProbe(
+    req: OpenInCodeTabRequest,
+    repo: string,
+  ): Promise<void> {
+    const cands = lineRefCandidates({
+      rawPath: req.ref.path,
+      repoRoot: repo,
+      cwd: req.cwd,
+    });
+    for (const cand of cands) {
+      const { exists } = await client.git
+        .fsExists({ repoPath: repo, filePath: cand })
+        .catch((err: Error) => {
+          toast.error(`File reference probe failed: ${err.message}`);
+          return { exists: false };
+        });
+      if (pendingOpen() !== req) return;
+      if (exists) {
+        setSelectedPath(cand);
+        setHandled({ request: req, resolvedPath: cand, outOfTree: true });
+        return;
+      }
+    }
+    if (pendingOpen() !== req) return;
+    toast.error(`File reference not found: ${req.ref.path}`);
+  }
 
   // Highlight range derives from the consume-once record: if the
   // request we last handled matches the latest pending one AND its
@@ -336,7 +385,18 @@ const CodeTab: Component<{
         const sk = slotKey();
         const isPending = isDiffView() ? status.pending() : allPaths.pending();
         const paths = treePaths();
-        return { s, sk, pathExists: !s || isPending || paths.includes(s) };
+        const h = handled();
+        // Out-of-tree selections (gitignored / untracked files opened
+        // via the fsExists fallback) intentionally won't appear in
+        // `treePaths()` — the tree filter is correct, but their
+        // presence in `selectedPath` is also correct. Treat the
+        // current handled record as authoritative for that case.
+        const outOfTree = h !== null && h.outOfTree && h.resolvedPath === s;
+        return {
+          s,
+          sk,
+          pathExists: !s || isPending || paths.includes(s) || outOfTree,
+        };
       },
       (cur, prev) => {
         if (prev && prev.sk !== cur.sk) return;

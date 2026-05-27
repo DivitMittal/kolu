@@ -15,7 +15,7 @@ import { loadCodexTranscript } from "kolu-codex";
 import type { Transcript, TranscriptPr } from "kolu-common/transcript";
 import { TerminalNotFoundError } from "kolu-common/errors";
 import { rejectionFor, sizeRejectionFor } from "kolu-common/upload";
-import { worktreeCreate, worktreeRemove } from "kolu-git";
+import { fsExists, worktreeCreate, worktreeRemove } from "kolu-git";
 import { prValue } from "kolu-github/schemas";
 import { loadOpenCodeTranscript } from "kolu-opencode";
 import { transcriptToHtml } from "kolu-transcript-html";
@@ -285,6 +285,12 @@ export const appRouter = t.router({
     worktreeRemove: t.git.worktreeRemove.handler(async ({ input }) => {
       log.info({ worktree: input.worktreePath }, "worktree remove");
       unwrapGit(await worktreeRemove(input.worktreePath, log));
+    }),
+    fsExists: t.git.fsExists.handler(async ({ input }) => {
+      const exists = unwrapGit(
+        await fsExists(input.repoPath, input.filePath, log),
+      );
+      return { exists };
     }),
   },
 });
