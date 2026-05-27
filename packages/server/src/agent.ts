@@ -69,6 +69,16 @@ export async function runAgent(): Promise<void> {
     log.fatal({ reason }, "unhandled rejection");
     process.exit(1);
   });
+  // Graceful shutdown — parent's HostSession.teardown sends SIGTERM
+  // when it disposes a session. Log the signal before exit so the
+  // parent's forwarded `[host:<host> remote]` trace shows the agent
+  // closing intentionally, not vanishing.
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(sig, () => {
+      log.info({ signal: sig }, "agent shutting down");
+      process.exit(0);
+    });
+  }
 
   log.info({ pid: process.pid }, "agent starting");
 
