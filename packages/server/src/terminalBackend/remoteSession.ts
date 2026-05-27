@@ -128,34 +128,10 @@ function getDrvPath(host: string): Promise<string> {
   return cached;
 }
 
-/** Get-or-create the `HostSession<AgentContract>` for a host. The
- *  drv-path resolution kicks off asynchronously inside `getHostSession`
- *  itself — until then the session is in `copying` state, which
- *  `pin()` callers can observe via `onState`. */
-export function getKoluHostSession(host: string): HostSession<AgentContract> {
-  let session = sessions.get(host);
-  if (!session) {
-    // `getHostSession` requires drvPath synchronously. Resolve via
-    // a then-passing wrapper: we hand it a placeholder that becomes
-    // the real drvPath once nix eval resolves. The current
-    // `getHostSession` signature takes drvPath as a value, so until
-    // we resolve it, we can't construct the session.
-    //
-    // Workaround: construct a thunk via async IIFE that resolves
-    // drvPath and then constructs the underlying session. We adapt
-    // by deferring the session-build inside a small Promise wrapper.
-    // For simplicity in this MVP we _block on_ the drvPath resolution
-    // here — first call to `getKoluHostSession(host)` is async via
-    // the wrapper below.
-    throw new Error(
-      "getKoluHostSession requires async drvPath resolution — use getKoluHostSessionAsync",
-    );
-  }
-  return session;
-}
-
-/** Async variant — resolves drvPath then constructs / returns the
- *  cached session. Use this at terminal-spawn time. */
+/** Resolve drvPath then construct (or return cached) `HostSession`
+ *  for a host. The drv-path resolution is async; the session itself
+ *  is cached synchronously by host so repeated calls collapse onto
+ *  one underlying ssh subprocess. */
 export async function getKoluHostSessionAsync(
   host: string,
 ): Promise<HostSession<AgentContract>> {
@@ -169,12 +145,4 @@ export async function getKoluHostSessionAsync(
   });
   sessions.set(host, session);
   return session;
-}
-
-/** Drop the cached session for a host (e.g. on teardown). The caller
- *  is responsible for `session.destroy()` if needed — this just
- *  removes the cache entry. */
-export function forgetKoluHostSession(host: string): void {
-  sessions.delete(host);
-  drvPathCache.delete(host);
 }
