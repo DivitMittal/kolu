@@ -232,7 +232,13 @@ export function setTerminalIntent(id: TerminalId, intent: string): void {
   });
 }
 
-/** Kill and remove all terminals. Used by tests to reset server state between scenarios. */
+/** Kill and remove every terminal regardless of backend. Used by
+ *  tests to reset server state between scenarios. Iterates the
+ *  registry and dispatches each kill to the owning backend by
+ *  `entry.location` so remote-host PTYs get the kill RPC sent to
+ *  their agents instead of leaking. */
 export function killAllTerminals(): void {
-  getTerminalBackendFor({ kind: "local" }).killAllTerminals();
+  for (const [id, entry] of [...terminalEntries()]) {
+    getTerminalBackendFor(entry.location).killTerminal(id);
+  }
 }

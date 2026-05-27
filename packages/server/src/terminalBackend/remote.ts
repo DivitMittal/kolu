@@ -108,18 +108,33 @@ export class RemoteTerminalBackend implements TerminalBackend {
     this.git = buildRemoteGit(this);
   }
 
-  /** Get a client for one RPC call. Pins the session — the refcount
-   *  bump persists for parent lifetime per `@kolu/surface-nix-host`'s
-   *  contract (acquire/release is for scoped temporary use). Calling
-   *  `pin()` is idempotent — the bumped refcount is shared across the
-   *  backend's terminals on this host. */
+  /** Cached pinned client. `HostSession.pin()` increments a refcount
+   *  per call and the bridge code (parent-lifetime) is supposed to
+   *  call it ONCE — calling on every RPC would grow refCount
+   *  unboundedly and block the session's reconnect-on-disconnect
+   *  teardown. Cache the resolved client once per backend; every
+   *  subsequent RPC reuses it. */
+  private clientPromise: Promise<AgentClient<AgentContract>> | null = null;
+  private connectedAcked = false;
+
+  /** Run one RPC against the pinned client. Pin happens at most once
+   *  per backend (per host). `markConnected()` runs at most once
+   *  after the first successful RPC. */
   async callAgent<T>(
     fn: (client: AgentClient<AgentContract>) => Promise<T>,
   ): Promise<T> {
-    const session = await getKoluHostSessionAsync(this.host);
-    const client = await session.pin();
+    if (!this.clientPromise) {
+      this.clientPromise = getKoluHostSessionAsync(this.host).then((s) =>
+        s.pin(),
+      );
+    }
+    const client = await this.clientPromise;
     const result = await fn(client);
-    session.markConnected();
+    if (!this.connectedAcked) {
+      const session = await getKoluHostSessionAsync(this.host);
+      session.markConnected();
+      this.connectedAcked = true;
+    }
     return result;
   }
 
@@ -161,7 +176,17 @@ export class RemoteTerminalBackend implements TerminalBackend {
     this.records.set(id, { abort });
 
     void this.spawnAsync(id, opts, entry, handle, abort.signal).catch((err) => {
-      tlog.error({ err }, "remote spawn failed");
+      tlog.error({ err }, "remote spawn failed — cleaning up local registry");
+      // The tile rendered with pid=0 and writes were silently
+      // dropping `remote write failed` warns. Tear the entry out
+      // synchronously so the UI shows the failure instead of a
+      // stuck "Connecting…" tile that the user has to manually kill.
+      abort.abort();
+      this.records.delete(id);
+      unregisterTerminal(id);
+      surfaceCtx.cells.terminalList.set(listTerminals());
+      surfaceCtx.collections.terminalMetadata.remove(id);
+      terminalsDirtyChannel.publish({});
     });
 
     return entry.info;
@@ -175,18 +200,17 @@ export class RemoteTerminalBackend implements TerminalBackend {
     signal: AbortSignal,
   ): Promise<void> {
     const tlog = log.child({ host: this.host, terminal: id });
-    const session = await getKoluHostSessionAsync(this.host);
-    const client = await session.pin();
-    const info = await client.surface.terminal.spawn({
-      id,
-      cwd: opts.cwd,
-      parentId: opts.parentId,
-      initialMetadata: opts.initialMetadata,
-    });
+    const info = await this.callAgent((c) =>
+      c.surface.terminal.spawn({
+        id,
+        cwd: opts.cwd,
+        parentId: opts.parentId,
+        initialMetadata: opts.initialMetadata,
+      }),
+    );
     handle.pid = info.pid;
     entry.info = { id, pid: info.pid };
     surfaceCtx.cells.terminalList.set(listTerminals());
-    session.markConnected();
     tlog.info({ pid: info.pid }, "remote spawn ready");
 
     // Fan out the agent's per-terminal streams into the kolu-server's
@@ -195,6 +219,7 @@ export class RemoteTerminalBackend implements TerminalBackend {
     // remote later) subscribes to the same `terminalChannels.X(id)`
     // bus regardless of backend. Stream clients expose `.get(input,
     // {signal})` per the surface framework's convention.
+    const client = await this.callAgent(async (c) => c);
     void this.pumpStream(
       () => client.surface.terminalData.get({ id }, { signal }),
       id,
