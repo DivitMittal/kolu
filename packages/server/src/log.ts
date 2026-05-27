@@ -1,8 +1,8 @@
 /** Pino logger — JSON in production, pretty-printed in development.
  *
  * Default level is `info`. Override via `LOG_LEVEL` env var (e.g. `debug`,
- * `warn`, `trace`). The CLI's `--verbose` flag is a hard override applied
- * after construction in `index.ts` and trumps both.
+ * `warn`, `trace`). The HTTP server's `--verbose` flag is a hard override
+ * applied after construction in `httpServer.ts` and trumps both.
  *
  * Every log line carries `serverId` (the randomUUID from `hostname.ts`) so
  * post-mortem log grepping can pin a line to a specific process run — the
