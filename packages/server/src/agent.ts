@@ -80,7 +80,9 @@ export async function runAgent(): Promise<void> {
     });
   }
 
-  log.info({ pid: process.pid }, "agent starting");
+  // `pid` already lives on `baseAgent` (log.ts) — pino adds it to every
+  // line. Passing it again here would produce duplicate JSON keys.
+  log.info("agent starting");
 
   // Empty store for `terminalMetadata` — slice 2d populates this from
   // the agent's `LocalTerminalBackend` once that wiring lands. The
