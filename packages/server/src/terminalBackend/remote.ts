@@ -46,12 +46,12 @@ import { getScreenText } from "kolu-pty";
 // kolu-pty's load pattern (createRequire) so types come from the
 // ambient `import type` declarations above.
 const require_ = createRequire(import.meta.url);
-const { Terminal } =
-  require_("@xterm/headless") as typeof import("@xterm/headless");
-const { SerializeAddon } =
-  require_(
-    "@xterm/addon-serialize",
-  ) as typeof import("@xterm/addon-serialize");
+const { Terminal } = require_(
+  "@xterm/headless",
+) as typeof import("@xterm/headless");
+const { SerializeAddon } = require_(
+  "@xterm/addon-serialize",
+) as typeof import("@xterm/addon-serialize");
 import type {
   AgentContract,
   AgentTerminalMetadata,
