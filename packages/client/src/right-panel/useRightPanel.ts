@@ -31,10 +31,16 @@ import { createStore, produce } from "solid-js/store";
 import { useTerminalStore } from "../terminal/useTerminalStore";
 import { client, preferences, updatePreferences } from "../wire";
 
-const MIN_PANEL_SIZE = 0.05;
+/** Bounds for the desktop right panel width as a fraction of the layout
+ *  container. Floor keeps the panel usable without forcing the user to
+ *  collapse to hide it; ceiling mirrors the prior Resizable's
+ *  `minSize={0.3}` on the canvas side. Enforced inside `setPanelSize`
+ *  so every writer — drag gesture, future keyboard resize, session
+ *  restore — funnels through one clamp. */
+const MIN_PANEL_FRACTION = 0.2;
+const MAX_PANEL_FRACTION = 0.7;
 /** Lower bound for the Code-tab vertical split — keep the tree and content
- *  panes from collapsing to invisible via drag. Mirrors `MIN_PANEL_SIZE`'s
- *  role for the horizontal split. */
+ *  panes from collapsing to invisible via drag. */
 const MIN_TREE_SIZE = 0.1;
 const MAX_TREE_SIZE = 0.9;
 
@@ -116,7 +122,11 @@ export function useRightPanel() {
     collapsePanel: () => updatePreferences({ rightPanel: { collapsed: true } }),
     expandPanel: () => updatePreferences({ rightPanel: { collapsed: false } }),
     setPanelSize: (size: number) => {
-      if (size > MIN_PANEL_SIZE) updatePreferences({ rightPanel: { size } });
+      const clamped = Math.min(
+        MAX_PANEL_FRACTION,
+        Math.max(MIN_PANEL_FRACTION, size),
+      );
+      updatePreferences({ rightPanel: { size: clamped } });
     },
     /** Vertical split fraction inside the Code tab — tree pane occupies
      *  this share, content pane gets the rest. Persisted across reload. */

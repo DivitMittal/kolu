@@ -42,13 +42,6 @@ import { pendingOpen } from "./openInCodeTab";
 import RightPanel from "./RightPanel";
 import { useRightPanel } from "./useRightPanel";
 
-// Resize bounds on the desktop right panel as a fraction of the layout
-// container. Floor mirrors the prior Resizable's `minSize={0.3}` on the
-// canvas side (panel can't exceed 70%); the 20% floor keeps the panel
-// usable without forcing the user to collapse to hide it.
-const MIN_PANEL_FRACTION = 0.2;
-const MAX_PANEL_FRACTION = 0.7;
-
 type HostProps = {
   children: JSX.Element;
   /** Active terminal id. Used by the Code tab's iframe-preview path to
@@ -99,11 +92,7 @@ const DesktopHost: Component<HostProps> = (props) => {
 
     const onMove = (ev: PointerEvent) => {
       const delta = (startX - ev.clientX) / cw;
-      const next = Math.min(
-        MAX_PANEL_FRACTION,
-        Math.max(MIN_PANEL_FRACTION, startSize + delta),
-      );
-      rightPanel.setPanelSize(next);
+      rightPanel.setPanelSize(startSize + delta);
     };
     const onUp = (ev: PointerEvent) => {
       handle.releasePointerCapture(ev.pointerId);
