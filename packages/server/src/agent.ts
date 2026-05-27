@@ -51,11 +51,18 @@ import {
   subscribeFileChange,
   subscribeRepoChange,
 } from "kolu-git";
+import type { GitInfo } from "kolu-git/schemas";
 import { type PtyHandle, spawnPty } from "kolu-pty";
 import pkg from "../package.json" with { type: "json" };
 import { unwrapGit } from "./gitUnwrap.ts";
 import { ensureKoluRoot, koluShellDir } from "./koluRoot.ts";
 import { log } from "./log.ts";
+import {
+  type ProviderHooks,
+  type ProviderMeta,
+  type ProviderRecord,
+  startProviders,
+} from "./terminalBackend/providers.ts";
 
 export type AgentImplDeps = ImplementSurfaceDeps<typeof agentSurface.spec>;
 
@@ -67,6 +74,14 @@ interface AgentTerminal {
   cwd: Channel<string>;
   title: Channel<string>;
   commandRun: Channel<string>;
+  /** Git-info bus the agent-side git watcher publishes onto and the
+   *  github-PR watcher consumes — kept on the terminal record so the
+   *  provider DAG can be torn down with the rest. */
+  git: Channel<GitInfo | null>;
+  /** Ephemeral basename of the agent binary at the foreground right
+   *  now; written by the agent-command tracker, read by detectors. */
+  currentAgent: string | null;
+  stopProviders: () => void;
 }
 
 /** Wrap an agent-surface implementation in `serveOverStdio`. Centralises
@@ -202,6 +217,7 @@ export function buildAgentDeps(opts: {
           const cwdCh = inMemoryChannel<string>();
           const title = inMemoryChannel<string>();
           const commandRun = inMemoryChannel<string>();
+          const gitCh = inMemoryChannel<GitInfo | null>();
           const handle = spawnPty(
             tlog,
             input.id,
@@ -212,7 +228,9 @@ export function buildAgentDeps(opts: {
               onData: (chunk) => data.publish(chunk),
               onExit: (exitCode) => {
                 tlog.info({ exitCode }, "exited");
-                if (terminals.has(input.id)) {
+                const t = terminals.get(input.id);
+                if (t) {
+                  t.stopProviders();
                   terminals.delete(input.id);
                   metadataSnapshot.delete(input.id);
                 }
@@ -233,7 +251,7 @@ export function buildAgentDeps(opts: {
           );
           const meta = seedMetadata(handle.cwd);
           const info: TerminalInfo = { id: input.id, pid: handle.pid };
-          terminals.set(input.id, {
+          const agentTerminal: AgentTerminal = {
             info,
             handle,
             meta,
@@ -241,8 +259,35 @@ export function buildAgentDeps(opts: {
             cwd: cwdCh,
             title,
             commandRun,
-          });
+            git: gitCh,
+            currentAgent: null,
+            stopProviders: () => {},
+          };
+          terminals.set(input.id, agentTerminal);
           publishMetadata(input.id, meta);
+
+          // Start the full per-terminal provider DAG (foreground
+          // process observer, agent-command tracker, git watcher,
+          // github PR watcher, claude/codex/opencode detectors).
+          // Each provider mutates `agentTerminal.meta` in-place and
+          // republishes through `publishMetadata` so the parent's
+          // `mirrorRemoteCollection` sees the update.
+          //
+          // The provider DAG reads files (git/sqlite/JSONL) that
+          // live on the REMOTE machine — running on the agent
+          // means detection sees the real state, not a stale
+          // parent-side guess.
+          agentTerminal.stopProviders = startProviders(
+            providerRecordFor(agentTerminal),
+            input.id,
+            {
+              cwd: cwdCh,
+              title,
+              commandRun,
+              git: gitCh,
+            },
+            buildProviderHooks(agentTerminal, input.id, publishMetadata),
+          );
           tlog.info({ pid: handle.pid }, "spawned");
           return info;
         },
@@ -299,6 +344,48 @@ export function buildAgentDeps(opts: {
           ),
       },
     },
+  };
+}
+
+/** Adapt an `AgentTerminal` to the `ProviderRecord` shape the provider
+ *  DAG consumes. The mutable `meta` and `currentAgent` are aliased
+ *  (not cloned) so provider writes land back on the original
+ *  agent-side record. */
+function providerRecordFor(t: AgentTerminal): ProviderRecord {
+  // ProviderMeta is the union of the fields the providers actually
+  // touch; AgentTerminalMetadata adds connectionState (parent-only)
+  // and location (which the agent always writes as `{kind:"local"}`).
+  // The cast is sound — providers never read fields that
+  // AgentTerminalMetadata is missing.
+  return {
+    ptyHandle: t.handle,
+    meta: t.meta as unknown as ProviderMeta,
+    get currentAgent() {
+      return t.currentAgent;
+    },
+    set currentAgent(v: string | null) {
+      t.currentAgent = v;
+    },
+  };
+}
+
+/** Build `ProviderHooks` for one agent terminal. The two update verbs
+ *  mutate `agentTerminal.meta` then call `publishMetadata` so the
+ *  parent's `mirrorRemoteCollection` sees the change. `trackRecentRepo`/
+ *  `trackRecentAgent` stay undefined — the parent owns the user-facing
+ *  activity feed. */
+function buildProviderHooks(
+  agentTerminal: AgentTerminal,
+  terminalId: TerminalId,
+  publishMetadata: (id: TerminalId, meta: AgentTerminalMetadata) => void,
+): ProviderHooks {
+  const apply = (mutate: (m: ProviderMeta) => void) => {
+    mutate(agentTerminal.meta as unknown as ProviderMeta);
+    publishMetadata(terminalId, agentTerminal.meta);
+  };
+  return {
+    updateServerMetadata: (_record, mutate) => apply(mutate),
+    updateServerLiveMetadata: (_record, mutate) => apply(mutate),
   };
 }
 
