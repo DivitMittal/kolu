@@ -59,6 +59,12 @@ const DesktopHost: Component<HostProps> = (props) => {
   const rightPanel = useRightPanel();
   const posture = useViewPosture();
   const [containerEl, setContainerEl] = createSignal<HTMLDivElement>();
+  // Held across gestures so a re-entry (touch+mouse cross-fire, retriggered
+  // pointerdown before the prior `pointerup` lands) aborts the previous
+  // listener pair before installing a new one. Matches the pattern every
+  // other `capturePointerGesture` caller uses (`TerminalCanvas` tile
+  // resize, `viewport/gestures.ts` canvas pan, `minimapGestures.ts`).
+  let abortResize: AbortController | null = null;
 
   // Producer arrivals (terminal `path:line` taps, comments-tray jumps)
   // uncollapse the side panel — visibility used to live inside
@@ -89,15 +95,19 @@ const DesktopHost: Component<HostProps> = (props) => {
     if (cw <= 0) return;
     const startX = e.clientX;
     const startSize = rightPanel.panelSize();
+    abortResize?.abort();
+    abortResize = new AbortController();
     capturePointerGesture(
       {
         onMove: (ev) => {
           const delta = (startX - ev.clientX) / cw;
           rightPanel.setPanelSize(startSize + delta);
         },
-        onEnd: () => {},
+        onEnd: () => {
+          abortResize = null;
+        },
       },
-      new AbortController(),
+      abortResize,
     );
   };
 
