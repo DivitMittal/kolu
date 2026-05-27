@@ -5,6 +5,7 @@ import { terminalKey } from "kolu-common/terminalKey";
 import { type Component, createMemo, createSignal, For, Show } from "solid-js";
 import { ACTIONS } from "./input/actions";
 import { formatKeybind } from "./input/keyboard";
+import HostChip from "./terminal/HostChip";
 import Kbd from "./ui/Kbd";
 import { surface } from "./ui/Surface";
 import Toggle from "./ui/Toggle";
@@ -122,8 +123,11 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
                           <For each={group.terminals}>
                             {(t) => (
                               <div title={t.cwd}>
-                                <div class="text-sm text-fg-2 truncate leading-snug">
-                                  {terminalKey(t).label}
+                                <div class="text-sm text-fg-2 truncate leading-snug flex items-center gap-1">
+                                  <HostChip location={t.location} />
+                                  <span class="truncate">
+                                    {terminalKey(t).label}
+                                  </span>
                                 </div>
                                 <Show
                                   when={
