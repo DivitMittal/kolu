@@ -9,18 +9,55 @@
  * `--stdio` is detected (lesson #4).
  *
  * Slice 2b ships `system.heartbeat` only; the terminal/fs/git
- * procedures arrive in slices 2d/2e and plug into the same router.
+ * procedures arrive in slices 2d/2e and plug into the same router
+ * via `serveAgent(deps, opts)`.
  */
 
 import { implement } from "@orpc/server";
-import { serveOverStdio } from "@kolu/surface/peer-server";
-import { implementSurface, inMemoryChannelByName } from "@kolu/surface/server";
+import {
+  serveOverStdio,
+  type ServeOverStdioOptions,
+  type StdioTransport,
+} from "@kolu/surface/peer-server";
+import {
+  implementSurface,
+  type ImplementSurfaceDeps,
+  inMemoryChannelByName,
+} from "@kolu/surface/server";
 import {
   agentSurface,
   type AgentTerminalMetadata,
 } from "kolu-common/agentSurface";
 import type { TerminalId } from "kolu-common/surface";
 import { log } from "./log.ts";
+
+export type AgentImplDeps = ImplementSurfaceDeps<typeof agentSurface.spec>;
+
+/** Wrap an agent-surface implementation in `serveOverStdio`. Centralises
+ *  the load-bearing `implement(contract).router({...fragment.router})`
+ *  re-wrap (which flattens the `surface.` prefix so requests don't 404)
+ *  and the `router as any` cast that oRPC's `Router<any, T>` input type
+ *  forces on `implementSurface`'s `Lazy<Router>` spread. Both the real
+ *  agent (this module's `runAgent`) and the loopback test
+ *  (`agent.test.ts`) route through this — the wire-wrap chunk stays
+ *  identical across slice 2d's backend swap, so factoring it out keeps
+ *  the cast + biome-ignore in exactly one place. */
+export function serveAgent(
+  deps: AgentImplDeps,
+  opts: Omit<ServeOverStdioOptions<object>, "router"> & {
+    transport?: StdioTransport;
+  } = {},
+): Promise<void> {
+  const fragment = implementSurface(agentSurface, deps);
+  const router = implement(agentSurface.contract).router({
+    ...fragment.router,
+  });
+  return serveOverStdio({
+    // biome-ignore lint/suspicious/noExplicitAny: implementSurface's Lazy<Router> spread isn't accepted by oRPC's Router<any, T> input type; runtime shape is valid (same pattern as kolu's main server.ts and the remote-process-monitor demo).
+    router: router as any,
+    ...opts,
+  });
+}
 
 export async function runAgent(): Promise<void> {
   log.info({ pid: process.pid }, "agent starting");
@@ -32,39 +69,28 @@ export async function runAgent(): Promise<void> {
   // an empty snapshot then waits for upserts).
   const terminalMetadataSnapshot = new Map<TerminalId, AgentTerminalMetadata>();
 
-  const fragment = implementSurface(agentSurface, {
-    channel: inMemoryChannelByName(),
-    collections: {
-      terminalMetadata: {
-        readAll: () => terminalMetadataSnapshot,
-        upsert: (key, value) => {
-          terminalMetadataSnapshot.set(key, value);
-        },
-        remove: (key) => {
-          terminalMetadataSnapshot.delete(key);
-        },
-      },
-    },
-    procedures: {
-      system: {
-        heartbeat: async () => ({ ok: true, pid: process.pid }),
-      },
-    },
-  });
-
-  // `implementSurface` returns a fragment shaped `{ surface: ... }`;
-  // wrap once via `implement(contract).router(...)` so the path
-  // doesn't double-prefix (every request would 404 otherwise — same
-  // footgun the remote-process-monitor demo documents).
-  const router = implement(agentSurface.contract).router({
-    ...fragment.router,
-  });
-
   log.info("serving agent surface over stdio");
-  await serveOverStdio({
-    // biome-ignore lint/suspicious/noExplicitAny: implementSurface's Lazy<Router> spread isn't accepted by oRPC's Router<any, T> input type; runtime shape is valid (same pattern as kolu's main server.ts and the remote-process-monitor demo).
-    router: router as any,
-    onFirstRequest: () => log.info("first RPC received — link is live"),
-  });
+  await serveAgent(
+    {
+      channel: inMemoryChannelByName(),
+      collections: {
+        terminalMetadata: {
+          readAll: () => terminalMetadataSnapshot,
+          upsert: (key, value) => {
+            terminalMetadataSnapshot.set(key, value);
+          },
+          remove: (key) => {
+            terminalMetadataSnapshot.delete(key);
+          },
+        },
+      },
+      procedures: {
+        system: {
+          heartbeat: async () => ({ ok: true, pid: process.pid }),
+        },
+      },
+    },
+    { onFirstRequest: () => log.info("first RPC received — link is live") },
+  );
   log.info("stdin closed — agent exiting");
 }

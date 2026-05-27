@@ -4,7 +4,9 @@
  * `ssh`. Same framing as the real wire, so this proves:
  *
  *   - `agentSurface` is implementable end-to-end with `implementSurface`
- *     + the `implement(contract).router(...)` re-wrap.
+ *     + the `implement(contract).router(...)` re-wrap (factored into
+ *     `serveAgent` so both this test and the real agent share one
+ *     wire-wrap chunk).
  *   - `system.heartbeat` round-trips through `serveOverStdio` and
  *     `createStdioCellsClient` — i.e. the parent can drive the agent.
  *   - `terminalMetadata.keys({})` yields an empty snapshot first
@@ -15,11 +17,9 @@
  * (metadata mirroring) extend this test against the same wire.
  */
 
-import { implement } from "@orpc/server";
-import { createStdioCellsClient } from "@kolu/surface/links/stdio";
 import { createLoopbackPair } from "@kolu/surface/links/loopback";
-import { serveOverStdio } from "@kolu/surface/peer-server";
-import { implementSurface, inMemoryChannelByName } from "@kolu/surface/server";
+import { createStdioCellsClient } from "@kolu/surface/links/stdio";
+import { inMemoryChannelByName } from "@kolu/surface/server";
 import {
   agentSurface,
   type AgentContract,
@@ -27,10 +27,11 @@ import {
 } from "kolu-common/agentSurface";
 import type { TerminalId } from "kolu-common/surface";
 import { describe, expect, it } from "vitest";
+import { type AgentImplDeps, serveAgent } from "./agent.ts";
 
 describe("kolu --stdio agent surface (loopback)", () => {
   it("round-trips system.heartbeat", async () => {
-    const { router, pair, serveDone } = await startLoopbackAgent();
+    const { pair, serveDone } = startLoopbackAgent();
     try {
       const client = createStdioCellsClient<AgentContract>({
         read: pair.client.read,
@@ -40,7 +41,6 @@ describe("kolu --stdio agent surface (loopback)", () => {
       expect(reply.ok).toBe(true);
       expect(reply.pid).toBe(process.pid);
     } finally {
-      void router;
       pair.client.write.end();
       pair.server.write.end();
       await serveDone;
@@ -48,7 +48,7 @@ describe("kolu --stdio agent surface (loopback)", () => {
   });
 
   it("terminalMetadata.keys yields an empty snapshot first", async () => {
-    const { pair, serveDone } = await startLoopbackAgent();
+    const { pair, serveDone } = startLoopbackAgent();
     try {
       const client = createStdioCellsClient<AgentContract>({
         read: pair.client.read,
@@ -80,9 +80,9 @@ describe("kolu --stdio agent surface (loopback)", () => {
   });
 });
 
-async function startLoopbackAgent() {
+function startLoopbackAgent() {
   const snapshot = new Map<TerminalId, AgentTerminalMetadata>();
-  const fragment = implementSurface(agentSurface, {
+  const deps: AgentImplDeps = {
     channel: inMemoryChannelByName(),
     collections: {
       terminalMetadata: {
@@ -100,15 +100,8 @@ async function startLoopbackAgent() {
         heartbeat: async () => ({ ok: true, pid: process.pid }),
       },
     },
-  });
-  const router = implement(agentSurface.contract).router({
-    ...fragment.router,
-  });
+  };
   const pair = createLoopbackPair();
-  const serveDone = serveOverStdio({
-    // biome-ignore lint/suspicious/noExplicitAny: same Lazy<Router> cast as agent.ts.
-    router: router as any,
-    transport: pair.server,
-  });
-  return { router, pair, serveDone };
+  const serveDone = serveAgent(deps, { transport: pair.server });
+  return { pair, serveDone };
 }
