@@ -15,6 +15,7 @@
     "@hono/node-ws": "^1.1.0",
     "@kolu/artifact-sdk": "workspace:*",
     "@kolu/surface": "workspace:*",
+    "@kolu/surface-nix-host": "workspace:*",
     "@orpc/client": "^1.13.13",
     "@orpc/contract": "^1.13.13",
     "@orpc/experimental-pino": "^1.13.13",

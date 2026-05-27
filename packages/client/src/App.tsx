@@ -287,6 +287,8 @@ const App: Component = () => {
     setDiagnosticInfoOpen,
     handleCreateWorktree: (repoPath, name, initialCommand) =>
       void worktree.handleCreateWorktree(repoPath, name, initialCommand),
+    handleCreateRemote: (host: string) =>
+      void crud.handleCreate(undefined, undefined, { kind: "remote", host }),
     handleClose: () => {
       const id = store.activeId();
       if (id) closeTerminal(id);

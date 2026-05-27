@@ -28,8 +28,7 @@ import {
   implementSurface,
   publisherChannel,
 } from "@kolu/surface/server";
-import { ORPCError, implement } from "@orpc/server";
-import { match } from "ts-pattern";
+import { implement } from "@orpc/server";
 import type {
   ActivityFeed,
   Preferences,
@@ -43,10 +42,10 @@ import {
   fsListAllOutputEqual,
   type FsReadFileOutput,
   fsReadFileOutputEqual,
-  type GitResult,
   gitDiffOutputEqual,
   gitStatusOutputEqual,
 } from "kolu-git";
+import { unwrapGit } from "./gitUnwrap.ts";
 import {
   buildIframePreviewUrl,
   isIframePreviewable,
@@ -79,35 +78,6 @@ const savedSessionStore: CellStore<SavedSession | null> =
   confStore<SavedSession | null>(store, "session");
 
 // ── Surface implementation ─────────────────────────────────────────────
-
-/** Unwrap a `GitResult` or throw an `ORPCError` for the client. Shared
- *  with the raw git handlers in `router.ts`. */
-export function unwrapGit<T>(result: GitResult<T>): T {
-  if (result.ok) return result.value;
-  const { status, message } = match(result.error)
-    .with({ code: "BASE_BRANCH_NOT_FOUND" }, (e) => ({
-      status: "PRECONDITION_FAILED" as const,
-      message: e.message,
-    }))
-    .with({ code: "WORKTREE_NAME_COLLISION" }, (e) => ({
-      status: "CONFLICT" as const,
-      message: e.message,
-    }))
-    .with({ code: "PATH_ESCAPES_ROOT" }, (e) => ({
-      status: "INTERNAL_SERVER_ERROR" as const,
-      message: `path escapes root: ${e.child}`,
-    }))
-    .with({ code: "GIT_FAILED" }, (e) => ({
-      status: "INTERNAL_SERVER_ERROR" as const,
-      message: e.message,
-    }))
-    .with({ code: "NOT_A_REPO" }, () => ({
-      status: "INTERNAL_SERVER_ERROR" as const,
-      message: "Not a git repository",
-    }))
-    .exhaustive();
-  throw new ORPCError(status, { message });
-}
 
 const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
   implementSurface(surface, {

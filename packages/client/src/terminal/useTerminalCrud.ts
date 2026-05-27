@@ -8,6 +8,7 @@ import type {
   InitialTerminalMetadata,
   TerminalId,
 } from "kolu-common/surface";
+import type { TerminalLocation } from "kolu-common/terminalBackend";
 import { toast } from "solid-sonner";
 import { availableThemes, pickTheme, resolveThemeBgs } from "terminal-themes";
 import { CONTEXTUAL_TIPS } from "../settings/tips";
@@ -108,6 +109,7 @@ export function useTerminalCrud(deps: {
   async function handleCreate(
     cwd?: string,
     initial?: InitialTerminalMetadata,
+    location?: TerminalLocation,
   ): Promise<TerminalId> {
     if (store.activeMeta()?.git) showTipOnce(CONTEXTUAL_TIPS.worktree);
 
@@ -134,6 +136,7 @@ export function useTerminalCrud(deps: {
         rightPanel: initial?.rightPanel,
         lastActivityAt: initial?.lastActivityAt,
         intent: initial?.intent,
+        location,
       })
       .catch((err: Error) => {
         toast.error(`Failed to create terminal: ${err.message}`);

@@ -24,7 +24,8 @@ import { saveTerminalFile } from "./terminalScratch.ts";
 import { serverHostname, serverProcessId } from "./hostname.ts";
 import { log } from "./log.ts";
 import { pwaIdentityForHostname } from "./pwaIdentity.ts";
-import { surfaceRouter, t, unwrapGit } from "./surface.ts";
+import { unwrapGit } from "./gitUnwrap.ts";
+import { surfaceRouter, t } from "./surface.ts";
 import { getTerminalBackendFor } from "./terminalBackend/index.ts";
 import { getTerminal, type TerminalProcess } from "./terminal-registry.ts";
 import {
@@ -71,14 +72,19 @@ export const appRouter = t.router({
   },
   terminal: {
     create: t.terminal.create.handler(async ({ input }) =>
-      createTerminal(input.cwd, input.parentId, {
-        themeName: input.themeName,
-        canvasLayout: input.canvasLayout,
-        subPanel: input.subPanel,
-        rightPanel: input.rightPanel,
-        lastActivityAt: input.lastActivityAt,
-        intent: input.intent,
-      }),
+      createTerminal(
+        input.cwd,
+        input.parentId,
+        {
+          themeName: input.themeName,
+          canvasLayout: input.canvasLayout,
+          subPanel: input.subPanel,
+          rightPanel: input.rightPanel,
+          lastActivityAt: input.lastActivityAt,
+          intent: input.intent,
+        },
+        input.location,
+      ),
     ),
 
     resize: t.terminal.resize.handler(async ({ input }) => {

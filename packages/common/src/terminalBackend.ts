@@ -55,11 +55,13 @@ import type {
   TerminalInfo,
 } from "./surface.ts";
 
-/** Where a terminal lives. R-1 has only the local variant; R-2 will
- *  add `{ kind: "remote", host: string }`. The single-variant sum keeps
- *  every dispatch site (`getTerminalBackendFor`, sub-terminal
- *  inheritance) shaped the way they will be in R-2. */
-export type TerminalLocation = { kind: "local" };
+/** Where a terminal lives. `host` is an ssh-config alias (e.g.
+ *  `sincereintent` resolves through `~/.ssh/config`). The agent runs
+ *  there as `kolu --stdio`, invoked via `ssh $host <agentPath> --stdio`
+ *  after `@kolu/surface-nix-host` has copied + realised the .drv. */
+export type TerminalLocation =
+  | { kind: "local" }
+  | { kind: "remote"; host: string };
 
 /** Per-terminal channel payload types — the streams a backend exposes
  *  for one terminal id. Subscribing returns the payload type

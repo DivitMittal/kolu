@@ -127,6 +127,9 @@ export interface CommandDeps extends ActionContext {
     name: string,
     initialCommand?: string,
   ) => void;
+  // Remote terminal — spawn on an ssh-config host. The agent runs as
+  // `kolu --stdio` on that host (provisioned via @kolu/surface-nix-host).
+  handleCreateRemote: (host: string) => void;
   handleClose: () => void;
   // Workspace search — the live-terminal source list and recency
   // accessor the "Search workspaces" group walks to populate its rows.
@@ -175,6 +178,13 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
             kind: "action",
             name: "In current directory",
             onSelect: () => deps.handleCreate(deps.activeMeta()?.cwd),
+          },
+          {
+            kind: "action",
+            name: "On sincereintent (remote)",
+            description:
+              "Spawn a terminal on the SSH host `sincereintent` via `kolu --stdio` (requires KOLU_AGENT_FLAKE_REF)",
+            onSelect: () => deps.handleCreateRemote("sincereintent"),
           },
           ...repos.map(
             (r): PaletteValueInput => ({

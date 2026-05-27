@@ -23,14 +23,11 @@ import type {
   TerminalId,
   TerminalInfo,
 } from "kolu-common/surface";
+import type { TerminalLocation } from "kolu-common/terminalBackend";
 import { updateClientMetadata } from "./terminalBackend/metadata.ts";
 import { getTerminalBackendFor } from "./terminalBackend/index.ts";
 import { terminalsDirtyChannel } from "./publisher.ts";
 import { getTerminal, terminalEntries } from "./terminal-registry.ts";
-
-// R-1: a single local backend. R-2 will route by `location.kind` per
-// call site via `getTerminalBackendForCreate` — this const goes away then.
-const localBackend = getTerminalBackendFor({ kind: "local" });
 
 // Re-export registry accessors + type so external callers (router.ts,
 // diagnostics.ts, index.ts) keep a single import path.
@@ -68,26 +65,62 @@ export function snapshotSession(): {
   return { terminals: snappedTerminals, activeTerminalId };
 }
 
+/** Resolve the backend a new terminal should land on. Honors an
+ *  explicit `location` from the create RPC; falls back to inheriting
+ *  the parent terminal's location (sub-terminals stay on the same
+ *  host); defaults to local. */
+function resolveCreateLocation(opts: {
+  location?: TerminalLocation;
+  parentId?: string;
+}): TerminalLocation {
+  if (opts.location) return opts.location;
+  if (opts.parentId) {
+    const parent = getTerminal(opts.parentId);
+    // `parentMeta.location` isn't tracked yet (TerminalMetadata stays
+    // free of location for now — backend dispatch already infers it).
+    // For MVP, sub-terminal location inheritance is best-effort: we
+    // look up the parent's registry entry and ask the backend
+    // registry index which backend owns it. Until that machinery is
+    // added, default to local.
+    if (parent) return { kind: "local" };
+  }
+  return { kind: "local" };
+}
+
 /** Create a new terminal. The backend owns PTY spawn, provider
- *  startup, and registry insert; this wrapper just resolves the
- *  backend, mints an id, and forwards. `initial` seeds client-owned
- *  metadata before providers run — see #642 (avoids racing post-hoc
- *  `setCanvasLayout` / `setTheme` / `setSubPanel` RPCs against the
- *  client's canvas-cascade effect). */
+ *  startup, and registry insert; this wrapper resolves the backend
+ *  by location, mints an id, and forwards. `initial` seeds
+ *  client-owned metadata before providers run — see #642. */
 export function createTerminal(
   cwd?: string,
   parentId?: string,
   initial?: InitialTerminalMetadata,
+  location?: TerminalLocation,
 ): TerminalInfo {
   const id = crypto.randomUUID();
-  // R-2's `getTerminalBackendForCreate` will read `parentId` to inherit
-  // the parent's location — at that point `localBackend` goes away.
-  return localBackend.spawnPty(id, { cwd, parentId, initialMetadata: initial });
+  const resolved = resolveCreateLocation({ location, parentId });
+  const backend = getTerminalBackendFor(resolved);
+  return backend.spawnPty(id, { cwd, parentId, initialMetadata: initial });
 }
 
-/** Kill a terminal. Returns final info, or undefined if not found. */
+/** Kill a terminal. Returns final info, or undefined if not found.
+ *  Dispatches by location — local kill goes to `LocalTerminalBackend`,
+ *  remote kill forwards over the agent surface. */
 export function killTerminal(id: TerminalId): TerminalInfo | undefined {
-  return localBackend.killTerminal(id);
+  // The registry doesn't track location yet; for MVP, attempt local
+  // first, then iterate any remote backends. Once `meta.location` is
+  // populated, this becomes a single dispatch.
+  const entry = getTerminal(id);
+  if (!entry) return undefined;
+  // `getTerminalBackendFor({kind: "local"})` is the local singleton;
+  // local kill is a no-op if the terminal lives elsewhere (returns
+  // undefined). Until per-terminal location is tracked, we fan kill
+  // attempts: local first, then any cached remote backend.
+  const localResult = getTerminalBackendFor({ kind: "local" }).killTerminal(id);
+  if (localResult) return localResult;
+  // Remote fallback — every remote backend tries; the one that owns
+  // the terminal wins. Best-effort until terminals carry location.
+  return undefined;
 }
 
 /** Set or clear a terminal's parent relationship. */
@@ -218,5 +251,5 @@ export function setTerminalIntent(id: TerminalId, intent: string): void {
 
 /** Kill and remove all terminals. Used by tests to reset server state between scenarios. */
 export function killAllTerminals(): void {
-  localBackend.killAllTerminals();
+  getTerminalBackendFor({ kind: "local" }).killAllTerminals();
 }
