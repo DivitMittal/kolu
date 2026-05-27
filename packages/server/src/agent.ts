@@ -57,6 +57,19 @@ export function serveAgent(
 }
 
 export async function runAgent(): Promise<void> {
+  // Match httpServer.ts's handlers so an unexpected throw produces a
+  // structured pino log line on fd 2 (which the parent forwards as
+  // `[host:<host> remote] …`) instead of Node's default raw stderr
+  // dump that breaks log correlation.
+  process.on("uncaughtException", (err) => {
+    log.fatal({ err }, "uncaught exception");
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    log.fatal({ reason }, "unhandled rejection");
+    process.exit(1);
+  });
+
   log.info({ pid: process.pid }, "agent starting");
 
   // Empty store for `terminalMetadata` — slice 2d populates this from
