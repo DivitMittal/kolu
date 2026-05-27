@@ -20,10 +20,14 @@
  * side (or running them parent-side on agent's streams) is follow-up.
  */
 
+import { SerializeAddon } from "@xterm/addon-serialize";
+import { Terminal } from "@xterm/headless";
 import {
   type AgentClient,
   mirrorRemoteCollection,
 } from "@kolu/surface-nix-host";
+import { DEFAULT_SCROLLBACK } from "kolu-common/config";
+import { getScreenText } from "kolu-pty";
 import type {
   AgentContract,
   AgentTerminalMetadata,
@@ -73,11 +77,35 @@ interface RemoteTerminalRecord {
 
 class RemotePtyHandle implements TerminalHandle {
   pid = 0;
+  /** Parent-side mirrored @xterm/headless instance fed by the agent's
+   *  `terminalData` stream. On WebSocket reconnect the client re-
+   *  attaches and calls `screenState` to fetch the buffered scrollback
+   *  — which lives here instead of having to round-trip another RPC to
+   *  the agent. Resize mirrors the agent so the headless buffer's
+   *  geometry stays in sync. */
+  readonly headless: Terminal;
+  private readonly serializeAddon: SerializeAddon;
+
   constructor(
     private readonly host: string,
     private readonly id: TerminalId,
     private readonly backend: RemoteTerminalBackend,
-  ) {}
+    scrollback: number,
+  ) {
+    this.headless = new Terminal({
+      cols: 80,
+      rows: 24,
+      scrollback,
+      allowProposedApi: true,
+    });
+    this.serializeAddon = new SerializeAddon();
+    this.headless.loadAddon(this.serializeAddon);
+  }
+  /** Feed a chunk from the agent's data stream into the mirrored
+   *  buffer. Called by the data pump for each yielded chunk. */
+  feed(data: string): void {
+    this.headless.write(data);
+  }
   write(data: string): void {
     void this.backend
       .callAgent((c) => c.surface.terminal.write({ id: this.id, data }))
@@ -89,6 +117,9 @@ class RemotePtyHandle implements TerminalHandle {
       );
   }
   resize(cols: number, rows: number): void {
+    // Resize the local mirror first so screenshots between the
+    // resize RPC firing and the agent's response stay coherent.
+    this.headless.resize(cols, rows);
     void this.backend
       .callAgent((c) => c.surface.terminal.resize({ id: this.id, cols, rows }))
       .catch((err) =>
@@ -99,14 +130,13 @@ class RemotePtyHandle implements TerminalHandle {
       );
   }
   getScreenState(): string {
-    // MVP: no parent-side mirrored headless terminal. Empty snapshot
-    // means the client renders from live data stream after attach;
-    // first-attach has nothing to snapshot anyway. Reconnect resume
-    // ships in a follow-up.
-    return "";
+    return this.serializeAddon.serialize();
   }
-  getScreenText(): string {
-    return "";
+  getScreenText(startLine?: number, endLine?: number): string {
+    return getScreenText(this.headless.buffer.active, startLine, endLine);
+  }
+  dispose(): void {
+    this.headless.dispose();
   }
 }
 
@@ -264,7 +294,7 @@ export class RemoteTerminalBackend implements TerminalBackend {
     const tlog = log.child({ host: this.host, terminal: id });
     tlog.info({ cwd: opts.cwd }, "remote spawn initiated");
 
-    const handle = new RemotePtyHandle(this.host, id, this);
+    const handle = new RemotePtyHandle(this.host, id, this, DEFAULT_SCROLLBACK);
     const meta = createMetadata(opts.cwd ?? "", {
       kind: "remote",
       host: this.host,
@@ -343,6 +373,10 @@ export class RemoteTerminalBackend implements TerminalBackend {
       id,
       "data",
       signal,
+      // Feed the headless mirror in lockstep with publishing to the
+      // local data channel so `screenState` reads have the same
+      // bytes the client has rendered.
+      (chunk) => handle.feed(chunk),
     );
     void this.pumpStream(
       () => client.surface.terminalCwd.get({ id }, { signal }),
@@ -369,11 +403,16 @@ export class RemoteTerminalBackend implements TerminalBackend {
     id: TerminalId,
     channel: keyof TerminalChannelMap,
     signal: AbortSignal,
+    /** Optional side-effect on each chunk (used by `data` to feed
+     *  the parent-side mirrored headless terminal). */
+    onChunk?: (value: string) => void,
   ): Promise<void> {
     try {
       const iter = await open();
       for await (const value of iter) {
-        terminalChannels[channel](id).publish(value as string);
+        const v = value as string;
+        onChunk?.(v);
+        terminalChannels[channel](id).publish(v);
       }
     } catch (err) {
       if (!signal.aborted) {
