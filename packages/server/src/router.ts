@@ -74,7 +74,13 @@ function requireLocalForUpload(
   kind: "image" | "file",
 ): void {
   if (entry.location.kind === "remote") {
-    throw new ORPCError("FAILED_PRECONDITION", {
+    // `PRECONDITION_FAILED` (not `FAILED_PRECONDITION`) is the
+    // oRPC-defined code that maps to HTTP 412. The other spelling is
+    // gRPC's convention and falls through oRPC's mapping to a
+    // defined:false 500, making the unsupported-operation case look
+    // like a server crash. Matches the existing `PRECONDITION_FAILED`
+    // throw at `exportTranscriptHtml` below.
+    throw new ORPCError("PRECONDITION_FAILED", {
       message: `${kind === "image" ? "Clipboard image paste" : "File drop"} is not supported on remote terminals (${entry.location.host}) — the upload would land on the parent host and the agent on ${entry.location.host} could not read it.`,
     });
   }
