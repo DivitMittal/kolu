@@ -58,6 +58,11 @@ const ChromeBar: Component<{
 }> = (props) => {
   const rightPanel = useRightPanel();
   const posture = useViewPosture();
+  // Derive the daemon state once — label, data-attr, and dot color all
+  // read it, and each bare `localPtyDaemonStatus()?.state` would be an
+  // independent reactive read of the same cell.
+  const daemonState = (): keyof typeof daemonStyles =>
+    localPtyDaemonStatus()?.state ?? "starting";
   let settingsTriggerRef!: HTMLButtonElement;
   const [settingsOpen, setSettingsOpen] = createSignal(false);
 
@@ -126,17 +131,10 @@ const ChromeBar: Component<{
             class={`inline-block w-2 h-2 rounded-full transition-colors ${statusStyles[props.status]}`}
           />
         </Tip>
-        <Tip
-          label={
-            daemonLabels[
-              (localPtyDaemonStatus()?.state ??
-                "starting") as keyof typeof daemonLabels
-            ]
-          }
-        >
+        <Tip label={daemonLabels[daemonState()]}>
           <span
-            data-daemon-status={localPtyDaemonStatus()?.state ?? "starting"}
-            class={`inline-block w-2 h-2 rounded-full transition-colors ${daemonStyles[(localPtyDaemonStatus()?.state ?? "starting") as keyof typeof daemonStyles]}`}
+            data-daemon-status={daemonState()}
+            class={`inline-block w-2 h-2 rounded-full transition-colors ${daemonStyles[daemonState()]}`}
           />
         </Tip>
       </div>
