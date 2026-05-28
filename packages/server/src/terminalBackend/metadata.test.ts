@@ -8,20 +8,19 @@
  * cadence — either over-saving or losing data on restart.
  */
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { terminalsDirtyChannel } from "../publisher.ts";
-import { installNoopSurfaceCtxForTesting } from "../surfaceCtx.ts";
+import {
+  __resetSurfaceCtxForTest,
+  noopSurfaceCtxForTest,
+  setSurfaceCtx,
+} from "../surfaceCtx.ts";
 import type { TerminalProcess } from "../terminal-registry.ts";
 import {
   updateClientMetadata,
   updateServerLiveMetadata,
   updateServerMetadata,
 } from "./metadata.ts";
-
-// Domain unit-tests don't load surface.ts, so the late-bound
-// `surfaceCtx` would otherwise throw on first access. Install a no-op
-// ctx for the publish side-effect the test doesn't care about.
-beforeAll(() => installNoopSurfaceCtxForTesting());
 
 function fakeTerminal(): TerminalProcess {
   return {
@@ -54,6 +53,9 @@ async function settle(): Promise<void> {
 }
 
 beforeEach(async () => {
+  // surface.ts is not imported by this test module; supply a no-op ctx
+  // so calls to publishSnapshot (via surfaceCtx.collections…upsert) don't throw.
+  setSurfaceCtx(noopSurfaceCtxForTest());
   dirtyCount = 0;
   stopWatch = terminalsDirtyChannel.consume({
     onEvent: () => {
@@ -71,6 +73,7 @@ afterEach(() => {
   // keep firing into the shared `dirtyCount` and bystander tests see
   // inflated counts.
   stopWatch?.();
+  __resetSurfaceCtxForTest();
 });
 
 describe("metadata publish routing", () => {

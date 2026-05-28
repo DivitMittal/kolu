@@ -1,13 +1,11 @@
 /**
- * Translate a `GitResult<T>` into a plain `T`, or throw the
- * server-appropriate `ORPCError`. Pure — no dependency on the surface
- * declaration, the router builder, or any domain state.
+ * Unwrap a `GitResult` into the success value or throw an `ORPCError`
+ * for the client. Pure helper shared by `router.ts`'s raw git handlers
+ * and `terminalBackend/local.ts`'s fs/git surfaces.
  *
- * Lives outside `surface.ts` so `terminalBackend/local.ts` can call it
- * without dragging `surface.ts ↔ terminalBackend/` into a cycle (the
- * back-edge `local.ts → surface.ts` for `unwrapGit` was the last
- * lingering server import cycle after `surfaceCtx` moved to its own
- * holder).
+ * Lives in its own file (rather than `surface.ts`) so importing it from
+ * `terminalBackend/local.ts` does not tug `local.ts` into a cycle with
+ * `surface.ts`. See #1005.
  */
 
 import { ORPCError } from "@orpc/server";

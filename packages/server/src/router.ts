@@ -3,10 +3,10 @@
  * hand-listed raw oRPC handlers (terminal lifecycle, attach, git
  * mutations, server info).
  *
- * The typed reactive layer goes through `surfaceRouter` / `surfaceCtx`
- * (see `./surface.ts`). Domain mutations import `surfaceCtx` directly
- * from there. This file is just the glue between the surface fragment
- * and the raw RPCs.
+ * The typed reactive layer goes through `surfaceRouter` (from `./surface.ts`)
+ * and `surfaceCtx` (from `./surfaceCtx.ts`). Domain mutations import
+ * `surfaceCtx` from `./surfaceCtx.ts` directly. This file is just the glue
+ * between the surface fragment and the raw RPCs.
  */
 
 import { ORPCError } from "@orpc/server";
@@ -27,6 +27,7 @@ import { surfaceRouter, t } from "./surface.ts";
 import { getTerminal, type TerminalProcess } from "./terminal-registry.ts";
 import { getTerminalBackendFor } from "./terminalBackend/index.ts";
 import { saveTerminalFile } from "./terminalScratch.ts";
+import { unwrapGit } from "./unwrapGit.ts";
 import {
   createTerminal,
   killAllTerminals,
@@ -39,7 +40,6 @@ import {
   setTerminalParent,
   setTerminalTheme,
 } from "./terminals.ts";
-import { unwrapGit } from "./unwrapGit.ts";
 
 /** Get terminal or throw — shared by all per-terminal handlers. */
 function requireTerminal(id: string): TerminalProcess {

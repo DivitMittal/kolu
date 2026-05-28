@@ -5,12 +5,16 @@
  *   - `surfaceRouter` — `oc.router({ surface: {...} })` fragment for the
  *     host router; spread alongside hand-listed raw oRPC procedures in
  *     `router.ts`.
- *   - `surfaceCtx` — typed `cells / collections / events` mutation map.
- *     Domain modules (`activity.ts`, `session.ts`, `terminals.ts`,
- *     `terminalBackend/metadata.ts`) import this and call `surfaceCtx.cells.X.set(...)`,
- *     `surfaceCtx.collections.X.upsert(k, v)`, `surfaceCtx.events.X.publish(i, p)`.
- *     The framework owns the apply+publish chain (and per-input event
- *     channel); domain code never sees a channel name string.
+ *   - The typed `cells / collections / events` mutation map (`surfaceCtx`)
+ *     is built here and registered into `./surfaceCtx.ts` via
+ *     `setSurfaceCtx(...)`. Domain modules (`activity.ts`, `session.ts`,
+ *     `terminalBackend/local.ts`, `terminalBackend/metadata.ts`) import
+ *     `surfaceCtx` from `./surfaceCtx.ts` — not from here — and call
+ *     `surfaceCtx.cells.X.set(...)`, `.collections.X.upsert(k, v)`,
+ *     `.events.X.publish(i, p)`. The framework owns the apply+publish
+ *     chain; domain code never sees a channel name string. Routing the
+ *     ctx through `./surfaceCtx.ts` is what breaks the bidirectional
+ *     import cycle that would otherwise form (#1005).
  *
  * Publisher channel names are framework-derived: `<surface-key>:changed`
  * for cells, `<surface-key>:keys` + `<surface-key>:<key>` for collections,
@@ -249,8 +253,4 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
   });
 
 export const surfaceRouter = surfaceRouterFragment;
-
-// Populate the late-bound holder. Domain modules import `surfaceCtx`
-// from `./surfaceCtx.ts` (not from here) — that's what keeps the
-// `surface.ts ↔ session/activity/terminalBackend` cycle from forming.
 setSurfaceCtx(surfaceCtxBuilt);
