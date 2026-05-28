@@ -2,13 +2,14 @@
  *  Encapsulates the zoom/pan algorithm so it can evolve (easing, constraints,
  *  undo) without touching gesture input or CSS generation.
  *
- *  `GRID_SIZE` / `snapToGrid` live in `../canvasGeometry.ts` — shared
- *  between viewport math and tile-packing so the packing algorithms
- *  don't have to reach inside the viewport boundary. Re-exported here
- *  for the viewport-internal callers (gestures, animatedPan,
- *  useCanvasViewport) so they keep their local-feeling import. */
+ *  `GRID_SIZE` / `snapToGrid` live in `@kolu/canvas-layout/geometry` —
+ *  shared between viewport math and tile-packing so the packing
+ *  algorithms don't have to reach inside the viewport boundary.
+ *  Re-exported here for the viewport-internal callers (gestures,
+ *  animatedPan, useCanvasViewport) so they keep their local-feeling
+ *  import. */
 
-export { GRID_SIZE, snapToGrid } from "../canvasGeometry";
+export { GRID_SIZE, snapToGrid } from "@kolu/canvas-layout/geometry";
 
 export const MIN_ZOOM = 0.15;
 export const MAX_ZOOM = 3;

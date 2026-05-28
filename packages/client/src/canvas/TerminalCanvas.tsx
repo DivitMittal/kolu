@@ -44,7 +44,7 @@ import {
   DEFAULT_TILE_H,
   DEFAULT_TILE_W,
   findFreeTilePosition,
-} from "./tilePlacement";
+} from "@kolu/canvas-layout";
 import { useCanvasFocus } from "./useCanvasFocus";
 import { usePendingLayouts } from "./usePendingLayouts";
 import { useTileTheme } from "./useTileTheme";

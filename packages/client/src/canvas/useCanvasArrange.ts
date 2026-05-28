@@ -11,13 +11,13 @@
  *  - `placeNew(id, existing)` — per-create policy fed to TerminalCanvas.
  *  - `handleCanvasAutoArrange()` — the one-shot palette command. */
 
-import type { TerminalId } from "kolu-common/surface";
-import { getBucketFor, resolvePlacementBucket } from "./placementPolicy";
 import {
   arrangeRepoIslands,
   repackBucket,
   type RepoIslandTile,
-} from "./repoIslands";
+} from "@kolu/canvas-layout";
+import type { TerminalId } from "kolu-common/surface";
+import { getBucketFor, resolvePlacementBucket } from "./placementPolicy";
 import { layoutsEqual, type TileLayout } from "./TileLayout";
 import { usePendingLayouts } from "./usePendingLayouts";
 import type { useTerminalCrud } from "../terminal/useTerminalCrud";
