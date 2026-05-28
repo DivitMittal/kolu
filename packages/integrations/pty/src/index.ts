@@ -1,12 +1,16 @@
-/** kolu-pty — generic PTY primitives extracted from kolu-server.
+/** kolu-pty — shell-integration primitives.
  *
- *  Wraps node-pty + @xterm/headless to provide a transport-agnostic
- *  `PtyHandle` with OSC-driven cwd/title/preexec callbacks. The caller
- *  supplies an rc-file directory (so kolu-pty has no opinion on where
- *  its per-terminal scratch files live) and a TERM_PROGRAM_VERSION
- *  string. Only dep on kolu-* is `kolu-shared` (the `Logger` type). */
+ *  Env layering (`cleanEnv` / `koluIdentityEnv`) and the injected
+ *  wrapper rcfile that makes a spawned shell emit OSC 7 (cwd), OSC 0/2
+ *  (title), and OSC 633;E (preexec command) — the signals kolu's
+ *  metadata providers consume. The caller owns where the rc files live
+ *  (`rcDir`) and supplies a `TERM_PROGRAM_VERSION` string.
+ *
+ *  The PTY-owning half (node-pty + @xterm/headless behind a
+ *  `PtyHandle`) moved to `@kolu/pty-host` in R-4 — this package no
+ *  longer spawns PTYs, it only prepares the environment a PTY runs in.
+ *  Only dep on kolu-* is `kolu-shared` (the `Logger` type). */
 
-export { getScreenText, type PtyHandle, spawnPty } from "./pty.ts";
 export {
   cleanEnv,
   configureNixShellEnv,

@@ -64,11 +64,11 @@ import { shouldBumpRecencyForAgentChange } from "./agentRecency.ts";
 
 /** The slice of a PTY the provider DAG reads — `pid` + foreground
  *  process name + foreground pid, all synchronous. Deliberately
- *  narrower than `kolu-pty`'s `PtyHandle`: the providers never touch
- *  `write`/`resize`/`getScreenState`/`dispose`, so a host that owns its
- *  PTY out-of-process (the R-4 daemon) can satisfy this view with a
- *  locally-cached mirror fed by the daemon's enriched title stream — no
- *  per-read RPC. The in-process `PtyHandle` satisfies it structurally. */
+ *  narrow: the providers never touch write/resize/getScreenState, so a
+ *  host that owns its PTY out-of-process (the R-4 daemon) satisfies this
+ *  view with a locally-cached mirror fed by the daemon's enriched title
+ *  stream — no per-read RPC. `@kolu/pty-host`'s richer handle and the
+ *  `DaemonTerminalProxy` both satisfy it structurally. */
 export interface ProviderPtyView {
   readonly pid: number;
   readonly process: string;
