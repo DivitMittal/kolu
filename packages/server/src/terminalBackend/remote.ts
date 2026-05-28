@@ -373,6 +373,17 @@ export class RemoteTerminalBackend implements TerminalBackend {
       // stuck "Connecting…" tile that the user has to manually kill.
       abort.abort();
       this.records.delete(id);
+      // Publish a synthetic exit BEFORE removing from the registry
+      // so the client's existing exit-toast handler (`subscribeExit`
+      // in `useTerminals.ts`) shows a "$tile exited with code 1"
+      // warning. Exit code 1 distinguishes spawn failure from a
+      // clean exit (code 0). The publish may race with the client's
+      // per-id `surface.terminalExit` subscribe RPC — when that
+      // subscribe lands after this fires, the event is lost (events
+      // aren't buffered), but the tile still vanishes via the
+      // `terminalList` removal and the user at least sees the
+      // disappearance reflect the failure.
+      surfaceCtx.events.terminalExit.publish({ id }, 1);
       unregisterTerminal(id);
       surfaceCtx.cells.terminalList.set(listTerminals());
       surfaceCtx.collections.terminalMetadata.remove(id);
