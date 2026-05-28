@@ -8,6 +8,15 @@
 # Used by flake.nix (thin wrapper), shell.nix, and nix-build directly.
 { pkgs ? import ./nix/nixpkgs.nix { }
 , commitHash ? "dev"
+, # The flake self-reference threaded from flake.nix. The production
+  # wrapper bakes this as `KOLU_AGENT_FLAKE_REF` so `nix run
+  # github:juspay/kolu` and the local-flake `nix run .` both resolve
+  # remote agents from the SAME source the parent kolu was built
+  # from — wire-shape drift between parent and agent becomes
+  # impossible by construction. Optional so `nix-build` callers
+  # without flake context still work (env var stays unset, operators
+  # opt in per the "no fallback by design" contract).
+  self ? null
 }:
 let
   koluEnv = import ./nix/env.nix { inherit pkgs; };
@@ -170,6 +179,12 @@ let
   # Used by `nix run .` and the NixOS service. Sets the state dir
   # unconditionally — no `:-` override, so tests can't accidentally
   # inherit the production path.
+  #
+  # `KOLU_AGENT_FLAKE_REF` is baked when `self` is threaded (every
+  # flake-context call: `nix run`, `nix build`, the homeManager
+  # module). The agent on a remote ssh host is then realised from
+  # the SAME source `self` the parent was built from — wire-shape
+  # drift between parent and agent becomes impossible by construction.
   default = pkgs.runCommand "kolu"
     {
       nativeBuildInputs = [ pkgs.makeWrapper ];
@@ -177,6 +192,7 @@ let
     } ''
     mkdir -p $out/bin
     makeWrapper ${koluBin}/bin/kolu $out/bin/kolu \
+      ${pkgs.lib.optionalString (self != null) ''--set KOLU_AGENT_FLAKE_REF "${self}"''} \
       --run 'export KOLU_STATE_DIR="''${XDG_CONFIG_HOME:-$HOME/.config}/kolu"'
   '';
 
