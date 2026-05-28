@@ -405,8 +405,15 @@ const CodeTab: Component<{
         // `treePaths()` — the tree filter is correct, but their
         // presence in `selectedPath` is also correct. Treat the
         // current handled record as authoritative for that case.
+        // Also suppress clearing during `probing`: the disk probe is
+        // mid-flight and the previous selection (which may itself be
+        // out-of-tree) should stay visible until the probe resolves —
+        // otherwise the gutter flashes "Select a file" for the duration
+        // of the RPC round-trip.
         const outOfTree =
-          h !== null && h.stage === "out-of-tree" && h.resolvedPath === s;
+          h !== null &&
+          (h.stage === "probing" ||
+            (h.stage === "out-of-tree" && h.resolvedPath === s));
         return {
           s,
           sk,
