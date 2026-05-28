@@ -6,8 +6,10 @@
  * public API.
  */
 
+export { resolveSystem } from "./arch";
 export {
   buildAgentCommand,
+  buildSshProbeCommand,
   forEachLine,
   isLocalHost,
 } from "./host";
@@ -26,4 +28,10 @@ export {
   type ProvisionResult,
   provisionAgent,
 } from "./nixCopy";
+export {
+  type CaptureResult,
+  type ExitResult,
+  runCapture,
+  runProgress,
+} from "./process";
 export { waitForNextClient } from "./waitForNextClient";
