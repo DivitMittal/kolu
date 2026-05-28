@@ -313,18 +313,24 @@ const CodeTab: Component<{
       cwd: req.cwd,
     });
     for (const cand of cands) {
-      const { exists } = await client.git
-        .fsExists({ repoPath: repo, filePath: cand })
-        .catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err);
-          toast.error(`File reference probe failed: ${message}`);
-          return { exists: false };
-        });
+      let result: { exists: boolean };
+      try {
+        result = await client.git.fsExists({ repoPath: repo, filePath: cand });
+      } catch (err: unknown) {
+        // RPC failure (network down, server error) — abort the probe
+        // entirely. Continuing to the next candidate would produce another
+        // identical error, then a misleading "not found" toast (the server
+        // may be reachable but temporarily unavailable; file presence
+        // is unknown, not denied).
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(`File reference probe failed: ${message}`);
+        return;
+      }
       // Superseded by a newer click or an explicit user tree-navigation:
       // `handleSelect` clears `handled` on a probing-stage tree-click so the
       // probe can detect the user's choice and bow out without stomping it.
       if (pendingOpen() !== req || handled()?.stage !== "probing") return;
-      if (exists) {
+      if (result.exists) {
         setSelectedPath(cand);
         setHandled({ request: req, stage: "out-of-tree", resolvedPath: cand });
         return;
