@@ -14,8 +14,8 @@ import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal as XTerm } from "@xterm/xterm";
+import { createXtermWebgl, type XtermWebglHandle } from "@kolu/solid-xterm";
 import {
   type Component,
   createEffect,
@@ -180,9 +180,8 @@ const Terminal: Component<{
   const fontSize = createZoom(props.terminalId, () => props.visible);
 
   let streamAbort: AbortController | null = null;
-  let webgl: WebglAddon | null = null;
-  let webglCanvas: HTMLCanvasElement | null = null;
   let webglTrackerId: number | null = null;
+  let webglLifecycle: XtermWebglHandle | null = null;
   let disposeDiagnostics: (() => void) | null = null;
   /** True once this component's reactive owner has been disposed. Set by the
    *  synchronously-registered `onCleanup` below. The async `onMount` body
@@ -192,11 +191,30 @@ const Terminal: Component<{
    *  owner is a silent no-op, so onCleanup inside the async body would not
    *  run when an `<Show>` toggle disposes the owner during a mode switch). */
   let disposed = false;
-  const [hasWebgl, setHasWebgl] = createSignal(false);
+
+  // WebGL lifecycle is owned by `@kolu/solid-xterm`'s `createXtermWebgl`
+  // — Kolu plugs `webglTracker` into the lifecycle hooks for #591
+  // debug observation, but the addon-construction, lose-context dance,
+  // and link-layer-canvas-selector trap all live in the framework.
+  webglLifecycle = createXtermWebgl(() => terminal, {
+    onCreate: (canvas) => {
+      webglTrackerId = trackCreate(props.terminalId, canvas);
+    },
+    onLoseContextCalled: () => {
+      if (webglTrackerId !== null) trackLoseContextCalled(webglTrackerId);
+    },
+    onDispose: () => {
+      if (webglTrackerId !== null) {
+        trackDispose(webglTrackerId);
+        webglTrackerId = null;
+      }
+    },
+  });
+  const hasWebgl = webglLifecycle.has;
 
   /** Clear WebGL texture atlas to fix font rendering corruption (issue #239). */
   function clearTextureAtlas() {
-    webgl?.clearTextureAtlas();
+    webglLifecycle?.clearTextureAtlas();
   }
 
   /** Capability: only the focused+visible tile is allowed to hold a WebGL
@@ -216,68 +234,11 @@ const Terminal: Component<{
       .exhaustive();
 
   function loadWebgl() {
-    if (!terminal || webgl) return;
-    try {
-      // Single owner of WebglAddon lifetime — any future construction-time
-      // flag (e.g. preserveDrawingBuffer for screenshots, #574) must be
-      // routed through this effect, not a parallel dispose/reconstruct path.
-      const w = new WebglAddon();
-      w.onContextLoss(() => unloadWebgl());
-      terminal.loadAddon(w);
-      webgl = w;
-      // Capture the canvas the addon just appended so we can explicitly
-      // release its GPU context on unload — see unloadWebgl.
-      //
-      // xterm's WebglRenderer constructor appends the LinkRenderLayer's 2D
-      // canvas (`class="xterm-link-layer"`) to `.xterm-screen` before it
-      // appends its own WebGL canvas (which has no class). A bare
-      // `querySelector(".xterm-screen canvas")` returns the first match in
-      // document order — the link layer — whose `getContext("webgl2")`
-      // returns null, silently short-circuiting the `loseContext()` chain in
-      // `unloadWebgl()`. Diagnosed via #595's `webglTracker`:
-      // `contextsLost` stayed at 0 despite `loseContext-called` events
-      // firing for every disposed canvas (#591). Exclude the link layer
-      // explicitly so we grab the real WebGL canvas.
-      webglCanvas =
-        terminal.element?.querySelector<HTMLCanvasElement>(
-          ".xterm-screen canvas:not(.xterm-link-layer)",
-        ) ?? null;
-      // Register for lifecycle observation (#591 debug). No-op if no canvas.
-      if (webglCanvas)
-        webglTrackerId = trackCreate(props.terminalId, webglCanvas);
-      setHasWebgl(true);
-    } catch {
-      // WebGL unavailable — xterm's DOM renderer is the fallback
-    }
+    webglLifecycle?.load();
   }
 
   function unloadWebgl() {
-    const w = webgl;
-    if (!w) return;
-    // Null out first: `loseContext()` below fires `webglcontextlost`
-    // synchronously, which re-enters this function via the addon's
-    // `onContextLoss` listener. The guard above short-circuits the reentry.
-    webgl = null;
-    setHasWebgl(false);
-    // Explicitly release the GPU context. xterm's dispose() removes the
-    // canvas from the DOM but does NOT call WEBGL_lose_context.loseContext(),
-    // so Chrome keeps the context alive on the detached canvas until GC.
-    // Rapid focus changes create contexts faster than GC runs and overflow
-    // Chrome's ~16-context-per-tab budget, at which point Chrome starts
-    // evicting live contexts — including the focused tile's — producing a
-    // flicker across every tile. loseContext() releases GPU memory in the
-    // current microtask, keeping the live set at 1.
-    if (webglTrackerId !== null) trackLoseContextCalled(webglTrackerId);
-    webglCanvas
-      ?.getContext("webgl2")
-      ?.getExtension("WEBGL_lose_context")
-      ?.loseContext();
-    webglCanvas = null;
-    w.dispose();
-    if (webglTrackerId !== null) {
-      trackDispose(webglTrackerId);
-      webglTrackerId = null;
-    }
+    webglLifecycle?.unload();
   }
 
   // Re-fit and auto-focus when terminal becomes visible (display:none → visible).
@@ -533,10 +494,7 @@ const Terminal: Component<{
             xterm: term,
             serialize: serializeAddon,
             probes: {
-              webglAtlas: () => {
-                const a = webgl?.textureAtlas;
-                return a ? { w: a.width, h: a.height } : null;
-              },
+              webglAtlas: () => webglLifecycle?.atlas() ?? null,
               bufferBytes: () => readBufferBytes(term),
             },
           });
