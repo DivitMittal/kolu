@@ -76,6 +76,16 @@ const argv = cli({
 const PWA_BACKGROUND_COLOR = "#0c0c0e";
 
 configureNixShellEnv(argv.flags.allowNixShellWithEnvWhitelist);
+// Propagate the env-whitelist config to the local PTY-host daemon: it
+// spawns the PTY shells now, so it must apply the SAME whitelist this
+// kolu-server was configured with — otherwise shell-visible env that the
+// whitelist admits (e.g. GIT_AUTHOR_*/GIT_COMMITTER_* that let `git
+// commit` work in a fresh environment) is silently dropped from terminal
+// shells. The supervisor spawns the daemon with `env: process.env`, so
+// setting it here is what reaches the detached child.
+if (argv.flags.allowNixShellWithEnvWhitelist != null) {
+  process.env.KOLU_NIX_ENV_WHITELIST = argv.flags.allowNixShellWithEnvWhitelist;
+}
 ensureKoluRoot();
 initSessionAutoSave(snapshotSession);
 if (argv.flags.verbose) log.level = "debug";

@@ -147,7 +147,14 @@ function makeLogger(): AgentLogger {
 }
 
 async function main(): Promise<void> {
-  configureNixShellEnv(process.env.KOLU_NIX_ENV_WHITELIST ?? "default");
+  // Mirror kolu-server's whitelist exactly — `server.ts` propagates its
+  // configured value through `KOLU_NIX_ENV_WHITELIST`. When unset (the
+  // production nix-built path, no `--allow-nix-shell-…` flag, not inside
+  // a nix shell) this is `undefined`, which `configureNixShellEnv` treats
+  // as "pass the parent env through" — matching kolu-server. Do NOT
+  // default to "default" here: that would diverge from a kolu-server
+  // launched with an extended whitelist (the e2e harness adds GIT_*).
+  configureNixShellEnv(process.env.KOLU_NIX_ENV_WHITELIST);
 
   const { pidFile, socketPath, stateDir } = daemonPaths();
 
