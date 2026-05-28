@@ -320,14 +320,17 @@ const CodeTab: Component<{
           toast.error(`File reference probe failed: ${message}`);
           return { exists: false };
         });
-      if (pendingOpen() !== req) return;
+      // Superseded by a newer click or an explicit user tree-navigation:
+      // `handleSelect` clears `handled` on a probing-stage tree-click so the
+      // probe can detect the user's choice and bow out without stomping it.
+      if (pendingOpen() !== req || handled()?.stage !== "probing") return;
       if (exists) {
         setSelectedPath(cand);
         setHandled({ request: req, stage: "out-of-tree", resolvedPath: cand });
         return;
       }
     }
-    if (pendingOpen() !== req) return;
+    if (pendingOpen() !== req || handled()?.stage !== "probing") return;
     setHandled({ request: req, stage: "miss" });
     toast.error(`File reference not found: ${req.ref.path}`);
   }
@@ -453,7 +456,13 @@ const CodeTab: Component<{
     const h = handled();
     if (h !== null) {
       const rel = resolvedPathOf(h);
-      if (rel !== null && rel !== path) setHandled(null);
+      // `probing` has no `resolvedPath` to compare against, so the
+      // `rel !== null` guard alone would skip the clear. But the user
+      // just navigated away, so the in-flight probe must not overwrite
+      // their choice — clear unconditionally for probing.
+      if (h.stage === "probing" || (rel !== null && rel !== path)) {
+        setHandled(null);
+      }
     }
     setSelectedPath(path);
   };
