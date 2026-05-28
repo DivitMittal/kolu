@@ -189,7 +189,15 @@ function cancelSetup(): void {
   setPhase("idle");
 }
 
-async function startRecording(): Promise<void> {
+/** Options for `startRecording`. `suggestedName` is the FSA
+ *  `suggestedName` field prefilled in the Save File picker. Required
+ *  — there is no framework-sensible default; the caller's app
+ *  convention is the only authority on the filename pattern. */
+export interface StartRecordingOptions {
+  suggestedName: string;
+}
+
+async function startRecording(opts: StartRecordingOptions): Promise<void> {
   if (phase() !== "setup") return;
   const preview = micPreviewStream();
   if (!preview) return;
@@ -198,7 +206,7 @@ async function startRecording(): Promise<void> {
   let openedWritable: FileSystemWritableFileStream | null = null;
   try {
     const handle = await window.showSaveFilePicker({
-      suggestedName: `kolu-${timestamp()}.webm`,
+      suggestedName: opts.suggestedName,
       types: [
         { description: "WebM video", accept: { "video/webm": [".webm"] } },
       ],

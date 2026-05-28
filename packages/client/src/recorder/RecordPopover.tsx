@@ -169,7 +169,10 @@ const RecordPopover: Component<{
               data-testid="record-start"
               class="h-7 px-3 text-sm text-white bg-danger hover:bg-danger/90 rounded-lg transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
               onClick={() => {
-                void recorder.startRecording();
+                const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+                void recorder.startRecording({
+                  suggestedName: `kolu-${stamp}.webm`,
+                });
               }}
             >
               Start recording
