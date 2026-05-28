@@ -157,7 +157,7 @@ function basename(path: string): string {
  *  could resolve to. The same composition `resolveLineRefPath` runs
  *  internally, exposed for callers that need to probe candidates against
  *  an authority other than the `fsListAll` file set — e.g. a server-side
- *  `fsExists` probe for files git doesn't track (#TODO).
+ *  `fsExists` probe for files git doesn't track.
  *
  *  Order is significant: cwd-relative composition comes first because
  *  that's the disambiguation the user expects when they typed a
