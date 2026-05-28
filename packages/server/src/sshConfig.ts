@@ -9,6 +9,7 @@
  *  skipped (they apply conditionally, not as named targets).
  */
 
+import { globSync } from "node:fs";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as pathResolve } from "node:path";
@@ -70,12 +71,28 @@ function parseFile(path: string, seen: Set<string>): SshHost[] {
 
     const incl = INCLUDE_LINE.exec(line);
     if (incl?.[1]) {
-      // ssh treats relative Include paths as ~/.ssh/<path>; absolute
-      // paths are honored as-is.
-      const target = incl[1].startsWith("/")
-        ? incl[1]
-        : pathResolve(homedir(), ".ssh", incl[1]);
-      out.push(...parseFile(target, seen));
+      // OpenSSH `Include` accepts (1) multiple whitespace-separated
+      // path patterns on one line and (2) glob metacharacters (`*`,
+      // `?`, `[...]`) inside each pattern — e.g. `Include
+      // ~/.ssh/conf.d/*` is common when an editor like JetBrains or
+      // VS Code drops per-project ssh configs. Relative paths are
+      // resolved against `~/.ssh/`, absolute paths are honored
+      // as-is. Tilde is expanded before globbing because `fs.glob`
+      // doesn't understand `~/`.
+      const patterns = incl[1].split(/\s+/).filter((p) => p.length > 0);
+      for (const pattern of patterns) {
+        const absPattern = pattern.startsWith("/")
+          ? pattern
+          : pathResolve(homedir(), ".ssh", expandHome(pattern));
+        const matched = globSync(absPattern);
+        // Fall back to literal-path behavior when the pattern has no
+        // glob metacharacters (e.g. `Include common`) — `globSync`
+        // returns `[absPattern]` if the file exists or `[]` if not,
+        // which is the right shape either way.
+        for (const target of matched) {
+          out.push(...parseFile(target, seen));
+        }
+      }
       continue;
     }
 

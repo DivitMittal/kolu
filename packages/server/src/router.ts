@@ -63,6 +63,23 @@ function bracketedPastePath(entry: TerminalProcess, path: string): void {
   entry.handle.write(`\x1b[200~${path}\x1b[201~`);
 }
 
+/** Refuse paste/upload for remote terminals. The scratch dir lives on
+ *  the parent's filesystem, so the bracketed-paste path the receiving
+ *  agent (Claude Code, Codex) reads would not resolve on the remote
+ *  host. Rather than silently paste a broken path, surface a typed
+ *  error the client can show. Remote upload would need an agent-side
+ *  RPC to write the bytes on the target host — out of scope for R-2. */
+function requireLocalForUpload(
+  entry: TerminalProcess,
+  kind: "image" | "file",
+): void {
+  if (entry.location.kind === "remote") {
+    throw new ORPCError("FAILED_PRECONDITION", {
+      message: `${kind === "image" ? "Clipboard image paste" : "File drop"} is not supported on remote terminals (${entry.location.host}) — the upload would land on the parent host and the agent on ${entry.location.host} could not read it.`,
+    });
+  }
+}
+
 export const appRouter = t.router({
   ...surfaceRouter,
   server: {
@@ -165,6 +182,7 @@ export const appRouter = t.router({
 
     pasteImage: t.terminal.pasteImage.handler(async ({ input }) => {
       const entry = requireTerminal(input.id);
+      requireLocalForUpload(entry, "image");
       const bytes = base64DecodedLength(input.data);
       const reason = sizeRejectionFor("clipboard image", bytes);
       if (reason !== null) {
@@ -177,6 +195,7 @@ export const appRouter = t.router({
 
     uploadFile: t.terminal.uploadFile.handler(async ({ input }) => {
       const entry = requireTerminal(input.id);
+      requireLocalForUpload(entry, "file");
       const bytes = base64DecodedLength(input.data);
       const reason = rejectionFor(input.name, bytes);
       if (reason !== null) {

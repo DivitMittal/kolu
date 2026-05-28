@@ -140,8 +140,15 @@ export function buildAgentDeps(opts: {
   metadataSnapshot: Map<TerminalId, AgentTerminalMetadata>;
   publishExit: (id: TerminalId, exitCode: number) => void;
   publishMetadata: (id: TerminalId, meta: AgentTerminalMetadata) => void;
+  publishMetadataRemove: (id: TerminalId) => void;
 }): AgentImplDeps {
-  const { terminals, metadataSnapshot, publishExit, publishMetadata } = opts;
+  const {
+    terminals,
+    metadataSnapshot,
+    publishExit,
+    publishMetadata,
+    publishMetadataRemove,
+  } = opts;
 
   function requireTerminal(id: TerminalId): AgentTerminal {
     const t = terminals.get(id);
@@ -232,8 +239,15 @@ export function buildAgentDeps(opts: {
                 if (t) {
                   t.stopProviders();
                   terminals.delete(input.id);
-                  metadataSnapshot.delete(input.id);
                 }
+                // Route removal through the surface collection so the
+                // `keysBus` fires and the parent's `mirrorRemoteCollection`
+                // sees the key depart — without this, the parent's
+                // per-key `get` stream stays open for an exited remote
+                // terminal. `publishMetadataRemove` also clears
+                // `metadataSnapshot`, so we no longer delete it
+                // directly here.
+                publishMetadataRemove(input.id);
                 publishExit(input.id, exitCode);
               },
               onTitleChange: (t) => title.publish(t),
@@ -455,11 +469,13 @@ export async function runAgent(): Promise<void> {
   let publishExit: (id: TerminalId, exitCode: number) => void = () => {};
   let publishMetadata: (id: TerminalId, meta: AgentTerminalMetadata) => void =
     () => {};
+  let publishMetadataRemove: (id: TerminalId) => void = () => {};
   const deps = buildAgentDeps({
     terminals,
     metadataSnapshot,
     publishExit: (id, ec) => publishExit(id, ec),
     publishMetadata: (id, meta) => publishMetadata(id, meta),
+    publishMetadataRemove: (id) => publishMetadataRemove(id),
   });
 
   log.info("serving agent surface over stdio");
@@ -470,6 +486,8 @@ export async function runAgent(): Promise<void> {
     fragment.ctx.events.terminalExit.publish({ id }, exitCode);
   publishMetadata = (id, meta) =>
     fragment.ctx.collections.terminalMetadata.upsert(id, meta);
+  publishMetadataRemove = (id) =>
+    fragment.ctx.collections.terminalMetadata.remove(id);
 
   // Graceful shutdown — parent's HostSession.teardown sends SIGTERM
   // when it disposes a session. Log the signal before exit so the

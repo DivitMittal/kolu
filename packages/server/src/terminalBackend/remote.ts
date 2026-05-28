@@ -213,10 +213,22 @@ export class RemoteTerminalBackend implements TerminalBackend {
     }
     if (this.session) return this.session;
     if (!this.sessionPromise) {
-      this.sessionPromise = getKoluHostSessionAsync(this.host).then((s) => {
+      // Don't cache failures. `getKoluHostSessionAsync` can reject on
+      // first call (ssh `uname` timeout, `nix eval` failure, network
+      // blip) — the drv-path resolver inside it deliberately drops
+      // its own cache on error so a retry actually retries. If we
+      // kept the rejected promise here, every subsequent `callAgent`
+      // would await the same rejection and the host backend would
+      // stay bricked until server restart. Clear on reject so the
+      // next caller starts a fresh resolution.
+      const promise = getKoluHostSessionAsync(this.host).then((s) => {
         this.session = s;
         this.startBridge(s);
         return s;
+      });
+      this.sessionPromise = promise;
+      promise.catch(() => {
+        if (this.sessionPromise === promise) this.sessionPromise = null;
       });
     }
     return this.sessionPromise;
