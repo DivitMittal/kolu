@@ -52,6 +52,7 @@ import { makePersisted } from "@solid-primitives/storage";
 import type { TerminalId } from "kolu-common/surface";
 import { type Component, For, Show, createMemo, createSignal } from "solid-js";
 import { createSharedRoot } from "../../createSharedRoot";
+import HostChip from "../../terminal/HostChip";
 import { formatTimeAgo } from "../../terminal/staleness";
 import { IntentMarkdownInline } from "../../intent/IntentMarkdown";
 import { annotationLine } from "../../intent/text";
@@ -427,11 +428,12 @@ const DockRow: Component<{
         >
           <AgentSlot agent={c().meta.agent} />
           <span
-            class="font-medium text-[0.85rem] leading-tight truncate min-w-0"
+            class="font-medium text-[0.85rem] leading-tight truncate min-w-0 flex items-center gap-1"
             style={{
               color: c().info.annotationColor,
             }}
           >
+            <HostChip location={c().meta.location} />
             <IntentMarkdownInline
               markdown={annotationLine(c().meta.intent, c().info.key.label)}
             />
@@ -544,6 +546,7 @@ const RailChip: Component<{
             data-sub-count={
               c().info.subCount > 0 ? c().info.subCount : undefined
             }
+            data-remote={c().meta.location?.kind === "remote" ? "" : undefined}
             onClick={() => store.activate(props.id)}
             class="dock-rail-chip"
             style={{
@@ -579,7 +582,10 @@ const RailChip: Component<{
 };
 
 function chipTooltip(info: TerminalDisplayInfo, bucket: DockRowBucket): string {
-  return `${info.key.group} · ${info.key.label} · ${bucket}`;
+  const location = info.meta.location;
+  const host =
+    location?.kind === "remote" ? ` · on ${location.host} (remote)` : "";
+  return `${info.key.group} · ${info.key.label} · ${bucket}${host}`;
 }
 
 export default Dock;
