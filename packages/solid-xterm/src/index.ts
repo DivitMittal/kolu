@@ -13,6 +13,10 @@
  *  components — callers wire data into them imperatively. */
 
 export {
+  type AttachXtermStyleSyncOptions,
+  attachXtermStyleSync,
+} from "./styleSync";
+export {
   type CreateXtermWebglOptions,
   createXtermWebgl,
   type XtermWebglHandle,

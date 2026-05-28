@@ -15,7 +15,11 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal as XTerm } from "@xterm/xterm";
-import { createXtermWebgl, type XtermWebglHandle } from "@kolu/solid-xterm";
+import {
+  attachXtermStyleSync,
+  createXtermWebgl,
+  type XtermWebglHandle,
+} from "@kolu/solid-xterm";
 import {
   type Component,
   createEffect,
@@ -297,18 +301,19 @@ const Terminal: Component<{
     ),
   );
 
-  // Apply theme changes at runtime — xterm.js supports live theme switching.
-  createEffect(
-    on(
-      () => props.theme,
-      (theme) => {
-        if (!terminal) return;
-        terminal.options.theme = theme;
-        clearTextureAtlas();
-      },
-      { defer: true },
-    ),
-  );
+  // Reactive theme + font-size sync sits behind a single
+  // `@kolu/solid-xterm` helper — the two effects, the defer:true
+  // discipline (initial values come from the XTerm constructor),
+  // and the after-change hook ordering all live in the framework.
+  attachXtermStyleSync(() => terminal, {
+    theme: () => props.theme,
+    fontSize,
+    onThemeChange: clearTextureAtlas,
+    onFontSizeChange: () => {
+      clearTextureAtlas();
+      debouncedFit();
+    },
+  });
 
   /** Resize the server-side PTY so node-pty matches the xterm grid. */
   async function publishDimensions() {
@@ -321,20 +326,6 @@ const Terminal: Component<{
       // Terminal may have been killed mid-resize
     }
   }
-
-  // Apply font-size changes reactively (initial value handled by XTerm constructor)
-  createEffect(
-    on(
-      fontSize,
-      (size) => {
-        if (!terminal) return;
-        terminal.options.fontSize = size;
-        debouncedFit();
-        clearTextureAtlas();
-      },
-      { defer: true },
-    ),
-  );
 
   // Cleanup registered SYNCHRONOUSLY at component body top — NOT inside the
   // async `onMount` below. If the reactive owner disposes during `onMount`'s
