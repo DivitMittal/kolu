@@ -44,15 +44,15 @@ import type {
   TerminalMetadata,
 } from "kolu-common/surface";
 import { type GitHubPrInfo, prValue } from "kolu-github/schemas";
-import { type Component, Show, createMemo } from "solid-js";
+import { type Component, createMemo, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { agentBucket, bucketDescriptor } from "../dockModel";
 import ChecksIndicator from "../../terminal/ChecksIndicator";
 import { prTooltip } from "../../terminal/prTooltip";
 import type { TerminalDisplayInfo } from "../../terminal/terminalDisplay";
 import { useTerminalStore } from "../../terminal/useTerminalStore";
 import { agentIcons, stateLabels } from "../../ui/agentDisplay";
 import { PrStateIcon } from "../../ui/Icons";
+import { agentBucket, bucketDescriptor } from "../dockModel";
 import { SubCountChip } from "./SubCountChip";
 
 /** Per-row combined reactive data — `info` + `meta` in a single memo.

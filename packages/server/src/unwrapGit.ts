@@ -11,8 +11,8 @@
  */
 
 import { ORPCError } from "@orpc/server";
-import { match } from "ts-pattern";
 import type { GitResult } from "kolu-git";
+import { match } from "ts-pattern";
 
 export function unwrapGit<T>(result: GitResult<T>): T {
   if (result.ok) return result.value;

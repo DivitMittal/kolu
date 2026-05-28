@@ -12,6 +12,7 @@
  *  colouring is baked in here because the meaning ("filter active" vs
  *  "all") is the same wherever the chip lives. */
 
+import type { AnchorSide } from "@kolu/solid-anchored-popover";
 import { type Component, createSignal } from "solid-js";
 import {
   activityWindow,
@@ -19,7 +20,6 @@ import {
   WINDOW_OPTIONS,
   windowOption,
 } from "../terminal/activityWindow";
-import type { AnchorSide } from "@kolu/solid-anchored-popover";
 import { OptionMenu } from "./OptionMenu";
 
 export const ActivityWindowChip: Component<{

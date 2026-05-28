@@ -3,8 +3,8 @@ import {
   DEFAULT_TILE_H,
   DEFAULT_TILE_W,
   GRID_SIZE,
-  repackBucket,
   type RepoIslandTile,
+  repackBucket,
 } from "@kolu/canvas-layout";
 import { describe, expect, it } from "vitest";
 

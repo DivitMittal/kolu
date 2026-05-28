@@ -5,6 +5,14 @@
  * reactively via a fontSize signal.
  */
 
+import { writeTextToClipboard } from "@kolu/browser-clipboard";
+import { SafeClipboardProvider } from "@kolu/browser-clipboard/xterm";
+import {
+  attachXtermStyleSync,
+  createScrollLock,
+  createXtermWebgl,
+  type XtermWebglHandle,
+} from "@kolu/solid-xterm";
 import { makeEventListener } from "@solid-primitives/event-listener";
 import { createResizeObserver } from "@solid-primitives/resize-observer";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
@@ -15,12 +23,6 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal as XTerm } from "@xterm/xterm";
-import {
-  attachXtermStyleSync,
-  createScrollLock,
-  createXtermWebgl,
-  type XtermWebglHandle,
-} from "@kolu/solid-xterm";
 import {
   type Component,
   createEffect,
@@ -34,23 +36,20 @@ import {
 } from "solid-js";
 import { toast } from "solid-sonner";
 import { match } from "ts-pattern";
-import { writeTextToClipboard } from "@kolu/browser-clipboard";
-import { SafeClipboardProvider } from "@kolu/browser-clipboard/xterm";
 import "@xterm/xterm/css/xterm.css";
-import type { TerminalId } from "kolu-common/surface";
-import { DEFAULT_SCROLLBACK } from "kolu-common/config";
-import { rejectionFor, sizeRejectionFor } from "kolu-common/upload";
+import { streamCall } from "@kolu/surface/solid";
 import { FONT_FAMILY } from "@kolu/terminal-themes";
+import { DEFAULT_SCROLLBACK } from "kolu-common/config";
+import type { TerminalId } from "kolu-common/surface";
+import { rejectionFor, sizeRejectionFor } from "kolu-common/upload";
 import { ACTIONS, matchesAnyShortcut } from "../input/actions";
 import { matchesKeybind } from "../input/keyboard";
 import { createZoom } from "../input/zoom";
 import { refitOnTabVisible } from "../refitOnTabVisible";
-import { streamCall } from "@kolu/surface/solid";
-import { client } from "../wire";
-import { isExpectedCleanupError } from "../rpc/streamCleanup";
 import { openInCodeTab } from "../right-panel/openInCodeTab";
-import { preferences } from "../wire";
+import { isExpectedCleanupError } from "../rpc/streamCleanup";
 import { isTouch } from "../useMobile";
+import { client, preferences } from "../wire";
 import { createFileRefLinkProvider } from "./fileRefLinkProvider";
 import { setupMobileTapToFocus, setupMobileTouchScroll } from "./mobileTouch";
 import ScrollToBottom from "./ScrollToBottom";

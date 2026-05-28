@@ -25,9 +25,9 @@ import { useTerminalStore } from "../../terminal/useTerminalStore";
 import type { DockRowBucket } from "./dockRowRanking";
 import type { DockGroup } from "./dockTree";
 import { HiddenFooter } from "./HiddenFooter";
-import { useDockOrder } from "./useDockOrder";
-import { AgentSlot, PrPip, SubCountCell, createDockRowData } from "./RowPips";
+import { AgentSlot, createDockRowData, PrPip, SubCountCell } from "./RowPips";
 import { rowSubline } from "./rowSubline";
+import { useDockOrder } from "./useDockOrder";
 
 const MobileDockDrawer: Component<{
   onSelect: (id: TerminalId) => void;

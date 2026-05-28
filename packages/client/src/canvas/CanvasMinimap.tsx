@@ -1,5 +1,6 @@
 /** Canvas minimap — spatial overview of all tiles + integrated zoom controls. */
 
+import { useCanvasViewport } from "@kolu/solid-canvas-viewport";
 import {
   type Component,
   createMemo,
@@ -13,6 +14,7 @@ import type { TerminalDisplayInfo } from "../terminal/terminalDisplay";
 import { useTerminalStore } from "../terminal/useTerminalStore";
 import { ActivityWindowChip } from "../ui/ActivityWindowChip";
 import { GridIcon } from "../ui/Icons";
+import { agentBucket, bucketDescriptor } from "./dockModel";
 import {
   handleMinimapClick,
   startTileDrag,
@@ -20,8 +22,6 @@ import {
 } from "./minimapGestures";
 import type { TileLayout } from "./TileLayout";
 import { useTileTheme } from "./useTileTheme";
-import { useCanvasViewport } from "@kolu/solid-canvas-viewport";
-import { agentBucket, bucketDescriptor } from "./dockModel";
 
 /** Minimap target dimensions in pixels. */
 const MAP_W = 180;

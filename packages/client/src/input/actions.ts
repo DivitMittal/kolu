@@ -10,8 +10,8 @@
  * via `actionPaletteCommand`.
  */
 
-import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
 import { nonEmpty } from "@kolu/nonempty";
+import type { TerminalId, TerminalMetadata } from "kolu-common/surface";
 import type { Accessor, Setter } from "solid-js";
 import type { PaletteAction, SectionId } from "../CommandPalette";
 import { type Keybind, matchesKeybind } from "./keyboard";

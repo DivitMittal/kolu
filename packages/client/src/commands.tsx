@@ -1,13 +1,11 @@
 /** Command palette registry — declarative list of all app-level actions. */
 
+import { randomName } from "@kolu/memorable-names";
+import { availableThemes } from "@kolu/terminal-themes";
 import type { RecentAgent, TerminalId } from "kolu-common/surface";
 import { WorktreeNameSchema } from "kolu-git/schemas";
-import { randomName } from "@kolu/memorable-names";
 import type { Accessor, Component } from "solid-js";
 import { batch, createMemo } from "solid-js";
-import { availableThemes } from "@kolu/terminal-themes";
-import type { DockSourceEntry } from "./canvas/dockModel";
-import WorkspaceGrid from "./canvas/dock/WorkspaceGrid";
 import type {
   PaletteAction,
   PaletteCommand,
@@ -16,6 +14,8 @@ import type {
   PaletteLabel,
   PaletteValueInput,
 } from "./CommandPalette";
+import WorkspaceGrid from "./canvas/dock/WorkspaceGrid";
+import type { DockSourceEntry } from "./canvas/dockModel";
 import {
   ACTIONS,
   type ActionContext,

@@ -164,7 +164,7 @@ export function useRecorder() {
   };
 }
 
-function timestamp(): string {
+function _timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 

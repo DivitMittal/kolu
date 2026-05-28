@@ -1,6 +1,7 @@
 /** `@kolu/solid-recorder` — Solid-native browser tab + mic (+
  *  webcam) recording. See `./README.md`. */
 
+export { default as LevelMeter } from "./LevelMeter";
 export {
   closeMicPreview,
   mic,
@@ -10,15 +11,6 @@ export {
   setMicSelectedId,
 } from "./mic";
 export {
-  changeWebcam,
-  closeWebcam,
-  openWebcam,
-  setWebcamDevices,
-  toggleWebcam,
-  webcam,
-  type WebcamState,
-} from "./webcam";
-export {
   configureRecorderNotifications,
   formatElapsed,
   isRecordingSupported,
@@ -27,5 +19,13 @@ export {
   type StartRecordingOptions,
   useRecorder,
 } from "./useRecorder";
-export { default as LevelMeter } from "./LevelMeter";
 export { default as WebcamOverlay } from "./WebcamOverlay";
+export {
+  changeWebcam,
+  closeWebcam,
+  openWebcam,
+  setWebcamDevices,
+  toggleWebcam,
+  type WebcamState,
+  webcam,
+} from "./webcam";
