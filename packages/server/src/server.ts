@@ -22,6 +22,7 @@ import {
   TERMINAL_FILE_ROUTE_BASE,
   TERMINAL_FILE_ROUTE_FILE_SEGMENT,
 } from "./iframePreviewRoute.ts";
+import { ensureDaemon } from "./daemon/supervisor.ts";
 import { ensureKoluRoot, shutdownCleanup } from "./koluRoot.ts";
 import { log } from "./log.ts";
 import { pwaIdentityForHostname } from "./pwaIdentity.ts";
@@ -78,6 +79,22 @@ configureNixShellEnv(argv.flags.allowNixShellWithEnvWhitelist);
 ensureKoluRoot();
 initSessionAutoSave(snapshotSession);
 if (argv.flags.verbose) log.level = "debug";
+
+// R-4: eagerly spawn the local PTY-host daemon before any client
+// connection comes in. The daemon survives kolu-server restart (it's
+// detached + unrefd); on every subsequent kolu-server boot the
+// supervisor reuses the existing socket. If the daemon hasn't bound
+// the socket within 5 s we crash kolu-server — better fail-fast at
+// boot than mid-session.
+const daemonHandle = await ensureDaemon();
+log.info(
+  {
+    pid: daemonHandle.daemonPid,
+    contract: daemonHandle.contractVersion,
+    socket: daemonHandle.socketPath,
+  },
+  "local PTY-host daemon ready",
+);
 
 const app = new Hono();
 

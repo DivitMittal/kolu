@@ -33,15 +33,9 @@ import { userInfo } from "node:os";
 import { dirname } from "node:path";
 import { createPtyHost } from "@kolu/pty-host";
 import { serveOverStdio } from "@kolu/surface/peer-server";
-import {
-  implementSurface,
-  inMemoryChannelByName,
-} from "@kolu/surface/server";
+import { implementSurface, inMemoryChannelByName } from "@kolu/surface/server";
 import { implement } from "@orpc/server";
-import {
-  AGENT_CONTRACT_VERSION,
-  agentSurface,
-} from "kolu-common/agentSurface";
+import { AGENT_CONTRACT_VERSION, agentSurface } from "kolu-common/agentSurface";
 import {
   cleanEnv,
   configureNixShellEnv,
@@ -239,9 +233,7 @@ async function main(): Promise<void> {
             const env = cleanEnv();
             const shell = env.SHELL ?? "/bin/sh";
             const cwd =
-              input.cwd && input.cwd.length > 0
-                ? input.cwd
-                : (env.HOME ?? "/");
+              input.cwd && input.cwd.length > 0 ? input.cwd : (env.HOME ?? "/");
             Object.assign(env, koluIdentityEnv(input.termProgramVersion));
             const terminalId = randomUUID();
             const shellInit = prepareShellInit({

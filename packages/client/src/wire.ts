@@ -95,6 +95,13 @@ export const savedSession = (): SavedSession | null =>
   _savedSession.value() ?? null;
 export const savedSessionSub = _savedSession.sub;
 
+const _localPtyDaemon = app.cells.localPtyDaemon.use({
+  onError: (err) =>
+    toast.error(`Local PTY daemon subscription error: ${err.message}`),
+});
+/** Live local PTY-host daemon status — drives the chrome-bar dot. */
+export const localPtyDaemonStatus = () => _localPtyDaemon.value();
+
 // Live terminal list — server-driven on create/kill.
 const _terminalList = app.cells.terminalList.use({
   onError: (err) => toast.error(`Terminal list error: ${err.message}`),

@@ -276,6 +276,32 @@ export const TerminalInfoSchema = z.object({
 export const TerminalAttachInputSchema = z.object({ id: TerminalIdSchema });
 export const TerminalOnExitOutputSchema = z.number();
 
+// ── Local PTY-host daemon status ──────────────────────────────────────
+
+/** Status of the kolu local PTY-host daemon, as observed by
+ *  kolu-server. Read-only on the client (the chrome-bar dot reads
+ *  this); kolu-server is the sole writer at boot, on socket close,
+ *  and on heartbeat. */
+export const LocalPtyDaemonStatusSchema = z.object({
+  /** Lifecycle stage:
+   *   - `starting` — supervisor is spawning / connecting
+   *   - `ready`    — connected, version handshake complete
+   *   - `down`     — socket dropped; reconnect not yet completed */
+  state: z.enum(["starting", "ready", "down"]),
+  /** Daemon process PID (post-handshake). */
+  pid: z.number().int().optional(),
+  /** Daemon's `agentSurface` contract version (e.g. "1.0"). */
+  contractVersion: z.string().optional(),
+  /** Unix socket path the daemon is bound to. */
+  socketPath: z.string().optional(),
+  /** Epoch ms at which kolu-server last observed the daemon as live. */
+  lastSeenAt: z.number().optional(),
+});
+
+export const DEFAULT_LOCAL_PTY_DAEMON_STATUS: z.infer<
+  typeof LocalPtyDaemonStatusSchema
+> = { state: "starting" };
+
 // ── Activity feed sub-schemas ─────────────────────────────────────────
 
 export const RecentRepoSchema = z.object({
@@ -536,6 +562,15 @@ export const surface = defineSurface({
     terminalList: {
       schema: z.array(TerminalInfoSchema),
       default: [] as z.infer<typeof TerminalInfoSchema>[],
+      verbs: ["get"],
+    },
+
+    /** Local PTY-host daemon status. Read-only on the client; the
+     *  chrome-bar daemon dot subscribes here. Written by kolu-server's
+     *  supervisor at boot + on socket close. */
+    localPtyDaemon: {
+      schema: LocalPtyDaemonStatusSchema,
+      default: DEFAULT_LOCAL_PTY_DAEMON_STATUS,
       verbs: ["get"],
     },
   },

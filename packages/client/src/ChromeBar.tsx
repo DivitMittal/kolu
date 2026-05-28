@@ -28,6 +28,7 @@ import { formatKeybind } from "./input/keyboard";
 import RecordButton from "./recorder/RecordButton";
 import { useRightPanel } from "./right-panel/useRightPanel";
 import type { WsStatus } from "./rpc/rpc";
+import { localPtyDaemonStatus } from "./wire";
 import SettingsPopover from "./settings/SettingsPopover";
 import { DockToggleIcon, InspectorToggleIcon, SettingsIcon } from "./ui/Icons";
 import Kbd from "./ui/Kbd";
@@ -38,6 +39,18 @@ const statusStyles: Record<WsStatus, string> = {
   open: "bg-ok",
   closed: "bg-danger",
 };
+
+const daemonStyles = {
+  starting: "bg-warning animate-pulse",
+  ready: "bg-ok",
+  down: "bg-danger animate-pulse",
+} as const;
+
+const daemonLabels = {
+  starting: "Local PTY daemon: starting…",
+  ready: "Local PTY daemon: connected",
+  down: "Local PTY daemon: disconnected",
+} as const;
 
 const ChromeBar: Component<{
   status: WsStatus;
@@ -111,6 +124,19 @@ const ChromeBar: Component<{
           <span
             data-ws-status={props.status}
             class={`inline-block w-2 h-2 rounded-full transition-colors ${statusStyles[props.status]}`}
+          />
+        </Tip>
+        <Tip
+          label={
+            daemonLabels[
+              (localPtyDaemonStatus()?.state ??
+                "starting") as keyof typeof daemonLabels
+            ]
+          }
+        >
+          <span
+            data-daemon-status={localPtyDaemonStatus()?.state ?? "starting"}
+            class={`inline-block w-2 h-2 rounded-full transition-colors ${daemonStyles[(localPtyDaemonStatus()?.state ?? "starting") as keyof typeof daemonStyles]}`}
           />
         </Tip>
       </div>

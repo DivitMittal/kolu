@@ -30,6 +30,7 @@ import {
   type CellStore,
   confStore,
   implementSurface,
+  inMemoryStore,
   publisherChannel,
 } from "@kolu/surface/server";
 import { implement } from "@orpc/server";
@@ -41,7 +42,7 @@ import type {
   SavedSession,
   TerminalMetadata,
 } from "kolu-common/surface";
-import { surface } from "kolu-common/surface";
+import { DEFAULT_LOCAL_PTY_DAEMON_STATUS, surface } from "kolu-common/surface";
 import {
   type FsReadFileOutput,
   fsListAllOutputEqual,
@@ -144,6 +145,11 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
       terminalList: {
         // Live registry; the in-memory store has no persistent slot.
         store: { get: () => listTerminals(), set: () => {} },
+      },
+      localPtyDaemon: {
+        // In-memory; the supervisor mutates via `ctx.cells.localPtyDaemon.set`
+        // at boot and on socket close.
+        store: inMemoryStore(DEFAULT_LOCAL_PTY_DAEMON_STATUS),
       },
     },
 
