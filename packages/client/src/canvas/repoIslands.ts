@@ -22,7 +22,7 @@
 import type { TerminalId } from "kolu-common/surface";
 import { DEFAULT_TILE_H, DEFAULT_TILE_W } from "./tilePlacement";
 import type { TileLayout } from "./TileLayout";
-import { GRID_SIZE, snapToGrid } from "./viewport/transforms";
+import { GRID_SIZE, snapToGrid } from "./canvasGeometry";
 
 /** Tile input for the layout. `bucket` is the clustering key the caller
  *  projected (today: `terminalKey(meta).group`). `layout` is the tile's
