@@ -45,7 +45,6 @@ import {
   gitDiffOutputEqual,
   gitStatusOutputEqual,
 } from "kolu-git";
-import { unwrapGit } from "./gitUnwrap.ts";
 import {
   buildIframePreviewUrl,
   isIframePreviewable,
@@ -54,15 +53,27 @@ import { log } from "./log.ts";
 import { publisher } from "./publisher.ts";
 import { cancelPendingAutosave, getSavedSession } from "./session.ts";
 import { store } from "./state.ts";
-// Import the local backend directly (not via getTerminalBackendFor) to
-// avoid a cyclic import: getTerminalBackendFor → remote.ts → metadata.ts
-// → surface.ts. The parent surface's fs/git streams always read from
-// the local backend today (cross-host Code-tab routing is the next
-// refinement once `meta.location` is plumbed into the stream sources).
 import { localTerminalBackend } from "./terminalBackend/local.ts";
+// `getTerminalBackendFor` is part of an import cycle (terminalBackend/
+// index.ts → remote.ts → metadata.ts → surface.ts). ESM tolerates the
+// cycle because every consumer below accesses the binding lazily
+// inside handler closures, never at module init.
+import { getTerminalBackendFor } from "./terminalBackend/index.ts";
+import type { TerminalBackend } from "kolu-common/terminalBackend";
+import type { TerminalId } from "kolu-common/surface";
 import { getTerminal, listTerminals } from "./terminal-registry.ts";
 
-const localBackend = localTerminalBackend;
+/** Resolve the backend that owns a given terminal. Streams dispatch
+ *  via this so remote Code-tab reads hit the agent's fs/git, not the
+ *  parent's. Returns the local backend if the terminal is unknown
+ *  (e.g. a stream re-subscribe racing a kill) — the underlying read
+ *  will throw naturally, which the stream layer surfaces to the
+ *  client. */
+function backendForTerminal(id: TerminalId): TerminalBackend {
+  const t = getTerminal(id);
+  if (!t) return localTerminalBackend;
+  return getTerminalBackendFor(t.location);
+}
 
 // `t` is the host router builder; both `surfaceRouter` and the raw oRPC
 // handlers in `router.ts` plug procedures into it. Exported so `router.ts`
@@ -173,39 +184,61 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
     },
 
     streams: {
-      // fs/git streams are per-host one-shot ops; R-1 has only the
-      // local backend, but every read/install dispatches through the
-      // resolver so R-2 can branch on a `location` input without
-      // touching this block again.
+      // Each stream dispatches through `backendForTerminal(input.terminalId)`
+      // so remote terminals read fs/git on the agent host. Local
+      // terminals fall through to `localTerminalBackend`. The resolver
+      // is identity-stable per terminal, so `install` and `read` see
+      // the same backend across the lifetime of a subscription.
       gitStatus: {
         read: async (input) =>
-          localBackend.git.getStatus(input.repoPath, input.mode),
+          backendForTerminal(input.terminalId).git.getStatus(
+            input.repoPath,
+            input.mode,
+          ),
         install: (input, cb) =>
-          localBackend.fs.subscribeRepoChange(input.repoPath, cb),
+          backendForTerminal(input.terminalId).fs.subscribeRepoChange(
+            input.repoPath,
+            cb,
+          ),
         isEqual: gitStatusOutputEqual,
       },
       gitDiff: {
         read: async (input) =>
-          localBackend.git.getDiff(
+          backendForTerminal(input.terminalId).git.getDiff(
             input.repoPath,
             input.filePath,
             input.mode,
             input.oldPath,
           ),
         install: (input, cb) =>
-          localBackend.fs.subscribeRepoChange(input.repoPath, cb),
+          backendForTerminal(input.terminalId).fs.subscribeRepoChange(
+            input.repoPath,
+            cb,
+          ),
         isEqual: gitDiffOutputEqual,
       },
       fsListAll: {
-        read: async (input) => localBackend.fs.listAll(input.repoPath),
+        read: async (input) =>
+          backendForTerminal(input.terminalId).fs.listAll(input.repoPath),
         install: (input, cb) =>
-          localBackend.fs.subscribeRepoChange(input.repoPath, cb),
+          backendForTerminal(input.terminalId).fs.subscribeRepoChange(
+            input.repoPath,
+            cb,
+          ),
         isEqual: fsListAllOutputEqual,
       },
       fsReadFile: {
         read: async (input): Promise<FsReadFileOutput> => {
-          if (isIframePreviewable(input.filePath)) {
-            const mtimeMs = await localBackend.fs.statFileMtimeMs(
+          const backend = backendForTerminal(input.terminalId);
+          // Iframe preview is only available for local terminals —
+          // the URL points at the parent's HTTP file route, which
+          // reads from the parent's local FS. Remote files fall back
+          // to text mode (agent already returns `{content, truncated}`
+          // for every read).
+          const term = getTerminal(input.terminalId);
+          const isLocal = !term || term.location.kind === "local";
+          if (isLocal && isIframePreviewable(input.filePath)) {
+            const mtimeMs = await backend.fs.statFileMtimeMs(
               input.repoPath,
               input.filePath,
             );
@@ -218,14 +251,14 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
               ),
             };
           }
-          const { content, truncated } = await localBackend.fs.readFile(
+          const { content, truncated } = await backend.fs.readFile(
             input.repoPath,
             input.filePath,
           );
           return { kind: "text", content, truncated };
         },
         install: (input, cb) =>
-          localBackend.fs.subscribeFileChange(
+          backendForTerminal(input.terminalId).fs.subscribeFileChange(
             input.repoPath,
             input.filePath,
             cb,

@@ -165,9 +165,10 @@ const CodeTab: Component<{
 
   const status = app.streams.gitStatus.use(
     () => {
+      const tid = props.terminalId;
       const p = repoPath();
       const m = diffMode();
-      return p && m ? { repoPath: p, mode: m } : null;
+      return tid && p && m ? { terminalId: tid, repoPath: p, mode: m } : null;
     },
     {
       onError: (err) => toast.error(`Git status stream: ${err.message}`),
@@ -176,8 +177,11 @@ const CodeTab: Component<{
 
   const allPaths = app.streams.fsListAll.use(
     () => {
+      const tid = props.terminalId;
       const p = repoPath();
-      return p && view() === "browse" ? { repoPath: p } : null;
+      return tid && p && view() === "browse"
+        ? { terminalId: tid, repoPath: p }
+        : null;
     },
     {
       onError: (err) => toast.error(`File list stream: ${err.message}`),
@@ -186,13 +190,20 @@ const CodeTab: Component<{
 
   const diff = app.streams.gitDiff.use(
     () => {
+      const tid = props.terminalId;
       const p = repoPath();
       const s = selectedPath();
       const m = diffMode();
-      if (!p || !s || !m) return null;
+      if (!tid || !p || !s || !m) return null;
       const file = status()?.files.find((f) => f.path === s);
       if (!file) return null;
-      return { repoPath: p, filePath: s, mode: m, oldPath: file.oldPath };
+      return {
+        terminalId: tid,
+        repoPath: p,
+        filePath: s,
+        mode: m,
+        oldPath: file.oldPath,
+      };
     },
     {
       onError: (err) => toast.error(`Git diff stream: ${err.message}`),

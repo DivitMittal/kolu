@@ -36,6 +36,7 @@ import type { Terminal as HeadlessTerminal } from "@xterm/headless";
 import type { SerializeAddon as SerializeAddonType } from "@xterm/addon-serialize";
 import {
   type AgentClient,
+  type HostSession,
   mirrorRemoteCollection,
 } from "@kolu/surface-nix-host";
 import { DEFAULT_SCROLLBACK } from "kolu-common/config";
@@ -92,11 +93,16 @@ import {
 import { getKoluHostSessionAsync } from "./remoteSession.ts";
 
 /** Per-terminal record the backend keeps internally so the data-pump
- *  abort controllers (one per stream) can be torn down on kill. */
+ *  abort controllers (one per stream) can be torn down on kill, and the
+ *  parent-side mirrored headless terminal can be disposed (releasing
+ *  the scrollback buffer). */
 interface RemoteTerminalRecord {
   /** Aborts every per-terminal stream pump (data, cwd, title,
-   *  commandRun). Used on kill / disconnect cleanup. */
+   *  commandRun, exit). Used on kill / disconnect cleanup. */
   abort: AbortController;
+  /** Parent-side mirrored xterm/headless. Must be disposed on
+   *  kill/exit/spawn-failure or its internal buffer leaks. */
+  handle: RemotePtyHandle;
 }
 
 class RemotePtyHandle implements TerminalHandle {
@@ -174,53 +180,52 @@ export class RemoteTerminalBackend implements TerminalBackend {
     this.git = buildRemoteGit(this);
   }
 
-  /** Cached pinned client. `HostSession.pin()` increments a refcount
-   *  per call and the bridge code (parent-lifetime) is supposed to
-   *  call it ONCE — calling on every RPC would grow refCount
-   *  unboundedly and block the session's reconnect-on-disconnect
-   *  teardown. Cache the resolved client once per backend; every
-   *  subsequent RPC reuses it. */
-  private clientPromise: Promise<AgentClient<AgentContract>> | null = null;
+  /** The pooled HostSession for this backend's host. Lazily resolved on
+   *  first `callAgent` / `spawnPty` so the constructor stays
+   *  synchronous (the dispatcher in `index.ts` builds the backend
+   *  before any RPC fires). One `pin()` per backend bumps the refcount
+   *  exactly once; reconnect-on-disconnect is driven by `runBridge`
+   *  via `waitForNextClient`. */
+  private session: HostSession<AgentContract> | null = null;
+  private sessionPromise: Promise<HostSession<AgentContract>> | null = null;
+  private bridgeStarted = false;
   private connectedAcked = false;
-  private stateSubscribed = false;
 
-  /** Run one RPC against the pinned client. Pin happens at most once
-   *  per backend (per host). `markConnected()` runs at most once
-   *  after the first successful RPC. */
-  async callAgent<T>(
-    fn: (client: AgentClient<AgentContract>) => Promise<T>,
-  ): Promise<T> {
-    if (!this.clientPromise) {
-      this.clientPromise = getKoluHostSessionAsync(this.host).then((s) =>
-        s.pin(),
-      );
-      // Subscribe to the session's connection-state changes once per
-      // backend (per host). Every terminal on this host shares the
-      // same underlying ssh subprocess, so they share the connection
-      // state too — push the current state into each terminal's
-      // `meta.connectionState` so the client's overlay can render.
-      void this.ensureStateSubscription();
+  /** Resolve the host session, kicking off the long-running bridge on
+   *  first call. The bridge owns the `pin()` and the reconnect loop
+   *  for host-level pumps (metadata mirror, heartbeat); per-terminal
+   *  pumps in `spawnAsync` consume the *current* client at spawn time
+   *  and bind to its lifetime — agent restart kills those terminals
+   *  by construction (the agent has no memory of them after respawn). */
+  private async ensureSession(): Promise<HostSession<AgentContract>> {
+    if (this.session) return this.session;
+    if (!this.sessionPromise) {
+      this.sessionPromise = getKoluHostSessionAsync(this.host).then((s) => {
+        this.session = s;
+        this.startBridge(s);
+        return s;
+      });
     }
-    const client = await this.clientPromise;
-    const result = await fn(client);
-    if (!this.connectedAcked) {
-      const session = await getKoluHostSessionAsync(this.host);
-      session.markConnected();
-      this.connectedAcked = true;
-    }
-    return result;
+    return this.sessionPromise;
   }
 
-  private async ensureStateSubscription(): Promise<void> {
-    if (this.stateSubscribed) return;
-    this.stateSubscribed = true;
-    const session = await getKoluHostSessionAsync(this.host);
+  /** Start the per-host bridge: state subscription, heartbeat,
+   *  metadata-mirror reconnect loop. Runs once per backend. */
+  private startBridge(session: HostSession<AgentContract>): void {
+    if (this.bridgeStarted) return;
+    this.bridgeStarted = true;
+
+    // Pin once. The bridge loop drives reconnect; pin keeps refcount > 0
+    // so the session doesn't tear itself down between disconnect and
+    // reconnect.
+    void session.pin().catch(() => {
+      /* surfaced via session.onState; bridge loop handles recovery */
+    });
+
+    // Connection-state fanout. `onState` fires synchronously on
+    // subscribe (snapshot-then-delta), so the initial value seeds
+    // every remote-tile's `connectionState` overlay immediately.
     session.onState((s) => {
-      // Broadcast the new state to every terminal that lives on this
-      // host. `onState` fires the current value synchronously on
-      // subscribe (snapshot-then-delta), so the first call seeds the
-      // connectionState for tiles that registered before the session
-      // resolved.
       for (const [id, entry] of terminalEntriesIter()) {
         if (
           entry.meta.location?.kind === "remote" &&
@@ -232,11 +237,9 @@ export class RemoteTerminalBackend implements TerminalBackend {
         }
       }
     });
-    // App-level liveness probe — catches stuck-agent cases that the
-    // transport can't see (ssh + agent process both alive, but agent
-    // is deadlocked). On enough misses we destroy the session; the
-    // next callAgent will re-acquire and the HostSession's reconnect
-    // loop will respawn.
+
+    // App-level liveness probe. The transport sees ssh death; this
+    // catches stuck-agent cases (ssh + agent alive, agent deadlocked).
     startHeartbeat({
       session,
       onUnhealthy: () => {
@@ -245,23 +248,75 @@ export class RemoteTerminalBackend implements TerminalBackend {
           "remote agent heartbeat exhausted — destroying session",
         );
         session.destroy();
-        // Drop the cached client so the next callAgent re-pins.
-        this.clientPromise = null;
-        this.connectedAcked = false;
-        this.stateSubscribed = false;
       },
     });
-    // Bridge the agent's `terminalMetadata` collection into the
-    // parent's. Every update on the agent side (spawn seed, cwd
-    // change from OSC 7, and — once the provider DAG lives
-    // agent-side — git/agent/pr/foreground events) flows here.
-    void this.bridgeMetadata().catch((err) =>
-      log.warn({ err, host: this.host }, "remote metadata mirror failed"),
-    );
+
+    void this.runMetadataMirror(session);
   }
 
-  private async bridgeMetadata(): Promise<void> {
-    const client = await this.callAgent(async (c) => c);
+  /** Reconnect loop for the per-host metadata mirror. On link drop
+   *  (`mirrorRemoteCollection` returns when the keys stream ends),
+   *  await the next client and remirror. The agent's mirror is fresh
+   *  after each respawn — its terminal set is whatever the new agent
+   *  has, not what the old one had. */
+  private async runMetadataMirror(
+    session: HostSession<AgentContract>,
+  ): Promise<void> {
+    while (!session.isDestroyed()) {
+      // Wait for a live client (post-spawn) — `connection` state goes
+      // copying → connecting → connected, but `markConnected` only
+      // fires after a successful RPC, so gating on "connected" would
+      // deadlock the bridge (mirror is the first RPC, by design).
+      // Instead, wait for `currentClient()` to become non-null
+      // (spawn finished). If the spawn fails we loop after the next
+      // state transition.
+      let client: AgentClient<AgentContract>;
+      try {
+        const cp = session.currentClient();
+        if (!cp) {
+          await waitForStateChange(session);
+          continue;
+        }
+        client = await cp;
+      } catch {
+        await waitForStateChange(session);
+        continue;
+      }
+      if (session.isDestroyed()) break;
+      // Probe with a cheap RPC. If the link is alive, this returns
+      // quickly and transitions the session to `connected`; if dead
+      // (link already torn down), we wait for the next state change
+      // before retrying. Without this probe, a half-broken link
+      // (child alive, write EPIPE) would deadlock the mirror loop.
+      try {
+        await client.surface.system.heartbeat({});
+        session.markConnected();
+      } catch (err) {
+        log.warn(
+          {
+            err: err instanceof Error ? err.message : String(err),
+            host: this.host,
+          },
+          "metadata mirror: probe failed, awaiting state change",
+        );
+        await waitForStateChange(session);
+        continue;
+      }
+      await this.mirrorMetadataOnce(client);
+      log.info(
+        { host: this.host },
+        "metadata mirror: link ended, awaiting next client",
+      );
+      // Mirror returned — link is dead or transitioning. Wait until
+      // the session leaves `connected` so the next iteration blocks
+      // until a fresh respawn rather than spinning on a dead client.
+      await waitForDisconnected(session);
+    }
+  }
+
+  private async mirrorMetadataOnce(
+    client: AgentClient<AgentContract>,
+  ): Promise<void> {
     await mirrorRemoteCollection<TerminalId, AgentTerminalMetadata>({
       label: `${this.host}/terminalMetadata`,
       log: (line) => log.warn({ host: this.host }, line),
@@ -271,17 +326,7 @@ export class RemoteTerminalBackend implements TerminalBackend {
       onUpsert: (id, agentMeta) => {
         const entry = getTerminal(id);
         if (!entry) return;
-        // The agent's `AgentTerminalMetadata` is the server-half of
-        // the parent's `TerminalMetadata` (no themeName / canvasLayout /
-        // subPanel / rightPanel / parentId / intent). Merge it in,
-        // preserving the parent-only fields. Override `location` to
-        // `{kind:"remote", host}` — the agent's view is always
-        // "local" from its own perspective.
         updateServerLiveMetadata(entry, id, (m) => {
-          // `m` is narrowed to LiveTerminalFields; merge the live
-          // half explicitly. ServerPersistedTerminalFields (cwd,
-          // git, lastAgentCommand, lastActivityAt) go through
-          // `updateServerMetadata` — wrap separately to land them.
           m.pr = agentMeta.pr;
           m.agent = agentMeta.agent;
           m.foreground = agentMeta.foreground;
@@ -298,13 +343,33 @@ export class RemoteTerminalBackend implements TerminalBackend {
         });
       },
       onRemove: (_id) => {
-        // The kill flow already calls `surfaceCtx.collections.terminalMetadata.remove`
-        // synchronously when the parent decides to kill, and the
-        // registry is the source of truth for "does this terminal
-        // still exist". Mirror-side remove notifications are
-        // redundant.
+        // The kill flow + per-terminal exit watcher own removal from
+        // the parent's registry — mirror-side notifications would race.
       },
     });
+  }
+
+  /** Run one RPC against the *current* client of the session. The
+   *  session manages identity across reconnects; we always consult
+   *  `currentClient()` rather than caching, so callers after a link
+   *  drop don't see a stale dead promise. */
+  async callAgent<T>(
+    fn: (client: AgentClient<AgentContract>) => Promise<T>,
+  ): Promise<T> {
+    const session = await this.ensureSession();
+    const cp = session.currentClient();
+    if (!cp) {
+      // Between disconnect and reconnect — surface a clean error to
+      // the foreground caller so write/resize/kill don't hang forever.
+      throw new Error(`remote agent on ${this.host} is disconnected`);
+    }
+    const client = await cp;
+    const result = await fn(client);
+    if (!this.connectedAcked) {
+      session.markConnected();
+      this.connectedAcked = true;
+    }
+    return result;
   }
 
   /** Backend's host. Exposed for fs/git op pumps that need to obtain
@@ -354,7 +419,7 @@ export class RemoteTerminalBackend implements TerminalBackend {
     terminalsDirtyChannel.publish({});
 
     const abort = new AbortController();
-    this.records.set(id, { abort });
+    this.records.set(id, { abort, handle });
 
     void this.spawnAsync(id, opts, entry, handle, abort.signal).catch((err) => {
       tlog.error({ err }, "remote spawn failed — cleaning up local registry");
@@ -362,15 +427,35 @@ export class RemoteTerminalBackend implements TerminalBackend {
       // dropping `remote write failed` warns. Tear the entry out
       // synchronously so the UI shows the failure instead of a
       // stuck "Connecting…" tile that the user has to manually kill.
-      abort.abort();
-      this.records.delete(id);
-      unregisterTerminal(id);
-      surfaceCtx.cells.terminalList.set(listTerminals());
-      surfaceCtx.collections.terminalMetadata.remove(id);
-      terminalsDirtyChannel.publish({});
+      this.localCleanup(id, /* exitCode */ -1);
     });
 
     return entry.info;
+  }
+
+  /** Local-side cleanup for a remote terminal: aborts pumps, removes
+   *  the registry entry + metadata, publishes terminalExit so the
+   *  client gets the toast, disposes the parent-side mirrored headless
+   *  buffer. Used by:
+   *   - spawn-failure tail (synthetic exit code -1),
+   *   - the agent's `terminalExit` event watcher (real code),
+   *   - link-death (synthetic code -1, when the exit watcher's
+   *     iterator errors before yielding),
+   *   - `killTerminal` (synchronous local teardown — RPC is fire-and-
+   *     forget separately).
+   *  Idempotent: a second call after the entry is already removed
+   *  no-ops, so racing exit signals don't double-publish. */
+  private localCleanup(id: TerminalId, exitCode: number): void {
+    const record = this.records.get(id);
+    if (!record) return; // already cleaned up
+    record.abort.abort();
+    record.handle.dispose();
+    this.records.delete(id);
+    surfaceCtx.events.terminalExit.publish({ id }, exitCode);
+    unregisterTerminal(id);
+    surfaceCtx.cells.terminalList.set(listTerminals());
+    surfaceCtx.collections.terminalMetadata.remove(id);
+    terminalsDirtyChannel.publish({});
   }
 
   private async spawnAsync(
@@ -400,15 +485,18 @@ export class RemoteTerminalBackend implements TerminalBackend {
     // remote later) subscribes to the same `terminalChannels.X(id)`
     // bus regardless of backend. Stream clients expose `.get(input,
     // {signal})` per the surface framework's convention.
+    //
+    // Per-terminal pumps consume the *current* client at spawn time.
+    // Agent restart kills the terminal by construction (agent has no
+    // memory of it after respawn), so we don't try to reattach —
+    // instead the exit watcher synthesizes -1 on link death and
+    // `localCleanup` removes the tile.
     const client = await this.callAgent(async (c) => c);
     void this.pumpStream(
       () => client.surface.terminalData.get({ id }, { signal }),
       id,
       "data",
       signal,
-      // Feed the headless mirror in lockstep with publishing to the
-      // local data channel so `screenState` reads have the same
-      // bytes the client has rendered.
       (chunk) => handle.feed(chunk),
     );
     void this.pumpStream(
@@ -429,6 +517,36 @@ export class RemoteTerminalBackend implements TerminalBackend {
       "commandRun",
       signal,
     );
+    // Watch the agent's terminalExit event. Resolves with the real
+    // exit code on natural exit, or -1 if the link dies before the
+    // agent can publish (since the agent's exit handler runs in-
+    // process, any clean disconnect means the agent already died).
+    void this.watchExit(client, id, signal);
+  }
+
+  private async watchExit(
+    client: AgentClient<AgentContract>,
+    id: TerminalId,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const tlog = log.child({ host: this.host, terminal: id });
+    let exitCode = -1;
+    try {
+      const iter = await client.surface.terminalExit.get({ id }, { signal });
+      for await (const code of iter) {
+        exitCode = code as number;
+        break; // event is single-yield-then-close
+      }
+    } catch (err) {
+      if (signal.aborted) return; // local kill aborted us; cleanup happens in killTerminal
+      tlog.warn(
+        { err },
+        "remote exit watcher failed — synthesizing disconnect exit",
+      );
+    }
+    if (signal.aborted) return;
+    tlog.info({ exitCode }, "remote terminal exited");
+    this.localCleanup(id, exitCode);
   }
 
   private async pumpStream(
@@ -460,30 +578,34 @@ export class RemoteTerminalBackend implements TerminalBackend {
   killTerminal(id: TerminalId): TerminalInfo | undefined {
     const entry = getTerminal(id);
     if (!entry) return undefined;
-    const record = this.records.get(id);
-    record?.abort.abort();
-    this.records.delete(id);
+    const info = entry.info;
+    // Fire-and-forget kill RPC. The agent's onExit handler will
+    // publish terminalExit, but our `watchExit` is aborted by
+    // `localCleanup` below — so we use an explicit exit code (0) for
+    // the parent-side publish, matching the local backend's contract
+    // (operator-initiated kill = clean exit from the client's POV).
     void this.callAgent((c) => c.surface.terminal.kill({ id })).catch((err) =>
       log.warn(
         { err, host: this.host, terminal: id },
         "remote kill RPC failed",
       ),
     );
-    unregisterTerminal(id);
-    surfaceCtx.cells.terminalList.set(listTerminals());
-    surfaceCtx.collections.terminalMetadata.remove(id);
-    terminalsDirtyChannel.publish({});
-    return entry.info;
+    this.localCleanup(id, 0);
+    return info;
   }
 
   killAllTerminals(): void {
     const entries = drainTerminals();
-    for (const r of this.records.values()) r.abort.abort();
+    const ids = entries.map((e) => e.info.id);
+    // localCleanup removes from this.records; iterate via snapshot.
+    for (const id of ids) {
+      const record = this.records.get(id);
+      record?.abort.abort();
+      record?.handle.dispose();
+    }
     this.records.clear();
-    for (const entry of entries) {
-      void this.callAgent((c) =>
-        c.surface.terminal.kill({ id: entry.info.id }),
-      ).catch(() => {
+    for (const id of ids) {
+      void this.callAgent((c) => c.surface.terminal.kill({ id })).catch(() => {
         /* best effort */
       });
     }
@@ -501,6 +623,40 @@ export class RemoteTerminalBackend implements TerminalBackend {
       TerminalChannelMap[K]
     >;
   }
+}
+
+/** Resolve once the session's connection is anything other than
+ *  `connected` (snapshot or future). Used after a mirror cycle ends
+ *  to gate the next `waitForConnected` on a fresh respawn rather
+ *  than spinning on a dead client. */
+function waitForDisconnected(
+  session: HostSession<AgentContract>,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const unsub = session.onState((s) => {
+      if (s.connection !== "connected" || session.isDestroyed()) {
+        unsub();
+        resolve();
+      }
+    });
+  });
+}
+
+/** Resolve on the next state delta (skipping the snapshot). */
+function waitForStateChange(
+  session: HostSession<AgentContract>,
+): Promise<void> {
+  return new Promise((resolve) => {
+    let first = true;
+    const unsub = session.onState(() => {
+      if (first) {
+        first = false;
+        return;
+      }
+      unsub();
+      resolve();
+    });
+  });
 }
 
 function buildRemoteFs(backend: RemoteTerminalBackend): TerminalBackendFs {
@@ -523,22 +679,10 @@ function buildRemoteFs(backend: RemoteTerminalBackend): TerminalBackendFs {
       const ac = new AbortController();
       void (async () => {
         try {
-          const session = await getKoluHostSessionAsync(backend.hostName);
-          const client = await session.pin();
-          const iter = await client.surface.fsRepoChange.get(
-            { repoPath },
-            { signal: ac.signal },
+          const iter = await backend.callAgent((c) =>
+            c.surface.fsRepoChange.get({ repoPath }, { signal: ac.signal }),
           );
-          // First yield = subscription is alive = link is connected.
-          // Mirrors the demo's pump-loop pattern.
-          let first = true;
-          for await (const _ of iter) {
-            if (first) {
-              session.markConnected();
-              first = false;
-            }
-            onChange();
-          }
+          for await (const _ of iter) onChange();
         } catch (err) {
           if (!ac.signal.aborted)
             log.warn({ err, repoPath }, "remote repo-change pump failed");
@@ -550,20 +694,13 @@ function buildRemoteFs(backend: RemoteTerminalBackend): TerminalBackendFs {
       const ac = new AbortController();
       void (async () => {
         try {
-          const session = await getKoluHostSessionAsync(backend.hostName);
-          const client = await session.pin();
-          const iter = await client.surface.fsFileChange.get(
-            { repoPath, filePath },
-            { signal: ac.signal },
+          const iter = await backend.callAgent((c) =>
+            c.surface.fsFileChange.get(
+              { repoPath, filePath },
+              { signal: ac.signal },
+            ),
           );
-          let first = true;
-          for await (const _ of iter) {
-            if (first) {
-              session.markConnected();
-              first = false;
-            }
-            onChange();
-          }
+          for await (const _ of iter) onChange();
         } catch (err) {
           if (!ac.signal.aborted)
             log.warn(

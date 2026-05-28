@@ -296,6 +296,18 @@ export class HostSession<C extends AnyContractRouter> {
     if (child.stdin === null || child.stdout === null) {
       throw new Error("ssh subprocess has no stdin/stdout — unreachable");
     }
+    // EPIPE on write-after-child-death is reported via TWO channels: the
+    // writeCallback (handled inside `links/stdio`) AND a synchronous
+    // `error` event on the Writable itself. With no listener the latter
+    // becomes an uncaughtException that exits the parent. Attach noop
+    // listeners — the `child.on("exit")` handler above is the source of
+    // truth for "connection died", so stream errors are redundant noise.
+    child.stdin.on("error", (err) => {
+      this.addLocalProgress(`child.stdin error: ${err.message}`);
+    });
+    child.stdout.on("error", (err) => {
+      this.addLocalProgress(`child.stdout error: ${err.message}`);
+    });
     const client = createStdioCellsClient<C>({
       read: child.stdout,
       write: child.stdin,

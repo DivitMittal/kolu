@@ -97,12 +97,12 @@ function unameToNixSystem(uname: string): string {
 }
 
 async function resolveAgentDrvPath(host: string): Promise<string> {
+  // `KOLU_AGENT_FLAKE_REF` is validated at server boot (httpServer.ts)
+  // — its presence is a global invariant by the time any remote
+  // session is touched.
   const flakeRef = process.env.KOLU_AGENT_FLAKE_REF;
-  if (!flakeRef) {
-    throw new Error(
-      "remote terminals require KOLU_AGENT_FLAKE_REF (a Nix flake reference exposing packages.<system>.default as the kolu binary). No fallback by design.",
-    );
-  }
+  if (!flakeRef)
+    throw new Error("KOLU_AGENT_FLAKE_REF unset (boot guard bypassed)");
   const uname = await execCapture("ssh", [host, "uname", "-ms"]);
   const system = unameToNixSystem(uname);
   log.info({ host, uname, system, flakeRef }, "resolving agent drvPath");

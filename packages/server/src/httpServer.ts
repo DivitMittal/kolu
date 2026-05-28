@@ -76,6 +76,17 @@ const PWA_BACKGROUND_COLOR = "#0c0c0e";
 
 configureNixShellEnv(argv.flags.allowNixShellWithEnvWhitelist);
 ensureKoluRoot();
+// Remote terminals require a Nix flake reference exposing
+// `packages.<system>.default` as the kolu binary. The agent
+// (`kolu --stdio`) is realised from that reference per-host. Crash
+// at boot rather than later when the operator tries to spawn their
+// first remote terminal — no fallback by design.
+if (!process.env.KOLU_AGENT_FLAKE_REF) {
+  log.fatal(
+    "KOLU_AGENT_FLAKE_REF is unset — remote terminals require a Nix flake reference exposing packages.<system>.default as the kolu binary. The dev shell, nix-build wrapper, and homeManager module all bake this for you. Set it via Nix or in the environment.",
+  );
+  process.exit(1);
+}
 initSessionAutoSave(snapshotSession);
 if (argv.flags.verbose) log.level = "debug";
 

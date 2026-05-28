@@ -204,12 +204,18 @@ export function collectionHandlers<Name extends string, K, T>(
       for await (const v of deps.keysBus.subscribe(signal)) yield v;
     },
     get: async function* ({ input, signal }) {
+      // Race tolerance: a subscribe can arrive after the key was just
+      // removed — most commonly, a client retries an in-flight stream
+      // (oRPC's `STREAM_RETRY`) right as the server tears down the
+      // entry, or a parent's `mirrorRemoteCollection` opens a per-key
+      // stream from a stale keys snapshot. Throwing in either case
+      // turns a harmless race into an unhandled rejection on the
+      // peer (the rejection is delivered via the iterator chain,
+      // bypassing typical try/catch wrappers). End the iterator
+      // cleanly instead — the consumer's reducer treats this as
+      // "this key no longer exists" and removes its entry.
       const initial = readOne(input.key);
-      if (initial === undefined) {
-        throw new Error(
-          `collection ${_coll.name}: key not found at first snapshot`,
-        );
-      }
+      if (initial === undefined) return;
       yield initial;
       for await (const v of deps.perKeyBus(input.key).subscribe(signal)) {
         yield v;

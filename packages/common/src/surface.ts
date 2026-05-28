@@ -578,19 +578,27 @@ export const surface = defineSurface({
     },
   },
   streams: {
-    /** Live changed-files list for the Code-view's Local/Branch modes. */
+    /** Live changed-files list for the Code-view's Local/Branch modes.
+     *  `terminalId` routes the read to the terminal's backend (local
+     *  or remote — remote terminals read git state on the agent host,
+     *  not the user's local FS). */
     gitStatus: {
-      inputSchema: GitStatusInputSchema,
+      inputSchema: GitStatusInputSchema.extend({
+        terminalId: TerminalIdSchema,
+      }),
       outputSchema: GitStatusOutputSchema,
     },
-    /** Live unified diff for one file. */
+    /** Live unified diff for one file. `terminalId` routes the read. */
     gitDiff: {
-      inputSchema: GitDiffInputSchema,
+      inputSchema: GitDiffInputSchema.extend({ terminalId: TerminalIdSchema }),
       outputSchema: GitDiffOutputSchema,
     },
-    /** Live repo-relative path list (tracked + untracked-but-not-ignored). */
+    /** Live repo-relative path list (tracked + untracked-but-not-ignored).
+     *  `terminalId` routes the read. */
     fsListAll: {
-      inputSchema: FsListAllInputSchema,
+      inputSchema: FsListAllInputSchema.extend({
+        terminalId: TerminalIdSchema,
+      }),
       outputSchema: FsListAllOutputSchema,
     },
     /** Live UTF-8 content for a single file in the Code-view's All-mode body. */
