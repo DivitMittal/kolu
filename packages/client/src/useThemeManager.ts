@@ -5,7 +5,7 @@
  *  pill swatches) just call `useThemeManager()` — no deps to wire. */
 
 import type { TerminalId } from "kolu-common/surface";
-import { nonEmpty } from "nonempty";
+import { nonEmpty } from "@kolu/nonempty";
 import { createMemo, createSignal } from "solid-js";
 import { toast } from "solid-sonner";
 import {

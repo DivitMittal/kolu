@@ -2,7 +2,7 @@
 
 import type { RecentAgent, TerminalId } from "kolu-common/surface";
 import { WorktreeNameSchema } from "kolu-git/schemas";
-import { randomName } from "memorable-names";
+import { randomName } from "@kolu/memorable-names";
 import type { Accessor, Component } from "solid-js";
 import { batch, createMemo } from "solid-js";
 import { availableThemes } from "@kolu/terminal-themes";

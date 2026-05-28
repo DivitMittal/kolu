@@ -89,6 +89,12 @@ importers:
       '@kolu/file-line-ref':
         specifier: workspace:*
         version: link:../file-line-ref
+      '@kolu/memorable-names':
+        specifier: workspace:*
+        version: link:../memorable-names
+      '@kolu/nonempty':
+        specifier: workspace:*
+        version: link:../nonempty
       '@kolu/solid-anchored-popover':
         specifier: workspace:*
         version: link:../solid-anchored-popover
@@ -170,15 +176,9 @@ importers:
       marked:
         specifier: ^18.0.2
         version: 18.0.2
-      memorable-names:
-        specifier: workspace:*
-        version: link:../memorable-names
       neverthrow:
         specifier: ^8.2.0
         version: 8.2.0
-      nonempty:
-        specifier: workspace:*
-        version: link:../nonempty
       partysocket:
         specifier: ^1.1.16
         version: 1.1.16(react@19.2.5)
@@ -192,6 +192,9 @@ importers:
         specifier: ^5.9.0
         version: 5.9.0
     devDependencies:
+      '@kolu/anyagent':
+        specifier: workspace:*
+        version: link:../integrations/anyagent
       '@kolu/terminal-themes':
         specifier: workspace:*
         version: link:../terminal-themes
@@ -201,9 +204,6 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
-      anyagent:
-        specifier: workspace:*
-        version: link:../integrations/anyagent
       kolu-common:
         specifier: workspace:*
         version: link:../common
@@ -234,15 +234,15 @@ importers:
 
   packages/common:
     dependencies:
+      '@kolu/anyagent':
+        specifier: workspace:*
+        version: link:../integrations/anyagent
       '@kolu/surface':
         specifier: workspace:*
         version: link:../surface
       '@orpc/contract':
         specifier: ^1.13.13
         version: 1.13.13
-      anyagent:
-        specifier: workspace:*
-        version: link:../integrations/anyagent
       kolu-claude-code:
         specifier: workspace:*
         version: link:../integrations/claude-code
@@ -286,12 +286,12 @@ importers:
 
   packages/integrations/anyagent:
     dependencies:
+      '@kolu/nonempty':
+        specifier: workspace:*
+        version: link:../../nonempty
       kolu-shared:
         specifier: workspace:*
         version: link:../../shared
-      nonempty:
-        specifier: workspace:*
-        version: link:../../nonempty
       string-argv:
         specifier: ^0.3.2
         version: 0.3.2
@@ -314,7 +314,7 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.96
         version: 0.2.96(zod@4.3.6)
-      anyagent:
+      '@kolu/anyagent':
         specifier: workspace:*
         version: link:../anyagent
       kolu-shared:
@@ -342,7 +342,7 @@ importers:
 
   packages/integrations/codex:
     dependencies:
-      anyagent:
+      '@kolu/anyagent':
         specifier: workspace:*
         version: link:../anyagent
       kolu-shared:
@@ -370,6 +370,9 @@ importers:
 
   packages/integrations/git:
     dependencies:
+      '@kolu/memorable-names':
+        specifier: workspace:*
+        version: link:../../memorable-names
       '@parcel/watcher':
         specifier: ^2.5.1
         version: 2.5.6
@@ -379,9 +382,6 @@ importers:
       kolu-shared:
         specifier: workspace:*
         version: link:../../shared
-      memorable-names:
-        specifier: workspace:*
-        version: link:../../memorable-names
       simple-git:
         specifier: ^3.36.0
         version: 3.36.0
@@ -435,7 +435,7 @@ importers:
 
   packages/integrations/opencode:
     dependencies:
-      anyagent:
+      '@kolu/anyagent':
         specifier: workspace:*
         version: link:../anyagent
       kolu-shared:
@@ -488,7 +488,7 @@ importers:
 
   packages/memorable-names:
     dependencies:
-      nonempty:
+      '@kolu/nonempty':
         specifier: workspace:*
         version: link:../nonempty
     devDependencies:
@@ -513,6 +513,9 @@ importers:
       '@hono/node-ws':
         specifier: ^1.1.0
         version: 1.3.0(@hono/node-server@1.19.13(hono@4.12.18))(hono@4.12.18)
+      '@kolu/anyagent':
+        specifier: workspace:*
+        version: link:../integrations/anyagent
       '@kolu/artifact-sdk':
         specifier: workspace:*
         version: link:../artifact-sdk
@@ -534,9 +537,6 @@ importers:
       '@orpc/server':
         specifier: ^1.13.13
         version: 1.13.13(ws@8.20.1)
-      anyagent:
-        specifier: workspace:*
-        version: link:../integrations/anyagent
       cleye:
         specifier: ^2.3.0
         version: 2.3.0
@@ -895,15 +895,15 @@ importers:
 
   packages/terminal-themes:
     dependencies:
+      '@kolu/nonempty':
+        specifier: workspace:*
+        version: link:../nonempty
       '@xterm/xterm':
         specifier: 6.1.0-beta.225
         version: 6.1.0-beta.225
       neverthrow:
         specifier: ^8.2.0
         version: 8.2.0
-      nonempty:
-        specifier: workspace:*
-        version: link:../nonempty
     devDependencies:
       typescript:
         specifier: ^5.8.0
