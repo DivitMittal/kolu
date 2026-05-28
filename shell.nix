@@ -5,7 +5,15 @@
 #
 # Playwright is NOT included here — it adds ~600ms to nix develop cold start.
 # flake.nix exposes devShells.e2e for e2e tests: `nix develop .#e2e`.
-{ pkgs ? import ./nix/nixpkgs.nix { } }:
+{ pkgs ? import ./nix/nixpkgs.nix { }
+, # The flake self-reference, threaded through from flake.nix so dev
+  # KOLU_AGENT_FLAKE_REF points at the same source the flake outputs
+  # use. Optional so `nix-shell ./shell.nix` (no flake context) still
+  # works — the env var stays unset there and remote terminals
+  # surface the "requires KOLU_AGENT_FLAKE_REF" error per the
+  # "no fallback by design" contract.
+  self ? null
+}:
 let
   koluEnv = import ./nix/env.nix { inherit pkgs; };
 in
@@ -15,19 +23,19 @@ pkgs.mkShell {
   env = koluEnv // {
     KOLU_COMMIT_HASH = "dev";
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+  } // pkgs.lib.optionalAttrs (self != null) {
+    # Remote terminals (R-2): the `kolu --stdio` agent's drv path is
+    # resolved by `nix eval --raw $KOLU_AGENT_FLAKE_REF#packages.<sys>.default.drvPath`.
+    # `self` is the flake's own store-pathed source — same bytes the
+    # flake's outputs are built from. Avoids the github: branch ref
+    # (which requires push) and the `path:$cwd` shell-expansion that
+    # breaks under workspace subdirs.
+    KOLU_AGENT_FLAKE_REF = "${self}";
   };
 
   shellHook = ''
     if root=$(git rev-parse --show-toplevel 2>/dev/null); then
       ln -sfn "$KOLU_FONTS_DIR" "$root/packages/client/public/fonts"
-      # Remote terminals (R-2): the `kolu --stdio` agent's drv path is
-      # resolved by `nix eval --raw $KOLU_AGENT_FLAKE_REF#packages.<sys>.default.drvPath`.
-      # In dev, we want the local source — `path:$root` resolves
-      # against the worktree's flake (not a pushed github branch).
-      # Set only in the devShell; the production wrapper leaves the
-      # env var unset so operators opt in explicitly per the
-      # "no fallback" contract.
-      export KOLU_AGENT_FLAKE_REF="path:$root"
     fi
   '';
 

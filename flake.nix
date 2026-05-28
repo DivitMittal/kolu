@@ -48,7 +48,7 @@
           website-pnpm-deps = website.pnpmDeps;
         });
       devShells = eachSystem (pkgs:
-        let default = import ./shell.nix { inherit pkgs; };
+        let default = import ./shell.nix { inherit pkgs self; };
         in {
           inherit default;
           # Extended shell with Playwright browsers for e2e testing.
