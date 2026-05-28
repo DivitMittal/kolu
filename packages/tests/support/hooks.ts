@@ -215,11 +215,25 @@ function httpGet(url: string): Promise<{ ok: boolean }> {
   });
 }
 
-/** Kill the server child on any exit path (crash, SIGINT, SIGTERM). */
+/** Kill the server child on any exit path (crash, SIGINT, SIGTERM).
+ *  Also stops the R-4 local PTY-host daemon kolu-server spawned — it's
+ *  detached + `unref`'d (so it survives kolu-server restart by design),
+ *  which means `serverProcess.kill` does NOT reap it. Without this the
+ *  suite would orphan one daemon per worker. Read its pid from the
+ *  state dir's `agent.pid` and SIGTERM it directly. */
 function killServer() {
   if (serverProcess) {
     serverProcess.kill("SIGTERM");
     serverProcess = undefined;
+  }
+  try {
+    const pid = Number.parseInt(
+      fs.readFileSync(`${koluStateDir}/agent.pid`, "utf8").trim(),
+      10,
+    );
+    if (Number.isFinite(pid) && pid > 0) process.kill(pid, "SIGTERM");
+  } catch {
+    // No daemon (pidfile absent / already gone) — nothing to reap.
   }
 }
 process.on("exit", killServer);
