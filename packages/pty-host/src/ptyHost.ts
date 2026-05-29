@@ -298,12 +298,17 @@ export function createPtyHost(opts: PtyHostOptions): PtyHost {
 
   /** Re-sample foreground across the post-command settle window — the agent
    *  process forks *after* the OSC 633;E mark, so one sample at mark time
-   *  misses it. Timers are tracked on the entry and cleared on teardown. */
+   *  misses it. Timers are tracked on the entry so teardown can clear pending
+   *  ones; each timer removes itself after firing so the array stays bounded. */
   function scheduleForegroundBurst(entry: Entry): void {
     for (const delay of FOREGROUND_SAMPLE_DELAYS_MS) {
-      entry.foregroundTimers.push(
-        setTimeout(() => sampleForeground(entry), delay),
-      );
+      let id: ReturnType<typeof setTimeout>;
+      id = setTimeout(() => {
+        const idx = entry.foregroundTimers.indexOf(id);
+        if (idx !== -1) entry.foregroundTimers.splice(idx, 1);
+        sampleForeground(entry);
+      }, delay);
+      entry.foregroundTimers.push(id);
     }
   }
 
