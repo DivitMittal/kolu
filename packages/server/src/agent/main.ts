@@ -36,7 +36,7 @@ import { chmodSync, rmSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
 import { serveOverStdio } from "@kolu/surface/peer-server";
 import { implementSurface, inMemoryChannelByName } from "@kolu/surface/server";
-import { implement } from "@orpc/server";
+import { implement, ORPCError } from "@orpc/server";
 import { AGENT_CONTRACT_VERSION, agentSurface } from "kolu-common/agentSurface";
 import type { TerminalId } from "kolu-common/surface";
 import type { TerminalHandle } from "kolu-common/terminalBackend";
@@ -195,15 +195,30 @@ export async function runAgent(): Promise<void> {
           return { ok: handle !== undefined };
         },
         list: async () => ({ entries: agent.list() }),
-        getScreenState: async ({ input }) => ({
-          data: (await handles.get(input.id)?.getScreenState()) ?? "",
-        }),
-        getScreenText: async ({ input }) => ({
-          text:
-            (await handles
-              .get(input.id)
-              ?.getScreenText(input.startLine, input.endLine)) ?? "",
-        }),
+        getScreenState: async ({ input }) => {
+          // Throw on a missing handle rather than return "" — an empty string
+          // is a legitimate screen state (a PTY that hasn't drawn yet), so
+          // masking server/daemon divergence as a blank terminal would hide a
+          // real bug. NOT_FOUND lets kolu-server surface it.
+          const handle = handles.get(input.id);
+          if (!handle) {
+            throw new ORPCError("NOT_FOUND", {
+              message: `no PTY with id ${input.id}`,
+            });
+          }
+          return { data: await handle.getScreenState() };
+        },
+        getScreenText: async ({ input }) => {
+          const handle = handles.get(input.id);
+          if (!handle) {
+            throw new ORPCError("NOT_FOUND", {
+              message: `no PTY with id ${input.id}`,
+            });
+          }
+          return {
+            text: await handle.getScreenText(input.startLine, input.endLine),
+          };
+        },
       },
       system: {
         version: async () => ({
