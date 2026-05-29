@@ -7,6 +7,8 @@ import {
   deriveTaskProgress,
   encodeProjectPath,
   extractTasks,
+  INTERRUPT_TEXT_PREFIX,
+  INTERRUPT_TOOL_RESULT_PREFIX,
   outstandingBackgroundTasks,
   tailJsonlLines,
 } from "./core.ts";
@@ -182,6 +184,71 @@ describe("deriveState", () => {
       model: null,
       contextTokens: null,
     });
+  });
+
+  // Interrupt-marker fixtures composed from the same constants the
+  // implementation matches against — so a change to the marker policy in
+  // core.ts moves these in lockstep instead of silently decoupling.
+  const MID_TURN_MARKER = `${INTERRUPT_TEXT_PREFIX}]`;
+  const TOOL_CALL_MARKER = `${INTERRUPT_TEXT_PREFIX} for tool use]`;
+  const TOOL_RESULT_MARKER = `${INTERRUPT_TOOL_RESULT_PREFIX}. The tool use was rejected.`;
+
+  it("returns waiting when the newest user entry is a mid-turn interrupt marker", () => {
+    // Esc mid-turn appends `user [text: "[Request interrupted by user]"]`.
+    // The agent is idle awaiting the next prompt, not thinking.
+    const line = JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "text", text: MID_TURN_MARKER }] },
+    });
+    expect(deriveState([line])).toEqual({
+      state: "waiting",
+      model: null,
+      contextTokens: null,
+    });
+  });
+
+  it("returns waiting for an interrupt marker carried as a plain string", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: { content: TOOL_CALL_MARKER },
+    });
+    expect(deriveState([line])).toMatchObject({ state: "waiting" });
+  });
+
+  it("returns waiting when interrupted during a tool call", () => {
+    // Esc mid-tool-call appends an errored tool_result then the text marker.
+    // The text marker is newest; either alone settles the dock to idle.
+    const toolResult = JSON.stringify({
+      type: "user",
+      message: {
+        content: [
+          { type: "tool_result", is_error: true, content: TOOL_RESULT_MARKER },
+        ],
+      },
+    });
+    const textMarker = JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "text", text: TOOL_CALL_MARKER }] },
+    });
+    expect(deriveState([toolResult, textMarker])).toMatchObject({
+      state: "waiting",
+    });
+    // The errored tool_result on its own is also an interrupt signal.
+    expect(deriveState([toolResult])).toMatchObject({ state: "waiting" });
+  });
+
+  it("returns thinking when a real prompt follows an interrupt marker", () => {
+    // The `ralph` shape: after the marker the user types again; that newest
+    // user entry is a genuine prompt → thinking, as before.
+    const marker = JSON.stringify({
+      type: "user",
+      message: { content: [{ type: "text", text: MID_TURN_MARKER }] },
+    });
+    const prompt = JSON.stringify({
+      type: "user",
+      message: { content: "n/m. run ci" },
+    });
+    expect(deriveState([marker, prompt])).toMatchObject({ state: "thinking" });
   });
 
   it("uses last relevant message (walks backwards)", () => {

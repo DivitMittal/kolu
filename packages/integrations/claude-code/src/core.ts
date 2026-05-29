@@ -172,6 +172,43 @@ export function tailJsonlLines(filePath: string, bytes: number): string[] {
   return readTailLines({ path: filePath, size, maxBytes: bytes }) ?? [];
 }
 
+// --- Wire-shape helpers (shared) ---
+//
+// Primitives that read the raw JSONL `message.content` block shapes. Shared by
+// both state derivation (interrupt detection) and background-task scanning, so
+// they live above both rather than next to whichever caller happened to land
+// first.
+
+/** Flatten a `tool_result` block's `content` (a string, or an array of
+ *  `{type:"text", text}` blocks) to a single string for marker matching. */
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter(
+      (b): b is { text: string } =>
+        !!b &&
+        typeof b === "object" &&
+        typeof (b as { text?: unknown }).text === "string",
+    )
+    .map((b) => b.text)
+    .join("");
+}
+
+/** If `block` is a `tool_result`, return its flattened text and error flag;
+ *  otherwise null. Both interrupt detection (errored markers) and
+ *  background-task scanning (launch confirmations) classify user-entry
+ *  `tool_result` blocks by their text, so the "is it a tool_result, what's its
+ *  text" mechanic lives here once. Each caller keeps its own policy on top. */
+function toolResultBlock(
+  block: unknown,
+): { text: string; isError: boolean } | null {
+  if (!block || typeof block !== "object") return null;
+  const b = block as { type?: string; is_error?: boolean; content?: unknown };
+  if (b.type !== "tool_result") return null;
+  return { text: toolResultText(b.content), isError: b.is_error === true };
+}
+
 // --- State derivation ---
 
 /** Anthropic usage subset from `message.usage` on assistant entries — the
@@ -193,16 +230,56 @@ type ContentBlock = { type?: string; name?: string };
  *  awaiting the human. Policy lives in `classifyByAwaiting`. */
 const AWAITING_USER_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 
-function toolUseOrAwaitingUser(
-  content: ContentBlock[] | undefined,
-): "tool_use" | "awaiting_user" {
+/** Markers Claude Code writes as the trailing `user` entry when a turn is
+ *  interrupted with Esc. The agent is idle awaiting the next prompt, so this
+ *  entry must read as `waiting`, not `thinking` (which the generic `user`
+ *  branch would otherwise pick — see #1018). Two confirmed shapes:
+ *   - mid-turn:      a text block `"[Request interrupted by user]"`
+ *   - mid-tool-call: an errored `tool_result` ("The user doesn't want to
+ *     proceed…") followed by `"[Request interrupted by user for tool use]"`
+ *  Both interrupt-text variants share the `INTERRUPT_TEXT_PREFIX`; matching the
+ *  prefix covers both without enumerating the suffix. A real prompt the user
+ *  types after the marker is a distinct newer `user` entry that matches
+ *  neither marker, so it still reads as `thinking`. */
+export const INTERRUPT_TEXT_PREFIX = "[Request interrupted by user";
+export const INTERRUPT_TOOL_RESULT_PREFIX =
+  "The user doesn't want to proceed with this tool use";
+
+/** True when a `user` entry's `message.content` is an Esc-interrupt marker.
+ *  `content` is either a plain string (mid-turn text) or an array of blocks
+ *  (text and/or errored `tool_result`); both forms are checked. */
+function isInterruptMarker(content: unknown): boolean {
+  if (typeof content === "string")
+    return content.startsWith(INTERRUPT_TEXT_PREFIX);
+  if (!Array.isArray(content)) return false;
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const b = block as { type?: string; text?: unknown };
+    if (
+      b.type === "text" &&
+      typeof b.text === "string" &&
+      b.text.startsWith(INTERRUPT_TEXT_PREFIX)
+    ) {
+      return true;
+    }
+    const tr = toolResultBlock(block);
+    if (tr?.isError && tr.text.startsWith(INTERRUPT_TOOL_RESULT_PREFIX)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function toolUseOrAwaitingUser(content: unknown): "tool_use" | "awaiting_user" {
   if (!Array.isArray(content)) return "tool_use";
   let total = 0;
   let awaiting = 0;
   for (const block of content) {
-    if (block.type !== "tool_use") continue;
+    if (!block || typeof block !== "object") continue;
+    const b = block as ContentBlock;
+    if (b.type !== "tool_use") continue;
     total++;
-    if (block.name && AWAITING_USER_TOOLS.has(block.name)) awaiting++;
+    if (b.name && AWAITING_USER_TOOLS.has(b.name)) awaiting++;
   }
   return classifyByAwaiting(awaiting, total);
 }
@@ -251,7 +328,10 @@ export function deriveState(
           stop_reason?: string | null;
           model?: string | null;
           usage?: UsageShape;
-          content?: ContentBlock[];
+          // Raw wire data: a string (interrupt text) or a block array. Each
+          // consumer (`toolUseOrAwaitingUser`, `isInterruptMarker`) narrows
+          // to the projection it reads rather than trusting one shared shape.
+          content?: unknown;
         };
       } = JSON.parse(raw);
 
@@ -279,7 +359,9 @@ export function deriveState(
             model,
           }))
           .with({ type: "user" }, () => ({
-            state: "thinking" as const,
+            state: isInterruptMarker(entry.message?.content)
+              ? ("waiting" as const)
+              : ("thinking" as const),
             model: null,
           }))
           .otherwise(() => null);
@@ -341,24 +423,6 @@ const TASK_ID_TAG_RE = /<task-id>([^<]+)<\/task-id>/;
 const TERMINAL_STATUS_RE =
   /<status>(?:completed|failed|stopped|killed)<\/status>/;
 
-/** Flatten a `tool_result` block's `content` (a string, or an array of
- *  `{type:"text", text}` blocks) to a single string for marker matching. */
-function toolResultText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  let out = "";
-  for (const block of content) {
-    if (
-      block &&
-      typeof block === "object" &&
-      typeof (block as { text?: unknown }).text === "string"
-    ) {
-      out += (block as { text: string }).text;
-    }
-  }
-  return out;
-}
-
 /** Scan the transcript tail for background tasks launched but not yet
  *  reporting a terminal status.
  *
@@ -403,15 +467,15 @@ export function outstandingBackgroundTasks(lines: string[]): BackgroundTask[] {
     const content = entry.message?.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {
-      if (!block || block.type !== "tool_result") continue;
-      const text = toolResultText(block.content);
+      const tr = toolResultBlock(block);
+      if (!tr) continue;
       let taskId: string | undefined;
       for (const re of BG_LAUNCH_RES) {
-        taskId = re.exec(text)?.[1];
+        taskId = re.exec(tr.text)?.[1];
         if (taskId) break;
       }
       if (!taskId) continue;
-      launched.set(taskId, BG_RUN_ID_RE.exec(text)?.[1] ?? null);
+      launched.set(taskId, BG_RUN_ID_RE.exec(tr.text)?.[1] ?? null);
     }
   }
 
