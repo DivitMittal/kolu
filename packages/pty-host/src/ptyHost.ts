@@ -248,11 +248,14 @@ interface Entry {
 }
 
 /** Post-command-run foreground re-sample schedule (ms). A command-run mark
- *  (OSC 633;E) fires *before* the agent process has forked + claimed the
- *  tty, so a single sample at mark time misses it. These delays cover the
- *  settle window the kolu-server provider DAG reconciles over
- *  (`providers.ts` COMMAND_RUN_RECONCILE_DELAYS_MS); dedup makes redundant
- *  samples free. */
+ *  (OSC 633;E) fires *before* the spawned process has forked + claimed the
+ *  tty, so a single sample at mark time misses it; these delays re-sample
+ *  across the ~1s window in which a launched program typically becomes the
+ *  foreground. This is pty-host's own settle heuristic — it owns "when does
+ *  the tty's foreground change after a command". Each fresh sample is pushed
+ *  on the foreground tap (dedup makes redundant ones free), so any consumer
+ *  reacting to that tap sees the settled foreground without coupling to this
+ *  schedule. */
 const FOREGROUND_SAMPLE_DELAYS_MS = [0, 75, 300, 700, 1200] as const;
 
 /** Read node-pty's foreground-pid accessor, collapsing the transient 0

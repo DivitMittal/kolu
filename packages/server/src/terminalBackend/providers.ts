@@ -143,42 +143,44 @@ function startProcessProvider(
   hooks: ProviderHooks,
 ): () => void {
   const plog = log.child({ provider: "process", terminal: terminalId });
-  // The foreground process basename + title we last published. The basename
-  // is tracked from `channels.foreground` (the pty-host tap) rather than read
-  // synchronously off a handle — so this works when pty-host lives across a
-  // socket; the title is tracked from `channels.title`.
-  let currentName: string | null = null;
-  let currentTitle: string | null = null;
-  let lastName: string | null = null;
-  let lastTitle: string | null = null;
+  // Foreground `{name, title}` — one concept, two coherent fields, so it's one
+  // value not four scattered bindings. The name is tracked from
+  // `channels.foreground` (the pty-host tap) rather than read synchronously
+  // off a handle — so this works when pty-host lives across a socket; the
+  // title is tracked from `channels.title`. `current` is what we've observed;
+  // `published` is what we last wrote, so `recompute` republishes only on a
+  // real change.
+  type FgState = { name: string | null; title: string | null };
+  const current: FgState = { name: null, title: null };
+  let published: FgState = { name: null, title: null };
   plog.debug("started");
 
   function recompute() {
-    if (currentName === lastName && currentTitle === lastTitle) return;
+    if (current.name === published.name && current.title === published.title)
+      return;
     plog.debug(
-      { from: lastName, to: currentName, title: currentTitle },
+      { from: published.name, to: current.name, title: current.title },
       "foreground changed",
     );
-    lastName = currentName;
-    lastTitle = currentTitle;
+    published = { ...current };
     hooks.updateServerLiveMetadata(record, (m) => {
       m.foreground =
-        currentName === null
+        current.name === null
           ? null
-          : { name: currentName, title: currentTitle };
+          : { name: current.name, title: current.title };
     });
   }
 
   const cleanupForeground = channels.foreground.consume({
     onEvent: (fg) => {
-      currentName = processBasename(fg.process);
+      current.name = processBasename(fg.process);
       recompute();
     },
     onError: (err) => plog.error({ err }, "foreground subscription failed"),
   });
   const cleanupTitle = channels.title.consume({
     onEvent: (title) => {
-      currentTitle = title;
+      current.title = title;
       recompute();
     },
     onError: (err) => plog.error({ err }, "title subscription failed"),
@@ -343,6 +345,12 @@ function getActivation(kind: string): ExternalChangesActivation {
   return entry;
 }
 
+/** After a command-run mark, re-run agent-session resolution across the
+ *  settle window (the agent writes its session file a beat after the mark).
+ *  This is the *consumer* schedule and is independent of pty-host's
+ *  foreground-sample burst: the DAG also reconciles whenever the foreground
+ *  tap pushes a fresh sample, so foreground freshness rides the primitive's
+ *  own settle window — these delays only re-check the agent-state files. */
 const COMMAND_RUN_RECONCILE_DELAYS_MS = [0, 75, 300, 1000] as const;
 
 function setAgentMetadataVia(
