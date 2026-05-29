@@ -97,10 +97,15 @@ export interface TerminalHandle {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   /** Serialized screen state (VT escape sequences) for late-joining
-   *  clients. Empty string when the PTY hasn't produced output yet. */
-  getScreenState(): string;
-  /** Plain text content of the terminal buffer (scrollback + viewport). */
-  getScreenText(startLine?: number, endLine?: number): string;
+   *  clients. Empty string when the PTY hasn't produced output yet. A
+   *  daemon/remote-backed handle (R4c+) round-trips a socket and so returns
+   *  a Promise; the in-process pty-host handle returns synchronously.
+   *  Callers `await` either way. */
+  getScreenState(): string | Promise<string>;
+  /** Plain text content of the terminal buffer (scrollback + viewport).
+   *  Promise for a daemon-backed handle; sync in-process — see
+   *  `getScreenState`. */
+  getScreenText(startLine?: number, endLine?: number): string | Promise<string>;
 }
 
 /** Filesystem operations scoped to a backend's host machine. Returns
@@ -153,8 +158,13 @@ export interface TerminalBackend {
   /** Attach to a terminal's output: a screen-state snapshot plus the live
    *  delta stream from exactly that point forward. The snapshot is taken
    *  and the delta stream subscribed atomically, so the boundary between
-   *  them loses and duplicates nothing. */
-  attach(id: TerminalId, signal: AbortSignal | undefined): TerminalAttachment;
+   *  them loses and duplicates nothing. Async since R4c — the snapshot is
+   *  the first frame of the daemon's `terminalAttach` stream over the
+   *  socket. */
+  attach(
+    id: TerminalId,
+    signal: AbortSignal | undefined,
+  ): Promise<TerminalAttachment>;
 
   readonly fs: TerminalBackendFs;
   readonly git: TerminalBackendGit;

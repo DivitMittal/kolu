@@ -41,6 +41,10 @@
 
 import { createPtyHost, type PtyHost, type PtySpawnOpts } from "@kolu/pty-host";
 import { type Channel, inMemoryChannel } from "@kolu/surface/server";
+import type {
+  AgentMetadataEvent,
+  AgentTerminalListEntry,
+} from "kolu-common/agentSurface";
 import { DEFAULT_SCROLLBACK } from "kolu-common/config";
 import type {
   LiveTerminalFields,
@@ -62,26 +66,12 @@ import {
   startProviders,
 } from "./providers.ts";
 
-/** Everything the agent emits to its consumer. One stream carries every
- *  terminal's metadata + lifecycle, tagged by id — the
- *  one-collection-keyed-by-id shape (not N parameterized streams) the
- *  remote roadmap settled on. */
-export type AgentMetadataEvent =
-  // The metadata event is split along the SAME persisted-vs-live partition
-  // `metadata.ts` enforces, so the autosave fence rides the event TYPE
-  // rather than a routing flag: `metadataPersisted` ⟹ consumer fires
-  // `terminals:dirty`, `metadataLive` ⟹ it does not. Each variant carries
-  // ONLY its half, typed — so the consumer applies it with one
-  // `Object.assign` and a new field can't be silently dropped at the seam.
-  | {
-      kind: "metadataPersisted";
-      id: TerminalId;
-      fields: ServerPersistedTerminalFields;
-    }
-  | { kind: "metadataLive"; id: TerminalId; fields: LiveTerminalFields }
-  | { kind: "recentRepo"; root: string; name: string }
-  | { kind: "recentAgent"; command: string }
-  | { kind: "exit"; id: TerminalId; exitCode: number };
+// `AgentMetadataEvent` — everything the agent emits to its consumer — is the
+// wire-contract type (`kolu-common/agentSurface`), so the in-process producer
+// here and the R4c socket encoding share one source of truth. The
+// `metadataPersisted`/`metadataLive` split is the autosave fence: it rides the
+// event TYPE, not a routing flag. Re-exported for the byte-stream consumer.
+export type { AgentMetadataEvent } from "kolu-common/agentSurface";
 
 /** Project the server-persisted half of a metadata snapshot. The literal
  *  is exhaustive over `ServerPersistedTerminalFields`, so adding a field to
@@ -139,6 +129,14 @@ export interface Agent {
   attach(id: TerminalId, signal: AbortSignal | undefined): TerminalAttachment;
   kill(id: TerminalId): void;
   killAll(): void;
+  /** Live terminals the agent still owns — the reattach-by-id source for a
+   *  kolu-server that restarted while the agent (and its PTYs) stayed up. */
+  list(): AgentTerminalListEntry[];
+  /** Current server-visible metadata for every live terminal. The R4c
+   *  metadata stream replays this as `metadataPersisted` + `metadataLive`
+   *  events on each (re)subscribe, so a reconnecting kolu-server gets *warm*
+   *  metadata immediately rather than waiting for the next provider delta. */
+  snapshot(): { id: TerminalId; meta: TerminalServerMetadata }[];
   dispose(): void;
 }
 
@@ -149,9 +147,13 @@ export function createAgent(deps: { log: Logger }): Agent {
   const host: PtyHost = createPtyHost({ log });
   const metadata = inMemoryChannel<AgentMetadataEvent>();
   // id → teardown closure (aborts the tap bridges + stops the provider DAG).
-  // Its keys ARE the live terminals; the `ProviderRecord` itself stays a
-  // pure value captured by the providers' closures, never stored here.
+  // Its keys ARE the live terminals.
   const teardowns = new Map<TerminalId, () => void>();
+  // id → live record + pid. Kept so `list()` / `snapshot()` can report the
+  // surviving terminals + their current metadata to a reattaching consumer
+  // (R4c). Set in `spawn`, dropped in `teardown` — same lifetime as the
+  // teardown closure, so the two maps stay in lockstep.
+  const live = new Map<TerminalId, { record: ProviderRecord; pid: number }>();
 
   /** Pump a pty-host tap into an internal provider channel until the tap
    *  ends or `signal` aborts (kill). The in-process channel ends an aborted
@@ -212,6 +214,7 @@ export function createAgent(deps: { log: Logger }): Agent {
     const stop = teardowns.get(id);
     if (!stop) return false;
     teardowns.delete(id);
+    live.delete(id);
     stop();
     return true;
   }
@@ -276,6 +279,7 @@ export function createAgent(deps: { log: Logger }): Agent {
         bridge.abort();
         stopProviders();
       });
+      live.set(id, { record, pid });
 
       void host.exitPromise(id).then((exitCode) => {
         if (teardown(id)) metadata.publish({ kind: "exit", id, exitCode });
@@ -297,6 +301,22 @@ export function createAgent(deps: { log: Logger }): Agent {
       const ids = [...teardowns.keys()];
       for (const id of ids) teardown(id);
       for (const id of ids) host.kill(id);
+    },
+
+    list() {
+      return [...live.entries()].map(([id, { record, pid }]) => ({
+        id,
+        pid,
+        cwd: record.meta.cwd,
+        lastActivity: record.meta.lastActivityAt,
+      }));
+    },
+
+    snapshot() {
+      return [...live.entries()].map(([id, { record }]) => ({
+        id,
+        meta: { ...record.meta },
+      }));
     },
 
     dispose() {
