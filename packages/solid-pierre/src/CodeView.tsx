@@ -47,6 +47,15 @@ export type CodeViewProps = {
    *  `"wrap"` wraps long lines. Distinct from CSS overflow, which lives
    *  on the wrapper's `class`/`style`. Default `"wrap"`. */
   overflow?: "scroll" | "wrap";
+  /** Rendered code-row height in pixels. Pierre's virtualizer uses this as
+   *  `itemMetrics.lineHeight` to size its scroll scaffold and pick which
+   *  rows fall in the render window; it defaults to 20px. If a caller
+   *  overrides the *rendered* row height (Kolu sets `--diffs-line-height`
+   *  in its diffs style) the metric must match, or the window comes up
+   *  short and the last rows are unreachable at the bottom of the scroll
+   *  (#1026). Pass the same pixel value used for `--diffs-line-height`.
+   *  Omit to keep Pierre's 20px default. */
+  lineHeight?: number;
   /** When true, Pierre wires gutter selection. Drive the visible
    *  highlight via `selectedLines` and observe changes via
    *  `onSelectedLinesChange`. Default `false`. */
@@ -147,7 +156,9 @@ export const CodeView: Component<CodeViewProps> = (props) => {
 
   // Read every reactive prop at call time so a later prop change lands on
   // the existing CodeView instance via `setOptions` (theme toggle, etc.)
-  // instead of forcing a reconstruct.
+  // instead of forcing a reconstruct. `lineHeight` (when supplied) feeds
+  // Pierre's `itemMetrics.lineHeight` so its virtualizer windows the right
+  // number of rows; see the prop doc.
   const buildOptions = (): CodeViewOptions<undefined> => ({
     theme: DEFAULT_THEMES,
     themeType: props.theme,
@@ -156,6 +167,9 @@ export const CodeView: Component<CodeViewProps> = (props) => {
     lineHoverHighlight: "both",
     enableLineSelection: props.enableLineSelection ?? false,
     onSelectedLinesChange: (s) => props.onSelectedLinesChange?.(s),
+    ...(props.lineHeight != null
+      ? { itemMetrics: { lineHeight: props.lineHeight } }
+      : {}),
   });
 
   onMount(() => {

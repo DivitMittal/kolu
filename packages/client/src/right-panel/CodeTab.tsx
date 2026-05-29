@@ -48,7 +48,7 @@ import {
   toGitStatusEntries,
 } from "../ui/pierreAdapters";
 import {
-  pierreDiffsStyle,
+  koluCodeViewProps,
   pierreIconConfig,
   pierreTreesStyle,
 } from "../ui/pierreTheme";
@@ -709,7 +709,7 @@ const CodeTab: Component<{
                                         )
                                       }
                                       class="h-full w-full overflow-auto"
-                                      style={pierreDiffsStyle}
+                                      {...koluCodeViewProps()}
                                       data-testid="pierre-diff-view"
                                     />
                                   );
