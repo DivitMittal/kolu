@@ -167,6 +167,41 @@ describe("createPtyHost — attach (snapshot then deltas)", () => {
     await expect(host.attach("nope")).rejects.toThrow(/unknown id/);
     host.dispose();
   });
+
+  it("partitions output across snapshot/deltas with no loss or duplication", async () => {
+    // The race fix (publish in the headless write callback) guarantees a
+    // chunk lands in exactly one of {snapshot, deltas}: pre-attach output
+    // is in the snapshot, post-attach output arrives as a delta, and the
+    // pre-attach marker never reappears in the delta stream.
+    const host = makeHost();
+    const { id } = host.spawn({
+      shell: "/bin/sh",
+      args: [
+        "-c",
+        "printf BEFORE_ATTACH; sleep 0.8; printf AFTER_ATTACH; sleep 60",
+      ],
+      env: BASE_ENV,
+      cwd: "/tmp",
+    });
+    await settle(); // BEFORE_ATTACH is parsed into the headless mirror
+    const ac = new AbortController();
+    const { snapshot, deltas } = await host.attach(id, ac.signal);
+    expect(snapshot).toMatch(/BEFORE_ATTACH/);
+
+    // Drain with a real for-await (no race-and-discard, which would drop
+    // values slower than the timeout); abort as a safety net.
+    const timer = setTimeout(() => ac.abort(), 3000);
+    let deltaText = "";
+    for await (const chunk of deltas) {
+      deltaText += chunk;
+      if (deltaText.includes("AFTER_ATTACH")) break;
+    }
+    clearTimeout(timer);
+    expect(deltaText).toMatch(/AFTER_ATTACH/);
+    // No duplication: the snapshot's content is not replayed as a delta.
+    expect(deltaText).not.toMatch(/BEFORE_ATTACH/);
+    host.dispose();
+  });
 });
 
 describe("createPtyHost — OSC metadata streams", () => {
@@ -198,6 +233,24 @@ describe("createPtyHost — OSC metadata streams", () => {
     });
     const title = await firstWithin(host.subscribeTitle(id), 2000);
     expect(title).toBe("my-title");
+    host.dispose();
+  });
+
+  it("getTitle caches the latest OSC 2 title (snapshot-first seed)", async () => {
+    const host = makeHost();
+    const { id } = host.spawn({
+      shell: "/bin/sh",
+      args: [
+        "-c",
+        "sleep 0.3; printf '\\033]2;cached-title\\033\\\\'; sleep 60",
+      ],
+      env: BASE_ENV,
+      cwd: "/tmp",
+    });
+    expect(host.getTitle(id)).toBe(""); // nothing seen yet
+    await firstWithin(host.subscribeTitle(id), 2000); // wait for the OSC 2
+    expect(host.getTitle(id)).toBe("cached-title");
+    expect(host.getTitle("ghost")).toBeUndefined();
     host.dispose();
   });
 

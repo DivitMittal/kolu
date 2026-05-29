@@ -120,6 +120,11 @@ export interface PtyHost {
   /** Current cwd (for seeding `terminalMetadata`'s `cwd` field). */
   getCwd(id: PtyId): string | undefined;
 
+  /** Last OSC 0/2 title seen (for seeding the snapshot-first title
+   *  stream on attach/reattach). Empty string if none yet; undefined if
+   *  the PTY is gone. */
+  getTitle(id: PtyId): string | undefined;
+
   /** Serialized screen state (VT escape sequences) for late-joining
    *  clients. Empty string if the PTY is gone. */
   getScreenState(id: PtyId): string;
@@ -177,6 +182,10 @@ interface Entry {
   headless: import("@xterm/headless").Terminal;
   serialize: import("@xterm/addon-serialize").SerializeAddon;
   cwd: string;
+  /** Last OSC 0/2 title seen, "" until the first title event. Cached so
+   *  `terminalTitle` can be snapshot-first (seed current title on
+   *  attach/reattach) per the snapshot-then-deltas streaming rule. */
+  title: string;
   lastActivity: number;
   /** Cached exit code; undefined until `onExit` fires. */
   exitCode: number | undefined;
@@ -291,11 +300,18 @@ export function createPtyHost(opts: PtyHostOptions): PtyHost {
       headless,
       serialize: serializeAddon,
       cwd: spawnOpts.cwd,
+      title: "",
       lastActivity: Date.now(),
       exitCode: undefined,
       exitWaiters: [],
       disposables: [],
-      dataChannel: new Channel<string>(),
+      // Only the data channel can realistically overflow (high-volume PTY
+      // output vs. a stalled consumer); metadata channels share the same
+      // bound for uniformity. onOverflow logs which PTY shed a subscriber.
+      dataChannel: new Channel<string>({
+        onOverflow: () =>
+          log.warn({ id }, "pty-host: dropped slow data subscriber (overflow)"),
+      }),
       cwdChannel: new Channel<string>(),
       titleChannel: new Channel<string>(),
       commandRunChannel: new Channel<string>(),
@@ -321,8 +337,10 @@ export function createPtyHost(opts: PtyHostOptions): PtyHost {
     );
     entry.disposables.push(oscDisposable);
 
-    // OSC 0/2 — title changes.
+    // OSC 0/2 — title changes. Cache the latest so attach/reattach can
+    // seed it (snapshot-first), then fan out.
     const titleDisposable = headless.onTitleChange((title: string) => {
+      entry.title = title;
       entry.titleChannel.publish(title);
     });
     entry.disposables.push(titleDisposable);
@@ -347,19 +365,27 @@ export function createPtyHost(opts: PtyHostOptions): PtyHost {
     entry.disposables.push(headlessOnData);
 
     // PTY data → headless mirror + fan-out to subscribers.
+    //
+    // Publish in the headless write *callback* (post-parse), not on
+    // arrival. `@xterm/headless`'s `write` is async — the buffer only
+    // reflects the data once the callback fires — so "published" must
+    // mean "parsed into the mirror". That makes `attach`'s snapshot and
+    // delta stream partition the data at a single point with no gap and
+    // no overlap: a synchronous `subscribe()`+`serialize()` pair (no
+    // parse can complete between two sync statements) is then race-free.
     const dataDisposable = proc.onData((data: string) => {
       entry.lastActivity = Date.now();
-      headless.write(data);
-      entry.dataChannel.publish(data);
+      headless.write(data, () => entry.dataChannel.publish(data));
     });
     entry.disposables.push(dataDisposable);
 
-    // PTY exit — record code, wake waiters, dispose channels (deferred
-    // by one tick so any final data flush lands in subscribers first).
+    // PTY exit — record code, wake waiters, dispose channels. Flush the
+    // headless write buffer first (empty-write callback fires after all
+    // prior write callbacks) so every pending post-parse publish lands
+    // in subscribers before the channels close.
     const exitDisposable = proc.onExit(({ exitCode }) => {
       log.debug({ id, exitCode }, "pty-host: child exited");
-      // Defer disposal so the last data chunk reaches subscribers.
-      setImmediate(() => disposeEntry(entry, exitCode));
+      headless.write("", () => disposeEntry(entry, exitCode));
     });
     entry.disposables.push(exitDisposable);
 
@@ -372,8 +398,12 @@ export function createPtyHost(opts: PtyHostOptions): PtyHost {
     signal?: AbortSignal,
   ): Promise<PtyAttachment> {
     const entry = getEntry(id);
-    const snapshot = entry.serialize.serialize();
+    // Subscribe BEFORE serializing, both synchronously: no headless parse
+    // (and thus no post-parse publish) can interleave between the two, so
+    // every chunk lands in exactly one of snapshot/deltas. See the
+    // post-parse publish note in `spawn`.
     const deltas = entry.dataChannel.subscribe(signal);
+    const snapshot = entry.serialize.serialize();
     return { snapshot, deltas };
   }
 
@@ -458,6 +488,10 @@ export function createPtyHost(opts: PtyHostOptions): PtyHost {
     return entries.get(id)?.cwd;
   }
 
+  function getTitle(id: PtyId): string | undefined {
+    return entries.get(id)?.title;
+  }
+
   function getScreenState(id: PtyId): string {
     const entry = entries.get(id);
     return entry ? entry.serialize.serialize() : "";
@@ -498,6 +532,7 @@ export function createPtyHost(opts: PtyHostOptions): PtyHost {
     getForegroundPid,
     getProcess,
     getCwd,
+    getTitle,
     getScreenState,
     getScreenText: getScreenTextFor,
     dispose,

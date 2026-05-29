@@ -311,8 +311,10 @@ class LocalTerminalBackend implements TerminalBackend {
     const proxy = new DaemonTerminalProxy(id, client);
     proxy.pid = entry.pid;
     proxy.foregroundPid = entry.pid;
-    // `process` stays "" until the first title event; providers re-derive
-    // foreground on the next OSC 2.
+    // `process` is "" only until the bridge's terminalTitle subscription
+    // delivers its snapshot-first event (current title/process/
+    // foregroundPid), which the daemon emits immediately on subscribe —
+    // no waiting for the next OSC 2. See startBridge + agent/main.ts.
 
     const meta = metaFromSaved(saved, entry.cwd);
     const reg: TerminalProcess = {

@@ -116,4 +116,46 @@ describe("Channel", () => {
     const out = await take(ch.subscribe(ac.signal), 1, 200);
     expect(out).toEqual([]);
   });
+
+  it("drops a slow subscriber once its queue exceeds maxQueue", async () => {
+    let overflowed = false;
+    const ch = new Channel<number>({
+      maxQueue: 3,
+      onOverflow: () => {
+        overflowed = true;
+      },
+    });
+    const it = ch.subscribe()[Symbol.asyncIterator]();
+    // Register the subscriber + leave a pending pull, then deliver one
+    // value to clear it so subsequent publishes have to queue.
+    const first = it.next();
+    await new Promise((r) => setTimeout(r, 0));
+    ch.publish(1);
+    expect((await first).value).toBe(1);
+    // No pending pull now → these buffer. The queue fills to maxQueue (3)…
+    ch.publish(2);
+    ch.publish(3);
+    ch.publish(4);
+    expect(overflowed).toBe(false);
+    // …and the next publish overflows, dropping the subscriber.
+    ch.publish(5);
+    expect(overflowed).toBe(true);
+    // The dropped subscriber's iterator ends (done) rather than hanging
+    // or growing without bound.
+    expect((await it.next()).done).toBe(true);
+  });
+
+  it("does not drop a subscriber that keeps up (queue never exceeds bound)", async () => {
+    const ch = new Channel<number>({ maxQueue: 2 });
+    const it = ch.subscribe()[Symbol.asyncIterator]();
+    const pending = it.next();
+    await new Promise((r) => setTimeout(r, 0));
+    // Each publish is consumed before the next, so the queue stays empty.
+    ch.publish(1);
+    expect((await pending).value).toBe(1);
+    const second = it.next();
+    await new Promise((r) => setTimeout(r, 0));
+    ch.publish(2);
+    expect((await second).value).toBe(2);
+  });
 });

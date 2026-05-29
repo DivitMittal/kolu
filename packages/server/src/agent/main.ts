@@ -209,16 +209,21 @@ async function main(): Promise<void> {
       },
       terminalTitle: {
         source: async function* (input, signal) {
+          // Snapshot-first (streaming.md §2): emit the current
+          // title/process/foregroundPid immediately so a reattaching
+          // kolu-server seeds agent-detection state at once, instead of
+          // waiting for the next OSC 2 (which may be a long time away).
+          const emit = (title: string) => ({
+            title,
+            process: ptyHost.getProcess(input.id) ?? "",
+            foregroundPid: ptyHost.getForegroundPid(input.id),
+          });
+          yield emit(ptyHost.getTitle(input.id) ?? "");
           for await (const title of ptyHost.subscribeTitle(input.id, signal)) {
-            // Sample foreground process + pid at title-change time —
-            // the title event is exactly the moment the foreground
-            // process changes (kolu's preexec hook emits OSC 2), so
-            // these reads are fresh.
-            yield {
-              title,
-              process: ptyHost.getProcess(input.id) ?? "",
-              foregroundPid: ptyHost.getForegroundPid(input.id),
-            };
+            // The title event is exactly the moment the foreground
+            // process changes (kolu's preexec hook emits OSC 2), so the
+            // process/pid reads are fresh.
+            yield emit(title);
           }
         },
       },

@@ -13,8 +13,10 @@
  *     finishes binding it; then connect.
  *  4. Issue `system.version` to verify contract compatibility (the
  *     wire-shape semver — most kolu upgrades stay compatible across a
- *     running daemon). On skew, log a warning; the actual degraded-mode
- *     UI / kill-and-respawn handling is a follow-up.
+ *     running daemon). On incompatible skew we fail closed: mark the
+ *     daemon `down` and throw, rather than report `ready` over a daemon
+ *     whose RPCs may fail. The operator kills the stale daemon so a
+ *     matching one starts on next boot.
  *  5. Expose the typed `AgentClient` for `LocalTerminalBackend` and any
  *     consumer that wants to call into the daemon.
  *
@@ -114,6 +116,38 @@ async function tryConnect(
   });
 }
 
+/** node exec flags the daemon must NOT inherit. `--watch` would make the
+ *  detached daemon restart on source edits — killing every PTY mid-dev,
+ *  the exact opposite of R-4's point. `--inspect*` would make it try to
+ *  bind this process's debug port and fail to start. We keep only the
+ *  loader/import flags that let node run the TS entry. */
+const DROP_EXEC_FLAG =
+  /^--(watch|watch-path|watch-preserve-output|inspect|inspect-brk|inspect-port|inspect-wait|debug|debug-brk)\b/;
+
+/** Strip dev-only flags from `process.execArgv`, preserving each kept
+ *  flag's space-separated value (e.g. `--import tsx`). Exported for unit
+ *  testing the filter in isolation. */
+export function daemonExecArgv(execArgv: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < execArgv.length; i++) {
+    const tok = execArgv[i] as string;
+    if (!tok.startsWith("-")) {
+      out.push(tok);
+      continue;
+    }
+    // A following non-flag token is this flag's value (`--import tsx`).
+    const next = execArgv[i + 1];
+    const hasValue =
+      !tok.includes("=") && next !== undefined && !next.startsWith("-");
+    if (!DROP_EXEC_FLAG.test(tok)) {
+      out.push(tok);
+      if (hasValue) out.push(next as string);
+    }
+    if (hasValue) i++; // consume the value regardless of keep/drop
+  }
+  return out;
+}
+
 /** Spawn the kolu binary in `--stdio` mode as a detached child. The
  *  child's stdout/stderr are redirected into `agent.log`; stdin is
  *  closed (the daemon serves over its unix socket, not stdio). */
@@ -123,9 +157,10 @@ function spawnDaemon(logFile: string): void {
   // index.ts under tsx, or the bundled output in nix-built kolu). We
   // include argv[1] so node finds the same entry that's already running.
   // The actual ARGV separation between "node" and "tsx --import ..." vs
-  // a bundled binary is handled by execArgv inheritance.
+  // a bundled binary is handled by execArgv inheritance — minus the
+  // dev-only flags `daemonExecArgv` filters out.
   const args = [
-    ...process.execArgv,
+    ...daemonExecArgv(process.execArgv),
     ...(process.argv[1] ? [process.argv[1]] : []),
     "--stdio",
   ];
@@ -206,24 +241,35 @@ async function ensureDaemonImpl(): Promise<DaemonHandle> {
       AGENT_CONTRACT_VERSION,
     )
   ) {
-    log.warn(
-      {
-        daemonVersion: versionInfo.contractVersion,
-        expected: AGENT_CONTRACT_VERSION,
-      },
-      "supervisor: agent contract version skew — degraded mode (not yet implemented; PTYs may fail)",
-    );
-  } else {
-    log.info(
-      {
-        daemonPid: versionInfo.pid,
-        contractVersion: versionInfo.contractVersion,
-        pkgVersion: versionInfo.pkgVersion,
-        socketPath,
-      },
-      "supervisor: daemon connected",
+    // Fail closed: an incompatible daemon (a stale one that survived an
+    // upgrade with a breaking contract change) cannot be talked to
+    // safely, so we must NOT report "ready" — that would light the green
+    // status dot over a daemon whose PTY RPCs may fail in arbitrary ways.
+    // The daemon is single-instance per state dir, so the operator must
+    // kill the stale one (`kill <pid>` / remove the socket) to let this
+    // kolu-server spawn a matching daemon on next boot.
+    socket.destroy();
+    setDaemonStatus("down", {
+      pid: versionInfo.pid,
+      contractVersion: versionInfo.contractVersion,
+      socketPath,
+    });
+    throw new Error(
+      `Local PTY daemon contract ${versionInfo.contractVersion} is incompatible ` +
+        `with this kolu-server (expects ${AGENT_CONTRACT_VERSION}). A stale daemon ` +
+        `(pid ${versionInfo.pid}) is holding ${socketPath}; kill it so a matching ` +
+        `daemon can start.`,
     );
   }
+  log.info(
+    {
+      daemonPid: versionInfo.pid,
+      contractVersion: versionInfo.contractVersion,
+      pkgVersion: versionInfo.pkgVersion,
+      socketPath,
+    },
+    "supervisor: daemon connected",
+  );
 
   let state: "live" | "closed" = "live";
   setDaemonStatus("ready", {
