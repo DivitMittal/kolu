@@ -23,7 +23,7 @@ Use the `/ci` skill for the runner mechanics (subcommands, flags, modes, retry s
 ```sh
 pr=$(gh pr view --json number --jq .number)
 host="kolu-pr-$pr"
-pu create --name "$host"                                                # writes ~/.pu-state/$host/ssh_config (included by ~/.ssh/config)
+pu create "$host"                                                       # name is positional; writes ~/.pu-state/$host/ssh_config (included by ~/.ssh/config)
 CI=true nix run github:juspay/ci -- run --host x86_64-linux="$host"     # --host wins over hosts.json on collision; darwin keeps using sincereintent
 pu destroy "$host"
 ```
@@ -42,21 +42,26 @@ Keep these docs in sync:
 
 ## PR evidence
 
-When the change has visible UI impact, post a `## Evidence` PR comment with screenshots. Use judgment — server-only diffs sometimes ripple into rendering.
+When the change has visible UI impact, post a `## Evidence` PR comment with screenshots — or **video** when the change is about motion (an animation, a transition, a multi-step interaction a still can't convey; see _Video evidence_ below). Use judgment — server-only diffs sometimes ripple into rendering.
 
 **Delegate to a subagent** (`Agent(subagent_type="general-purpose", model="sonnet")`) so the main context stays clear of MCP and screenshot noise. Brief it with: the dev-server URL, what scenarios to capture, a `/tmp/kolu-evidence-<slug>.png` filename, and the PR number. Have it return only the markdown body it posted.
 
 ### Dev server
 
-Spawn a dedicated dev server on **free random ports** (the user may already hold `7681`/`5173`). `just dev-auto` allocates both ports, wires the Vite proxy to the picked server port, and prints the client URL — grab it from stdout instead of parsing logs. Kill the process at the end:
+Run a **production-like** instance: `nix run . -- --port <P>` builds kolu and serves the bundled client + server on a **single** port — the same way kolu actually runs, so the evidence reflects production, not the Vite dev server. Pick **one random free port**; **never** the default `7681` (the user is very likely running their own production kolu there, and a clash or careless cleanup takes it down).
 
 ```sh
-just dev-auto &   # prints "→ client http://localhost:<port>"; pass that URL to the subagent
+# One free port (python3 via nix — no global install needed).
+PORT=$(nix shell nixpkgs#python3 --command python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+nix run . -- --port "$PORT" &
 DEV_PID=$!
-trap 'kill $DEV_PID 2>/dev/null' EXIT
+# Kill ONLY this PID at the end. NEVER `pkill -f vite` / `pkill -f src/index.ts`
+# / any pattern match — those also match the user's production kolu and kill it.
+trap 'kill "$DEV_PID" 2>/dev/null' EXIT
+# app is at http://localhost:$PORT  — pass that URL to the subagent
 ```
 
-For bug fixes that need a "before" shot, run a second `just dev-auto` from a `git worktree` on `master` (it picks its own free ports, so no collision with the PR-branch instance). Never stash the PR branch.
+For a "before" shot, run a second instance on another free port from a `git worktree` on `master`. Never stash the PR branch. (For fast iteration outside evidence, `just dev-auto` runs the HMR dev server on two free ports instead.)
 
 ### Capture, host, post
 
@@ -72,6 +77,37 @@ gh release upload evidence-assets /tmp/kolu-evidence-<slug>.png --clobber
 ```
 
 URL pattern: `https://github.com/juspay/kolu/releases/download/evidence-assets/<filename>`. Use the single-quoted heredoc pattern (`<<'EOF'`) when posting so backticks and `$` survive unescaped.
+
+### Video evidence
+
+For motion the subagent records the page instead of (or alongside) a still. The `chrome-devtools` MCP exposes `screencast_start` / `screencast_stop` — `screencast_start` with `filePath: /tmp/kolu-evidence-<slug>.mp4`, drive the interaction, then `screencast_stop`. (Capability ships in the [`nix-chrome-devtools-mcp`](https://github.com/juspay/nix-chrome-devtools-mcp) launcher, which runs the server with `--experimentalScreencast` and ffmpeg on PATH.)
+
+**Make the recording legible — this is the #1 quality issue:**
+
+- **Landscape viewport.** Set a 16:9 viewport before recording (chrome-devtools `emulate` viewport `1366x768x1,landscape`). The default headless window can be portrait and 2×-DPI, which leaves the content tiny in a tall, mostly-empty frame.
+- **Maximize the terminal.** Click the chrome-bar **Maximize terminal** (canvas → maximized) so the terminal fills the frame. Recording *canvas* mode captures a small tile floating in empty space — the most common "why am I squinting" mistake.
+- **High-contrast theme** (e.g. Melange Dark) so the text reads.
+- **Move briskly, then speed up.** Do setup (create terminal, maximize, open the Code panel) *before* `screencast_start` so only the meaningful steps are recorded; run those steps back-to-back; then speed the output up (`setpts=PTS/3`) so agent-latency dead time doesn't make the clip drag.
+
+Two reasons not to just attach the `.mp4`: GitHub renders an inline video *player* only for files dragged into the web composer (a `user-attachments` URL `gh` can't mint), and a `<video>` tag in a comment is stripped. So:
+
+- **Inline (the at-a-glance proof):** transcode to an animated GIF — GitHub renders a GIF inline from any release URL, exactly like the PNG flow above.
+
+  ```sh
+  nix shell nixpkgs#ffmpeg --command ffmpeg -i /tmp/kolu-evidence-<slug>.mp4 \
+    -vf "setpts=PTS/3,fps=12,scale=1100:-1:flags=lanczos" -loop 0 /tmp/kolu-evidence-<slug>.gif
+  gh release upload evidence-assets /tmp/kolu-evidence-<slug>.gif --clobber
+  ```
+
+  Keep it under GitHub's ~10 MB inline limit (the `setpts` speed-up + a palette pass usually land a minute-long capture well under that). Embed with `![](https://github.com/juspay/kolu/releases/download/evidence-assets/<slug>.gif)`.
+
+- **HD (optional):** speed the `.mp4` up too (`ffmpeg -i …mp4 -filter:v "setpts=PTS/3" -an …`), upload it to the same release, and link to the shared player — [`juspay/video-evidence`](https://github.com/juspay/video-evidence) hosts a GitHub Pages `<video>` page that streams the clip from kolu's own release:
+
+  ```
+  ▶ HD: https://juspay.github.io/video-evidence/evidence.html?repo=juspay/kolu&v=<slug>.mp4
+  ```
+
+  Clips stay on kolu's `evidence-assets` release; the player is project-agnostic (the `repo` param is org-allowlisted), so it is reused across juspay projects with no per-project hosting.
 
 ### Agent-state scenarios
 
