@@ -25,13 +25,17 @@
  *     different *build* — surviving a deploy with stale code) for the
  *     "update pending" nudge.
  *
- * Reconnect: `ClientRetryPlugin` (installed by `createStdioCellsClient`)
- * re-subscribes streams on a *transport* error, but a local stdio socket
- * can't self-heal once the daemon process dies — so `ensureDaemon` is
- * reconnect-aware: it drops a `closed` cached handle and re-runs
- * connect-or-spawn. The single-instance gate + exec-arg filter live in
- * `./daemonUtils.ts` (a different volatility axis), shared with the daemon
- * entrypoint.
+ * Reconnect — scope (#951 R4c): `ensureDaemon` is reconnect-aware on the
+ * **boot path** — when called (boot reattach), it drops a `closed` cached
+ * handle and re-runs connect-or-spawn, reusing a surviving daemon. There is
+ * deliberately NO mid-session auto-recovery: after boot nothing re-invokes
+ * `ensureDaemon`, so if the daemon *dies* while kolu-server runs, the socket
+ * closes and `getDaemonHandle()` then throws (loud failure, not a silent dead
+ * client). That is correct for R4c — a dead daemon has lost its PTYs, so there
+ * is nothing to recover, only to surface; graceful mid-session resurrection +
+ * reconnect is R-3 resilience work. The single-instance gate + exec-arg filter
+ * live in `./daemonUtils.ts` (a different volatility axis), shared with the
+ * daemon entrypoint.
  */
 
 import { spawn as spawnChild } from "node:child_process";
@@ -230,12 +234,22 @@ let cached: DaemonHandle | undefined;
 let connecting: Promise<DaemonHandle> | undefined;
 
 /** Snapshot accessor for downstream consumers (`LocalTerminalBackend`'s
- *  write/resize/attach proxies). Throws if `ensureDaemon` has not resolved
- *  yet — callers must `await ensureDaemon()` once at boot before reaching for
- *  the handle. Returns the current (possibly reconnected) handle. */
+ *  write/resize/attach proxies). Throws if `ensureDaemon` has not resolved yet
+ *  — callers must `await ensureDaemon()` once at boot before reaching for the
+ *  handle — AND if the handle's socket has since closed (the daemon died): a
+ *  `closed` handle's RPCs would silently no-op or hang, so we surface it as a
+ *  loud error instead of handing back a dead client. The `state()` method
+ *  exists precisely to make this distinction; an empty `""` screen or a
+ *  dropped keystroke must never masquerade as success. */
 export function getDaemonHandle(): DaemonHandle {
   if (!cached) {
     throw new Error("getDaemonHandle: ensureDaemon() not called");
+  }
+  if (cached.state() === "closed") {
+    throw new Error(
+      "getDaemonHandle: PTY-host daemon socket is closed — the daemon died; " +
+        "its terminals are gone. Mid-session auto-recovery is R-3 resilience work.",
+    );
   }
   return cached;
 }
