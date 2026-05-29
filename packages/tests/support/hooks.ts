@@ -412,7 +412,14 @@ BeforeAll(async () => {
       `[worker:${workerId}] Starting server on port ${serverPort}...`,
     );
     serverProcess = spawnKoluServer();
-    await waitForHealth(`${baseUrl}/api/health`, 10_000);
+    // 45s (was 10s): since #951 R4c the first boot spawns the `kolu --stdio`
+    // PTY-host daemon (a second tsx cold-start) and connects to it BEFORE
+    // binding the HTTP port (reattach-before-bind), so `/api/health` isn't up
+    // until the daemon is too. Under parallel workers each cold-starting TWO
+    // tsx processes (server + daemon), 10s — and even 25s — was too tight and
+    // worker boots flaked under contention. Restarts reuse the surviving
+    // daemon (just connect), so `restartKoluServer` keeps its shorter window.
+    await waitForHealth(`${baseUrl}/api/health`, 45_000);
     console.log(`[worker:${workerId}] Server is healthy.`);
   }
 
