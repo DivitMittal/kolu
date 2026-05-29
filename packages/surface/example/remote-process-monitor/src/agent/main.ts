@@ -28,12 +28,12 @@
 
 import { serveOverStdio } from "@kolu/surface/peer-server";
 import {
+  flattenSurfaceRouter,
   implementSurface,
   inMemoryChannel,
   inMemoryChannelByName,
   inMemoryStore,
 } from "@kolu/surface/server";
-import { implement } from "@orpc/server";
 import {
   type CoreId,
   type CpuCore,
@@ -216,12 +216,9 @@ async function main(): Promise<void> {
     );
   }
 
-  // `implementSurface` returns a fragment with shape `{ surface: ... }`;
-  // passing it straight to `serveOverStdio`'s `StandardRPCHandler`
-  // double-wraps the path (`/surface/surface/...`) and every client
-  // request 404s. Wrap once via `implement(contract).router(...)` to
-  // flatten the prefix (same pattern Kolu's own server uses).
-  const router = implement(surface.contract).router({ ...fragment.router });
+  // Flatten the fragment's nested `surface` router (else paths double-wrap to
+  // `/surface/surface/...` and every request 404s) — see `flattenSurfaceRouter`.
+  const router = flattenSurfaceRouter(surface, fragment);
 
   log("serving surface over stdio (read=stdin, write=stdout)");
   await serveOverStdio({

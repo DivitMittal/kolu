@@ -1013,6 +1013,28 @@ export interface ImplementSurfaceDeps<S extends SurfaceSpec> {
  *        terminal: t.terminal.handler(...),
  *      });
  */
+/**
+ * Re-wrap an {@link implementSurface} fragment into a flat oRPC router.
+ *
+ * `implementSurface` returns its router nested under a `surface` key; handing
+ * that straight to `StandardRPCHandler` / `serveOverStdio` double-prefixes
+ * every path (`/surface/surface/...`) so every RPC 404s. Re-wrapping via
+ * `implement(contract).router({ ...fragment.router })` flattens the prefix.
+ * Any peer-server that serves a surface needs this (the kolu PTY-host daemon
+ * and the remote-process-monitor example both do), so it lives here once
+ * rather than copied per call site. The re-wrap is already `any`-land (the
+ * spec walk is too dynamic for oRPC's typed chain); call-site safety comes
+ * from `implementSurface`'s typed `deps`, which this doesn't weaken.
+ */
+export function flattenSurfaceRouter(
+  surface: { contract: unknown },
+  fragment: { router: unknown },
+): unknown {
+  // biome-ignore lint/suspicious/noExplicitAny: see implementSurface — the implement(contract) chain is too dynamic for the spec walk, so the builder is cast whole.
+  const t = implement(surface.contract as any) as any;
+  return t.router({ ...(fragment.router as Record<string, unknown>) });
+}
+
 export function implementSurface<const S extends SurfaceSpec>(
   surface: Surface<S>,
   deps: ImplementSurfaceDeps<S>,

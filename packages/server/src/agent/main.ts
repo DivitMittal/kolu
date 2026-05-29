@@ -37,8 +37,12 @@ import { chmodSync, rmSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
 import { createPtyHost, type PtyId } from "@kolu/pty-host";
 import { serveOverStdio } from "@kolu/surface/peer-server";
-import { implementSurface, inMemoryChannelByName } from "@kolu/surface/server";
-import { implement, ORPCError } from "@orpc/server";
+import {
+  flattenSurfaceRouter,
+  implementSurface,
+  inMemoryChannelByName,
+} from "@kolu/surface/server";
+import { ORPCError } from "@orpc/server";
 import { DEFAULT_SCROLLBACK } from "kolu-common/config";
 import {
   PTY_HOST_CONTRACT_VERSION,
@@ -237,13 +241,9 @@ export async function runAgent(): Promise<void> {
     },
   });
 
-  // `implementSurface` returns a fragment under the `surface` key; passing it
-  // straight to `StandardRPCHandler` double-prefixes the path
-  // (`/surface/surface/...`) and every RPC 404s. Re-wrap once via
-  // `implement(contract).router(...)` to flatten the prefix.
-  const router = implement(ptyHostSurface.contract).router({
-    ...fragment.router,
-  });
+  // Flatten the fragment's nested `surface` router (else paths double-prefix
+  // to `/surface/surface/...` and every RPC 404s) — see `flattenSurfaceRouter`.
+  const router = flattenSurfaceRouter(ptyHostSurface, fragment);
 
   // Unlink any stale socket file before binding (a previous daemon that
   // crashed without its SIGTERM cleanup would leave one behind).
