@@ -600,19 +600,30 @@ export async function reattachLocalTerminals(
   // every scenario's first terminal create hits a ready daemon rather than
   // racing its (tsx) cold-start. The cold-start is absorbed by the supervisor's
   // spawn poll (generous, see `connectAndVerify`) + the boot-health window.
-  const { client } = await ensureDaemon();
   let listed: PtyHostListEntry[];
   try {
+    const { client } = await ensureDaemon();
     listed = (await client.surface.terminal.list({})).entries;
   } catch (err) {
-    // Fail loud: a connected daemon that can't list is malfunctioning, and
-    // silently returning 0 would HIDE its surviving PTYs from the UI. Throw so
-    // the boot caller (`server.ts`) turns it into a fatal exit and systemd
-    // retries, rather than coming up in a terminals-lost state that looks
-    // identical to a clean boot.
-    throw new Error("PTY-host daemon reattach failed: terminal.list errored", {
-      cause: err,
-    });
+    // Fail loud ONLY when there are saved terminals to restore: silently
+    // returning 0 then would HIDE surviving PTYs from the UI (Codex #4), so
+    // throw and let the boot caller (`server.ts`) turn it into a fatal exit +
+    // systemd retry. But on a FRESH boot (nothing saved), a daemon that's slow
+    // or briefly unavailable must NOT crash the server — there's nothing to
+    // lose; bind the port anyway and let the daemon spawn on the first
+    // terminal create. (Crashing a fresh boot on a daemon hiccup is what made
+    // the VM test's server never come up.)
+    if (savedById.size > 0) {
+      throw new Error(
+        "PTY-host daemon reattach failed with a saved session to restore",
+        { cause: err },
+      );
+    }
+    log.error(
+      { err },
+      "daemon unavailable at boot; no saved terminals — starting without reattach",
+    );
+    return 0;
   }
   if (listed.length === 0) return 0;
   for (const entry of listed) {

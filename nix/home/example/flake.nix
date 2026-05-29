@@ -101,42 +101,55 @@
               "machinectl -q shell alice@.host /run/current-system/sw/bin/systemctl --user is-active kolu.service"
           )
 
-          # Poll until kolu's HTTP listener binds — systemd reports
-          # "active" before the port is open. 120s headroom for hosts
-          # without KVM acceleration (qemu TCG fallback inflates kolu's
-          # node startup from ~2s to ~22s).
-          machine.wait_until_succeeds(
-              "curl --fail --silent http://127.0.0.1:7681/ > /dev/null",
-              timeout=120,
-          )
-
-          # R4c (#951): the PTY-host daemon must survive a kolu-server restart
-          # (a deploy). Create a terminal so the daemon spawns, capture its
-          # MainPID, restart kolu-server, and assert the daemon's MainPID is
-          # UNCHANGED — the direct regression guard for the cgroup-escape bug
-          # (`systemd-run --user --unit` lands it in a sibling cgroup, so
-          # `systemctl --user restart kolu` no longer takes it down).
           def alice_user(cmd):
               return machine.succeed(
                   "machinectl -q shell alice@.host "
                   "/run/current-system/sw/bin/systemctl --user " + cmd
               )
 
-          # Spawn a PTY (→ the supervisor spawns the daemon via systemd-run).
-          # kolu-server spawns the daemon lazily on the first terminal, so this
-          # create is what brings `kolu-pty-host.service` up. oRPC's RPC
-          # protocol wraps the input as `{"json": ...}` — a bare `{}` would
-          # deserialize to `undefined` and fail create's schema validation.
-          machine.succeed(
-              "curl --fail --silent -X POST "
-              "-H 'content-type: application/json' -d '{\"json\":{}}' "
-              "http://127.0.0.1:7681/rpc/terminal/create > /dev/null"
-          )
-          machine.wait_until_succeeds(
-              "machinectl -q shell alice@.host "
-              "/run/current-system/sw/bin/systemctl --user is-active kolu-pty-host.service",
-              timeout=30,
-          )
+          # Dump the kolu + daemon user journals — called on any health timeout
+          # so a boot that hangs/crashes before binding the port is legible in
+          # the CI log (user-service stdout doesn't reach the VM console).
+          def dump_journals():
+              for unit in ("kolu.service", "kolu-pty-host.service"):
+                  out = machine.succeed(
+                      "machinectl -q shell alice@.host "
+                      "/run/current-system/sw/bin/journalctl --user -u "
+                      + unit + " --no-pager -n 80 || true"
+                  )
+                  print("=== journal: " + unit + " ===\n" + out)
+
+          def wait_for_http(timeout):
+              try:
+                  machine.wait_until_succeeds(
+                      "curl --fail --silent http://127.0.0.1:7681/ > /dev/null",
+                      timeout=timeout,
+                  )
+              except Exception:
+                  dump_journals()
+                  raise
+
+          # Poll until kolu's HTTP listener binds — systemd reports "active"
+          # before the port is open, and boot spawns the PTY-host daemon FIRST
+          # (before binding), so this also implies the daemon is up. 120s
+          # headroom for hosts without KVM (qemu TCG inflates node startup).
+          wait_for_http(120)
+
+          # R4c (#951): the PTY-host daemon must survive a kolu-server restart
+          # (a deploy). The daemon spawns at boot via
+          # `systemd-run --user --unit=kolu-pty-host` (its own cgroup), so it's
+          # already up. Capture its MainPID, restart kolu-server, and assert the
+          # MainPID is UNCHANGED — the direct guard for the cgroup-escape bug
+          # (`systemctl --user restart kolu` must NOT take the daemon down).
+          try:
+              machine.wait_until_succeeds(
+                  "machinectl -q shell alice@.host "
+                  "/run/current-system/sw/bin/systemctl --user is-active kolu-pty-host.service",
+                  timeout=30,
+              )
+          except Exception:
+              dump_journals()
+              raise
           pid_before = alice_user(
               "show kolu-pty-host.service --value -p MainPID"
           ).strip()
@@ -144,10 +157,7 @@
 
           # Restart kolu-server — the deploy. The daemon must NOT restart.
           alice_user("restart kolu.service")
-          machine.wait_until_succeeds(
-              "curl --fail --silent http://127.0.0.1:7681/ > /dev/null",
-              timeout=120,
-          )
+          wait_for_http(120)
           pid_after = alice_user(
               "show kolu-pty-host.service --value -p MainPID"
           ).strip()
