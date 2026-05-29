@@ -173,21 +173,19 @@ function spawnDaemonViaSystemd(): boolean {
       stdio: "ignore",
       env: process.env,
     });
-    let failed = false;
+    // The `error` event fires asynchronously (after this function returns), so
+    // it can't affect the return value. Log it for diagnosis; the 5-second
+    // socket-polling loop in `connectAndVerify` is the real liveness guard —
+    // if systemd-run silently failed, the daemon never binds the socket and
+    // the poll times out with a clear error message.
     child.on("error", (err) => {
-      failed = true;
-      log.warn(
-        { err: err.message },
-        "supervisor: systemd-run spawn failed — falling back to detached",
-      );
+      log.warn({ err: err.message }, "supervisor: systemd-run process error");
     });
     log.info(
       { command, args, unit: "kolu-pty-host" },
       "supervisor: spawning daemon via systemd-run (own cgroup)",
     );
-    // `failed` is only set synchronously on a spawn-time ENOENT (systemd-run
-    // absent); the polling loop covers async failures.
-    return !failed;
+    return true;
   } catch (err) {
     log.warn(
       { err: (err as Error).message },
