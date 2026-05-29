@@ -30,7 +30,7 @@
  */
 
 import { spawn as spawnChild } from "node:child_process";
-import { existsSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { createStdioCellsClient } from "@kolu/surface/links/stdio";
 import type { ClientRetryPluginContext } from "@orpc/client/plugins";
@@ -107,7 +107,7 @@ async function tryConnect(
   socketPath: string,
   timeoutMs: number,
 ): Promise<Socket | undefined> {
-  return await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const sock = createConnection(socketPath);
     const cleanup = (s: Socket | undefined): void => {
       sock.removeListener("connect", onConnect);
@@ -160,6 +160,7 @@ function spawnDaemon(logFile: string): void {
     stdio: ["ignore", fd, fd],
     env: process.env,
   });
+  closeSync(fd); // parent doesn't write to it; close now to avoid fd leak across restarts
   child.unref();
   // Don't error if the spawn itself fails — the polling loop below will
   // time out and the kolu-server boot fails cleanly.
