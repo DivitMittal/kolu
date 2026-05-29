@@ -293,19 +293,6 @@ async function waitForSocketGone(
   }
 }
 
-/** Cheap probe: is a daemon already listening on the socket? No spawn, no
- *  handshake, no caching. Lets boot reattach skip the daemon's (tsx)
- *  cold-start when there's nothing to reattach (a fresh boot) — the daemon
- *  then spawns lazily on the first terminal create instead of gating the HTTP
- *  port. */
-export async function daemonIsRunning(): Promise<boolean> {
-  const { socketPath } = daemonPaths();
-  const sock = await tryConnect(socketPath, 200);
-  if (!sock) return false;
-  sock.destroy();
-  return true;
-}
-
 /** SIGTERM whatever daemon currently owns the socket (best-effort) and wait
  *  for the socket to clear. Used by the forced-restart path in
  *  `ensureDaemonImpl`. */
@@ -336,7 +323,12 @@ async function connectAndVerify(): Promise<DaemonHandle> {
   let socket = await tryConnect(socketPath, 200);
   if (!socket) {
     spawnDaemon(logFile);
-    const deadline = Date.now() + 5_000;
+    // 30s, not 5s: the daemon is a fresh tsx cold-start (esbuild-transpiling
+    // the entry graph), which under parallel-process contention (e.g. the e2e
+    // suite cold-starting a server + daemon per worker) can take well over 5s
+    // to bind the socket. A short poll here made boot fail-exit (or, under the
+    // earlier lazy spawn, every worker's first terminal fail) — see #951 CI.
+    const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
       socket = await tryConnect(socketPath, 200);
@@ -345,7 +337,7 @@ async function connectAndVerify(): Promise<DaemonHandle> {
   }
   if (!socket) {
     throw new Error(
-      `Daemon failed to start: socket ${socketPath} did not appear within 5s. ` +
+      `Daemon failed to start: socket ${socketPath} did not appear within 30s. ` +
         `See ${logFile} (or 'journalctl --user -u kolu-pty-host') for its log.`,
     );
   }

@@ -60,7 +60,6 @@ import {
 import type { GitDiffMode, GitInfo } from "kolu-git/schemas";
 import { trackRecentAgent, trackRecentRepo } from "../activity.ts";
 import {
-  daemonIsRunning,
   ensureDaemon,
   getDaemonHandle,
   type PtyHostClient,
@@ -596,12 +595,11 @@ export const localTerminalBackend: TerminalBackend = backend;
 export async function reattachLocalTerminals(
   savedById: ReadonlyMap<string, SavedTerminal>,
 ): Promise<number> {
-  // Fresh-boot fast path: if there's nothing saved to restore AND no daemon is
-  // already running, don't spawn one at boot — the daemon's (tsx) cold-start
-  // would otherwise gate the HTTP port. It spawns lazily on the first terminal
-  // create instead. A surviving daemon (deploy) or a saved session (restore)
-  // both mean there IS something to reattach, so fall through and connect.
-  if (savedById.size === 0 && !(await daemonIsRunning())) return 0;
+  // Spawn (or connect to a surviving) daemon at boot, before the HTTP port
+  // binds — so the daemon is guaranteed up before any client request, and
+  // every scenario's first terminal create hits a ready daemon rather than
+  // racing its (tsx) cold-start. The cold-start is absorbed by the supervisor's
+  // spawn poll (generous, see `connectAndVerify`) + the boot-health window.
   const { client } = await ensureDaemon();
   let listed: PtyHostListEntry[];
   try {
