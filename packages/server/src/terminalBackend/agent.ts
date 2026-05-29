@@ -77,7 +77,7 @@ export type { AgentMetadataEvent } from "kolu-common/agentSurface";
  *  is exhaustive over `ServerPersistedTerminalFields`, so adding a field to
  *  that schema fails to compile here until it's included — the partition
  *  stays a one-place change (the schema), enforced at this seam. */
-function persistedFields(
+export function persistedFields(
   m: TerminalServerMetadata,
 ): ServerPersistedTerminalFields {
   return {
@@ -89,7 +89,7 @@ function persistedFields(
 }
 
 /** Project the live half of a metadata snapshot (exhaustive, as above). */
-function liveFields(m: TerminalServerMetadata): LiveTerminalFields {
+export function liveFields(m: TerminalServerMetadata): LiveTerminalFields {
   return { pr: m.pr, agent: m.agent, foreground: m.foreground };
 }
 

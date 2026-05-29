@@ -38,12 +38,7 @@ import { serveOverStdio } from "@kolu/surface/peer-server";
 import { implementSurface, inMemoryChannelByName } from "@kolu/surface/server";
 import { implement } from "@orpc/server";
 import { AGENT_CONTRACT_VERSION, agentSurface } from "kolu-common/agentSurface";
-import type {
-  LiveTerminalFields,
-  ServerPersistedTerminalFields,
-  TerminalId,
-  TerminalServerMetadata,
-} from "kolu-common/surface";
+import type { TerminalId } from "kolu-common/surface";
 import type { TerminalHandle } from "kolu-common/terminalBackend";
 import {
   cleanEnv,
@@ -52,32 +47,18 @@ import {
   prepareShellInit,
 } from "kolu-pty";
 import pkg from "../../package.json" with { type: "json" };
+import { tryAcquirePidFile } from "../daemon/supervisor.ts";
 import { ensureKoluRoot, koluShellDir } from "../koluRoot.ts";
 import { daemonPaths } from "../koluState.ts";
 import { log } from "../log.ts";
-import { createAgent } from "../terminalBackend/agent.ts";
-import { tryAcquirePidFile } from "../daemon/supervisor.ts";
-
-/** Project the server-persisted half of a metadata snapshot. The literal
- *  is exhaustive over `ServerPersistedTerminalFields` (mirrors agent.ts's
- *  `persistedFields`), so adding a field to that schema fails to compile
- *  here until it's included. */
-function persistedFields(
-  m: TerminalServerMetadata,
-): ServerPersistedTerminalFields {
-  return {
-    cwd: m.cwd,
-    git: m.git,
-    lastAgentCommand: m.lastAgentCommand,
-    lastActivityAt: m.lastActivityAt,
-  };
-}
-
-/** Project the live half of a metadata snapshot (exhaustive, mirrors
- *  agent.ts's `liveFields`). */
-function liveFields(m: TerminalServerMetadata): LiveTerminalFields {
-  return { pr: m.pr, agent: m.agent, foreground: m.foreground };
-}
+// The persisted/live metadata projections are owned by `agent.ts` (it owns
+// `TerminalServerMetadata`), so importing them keeps the exhaustiveness
+// compile-check single-source across the daemon ⇆ kolu-server boundary.
+import {
+  createAgent,
+  liveFields,
+  persistedFields,
+} from "../terminalBackend/agent.ts";
 
 /** Daemon entrypoint — dispatched from `index.ts` on `--stdio`. */
 export async function runAgent(): Promise<void> {
