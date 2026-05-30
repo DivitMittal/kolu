@@ -81,6 +81,8 @@ const ptyChipStyles: Record<
   },
 };
 
+const REPO_URL = "https://github.com/juspay/kolu";
+
 /** Short-form a build id for the always-on readout: the nix store hash's
  *  leading 7 chars (`b72d6da`), a dev entry-dir's basename, or `—` when there's
  *  no live daemon. Full id is in the tooltip. */
@@ -91,6 +93,28 @@ function shortId(id: string | null): string {
   const tail = id.split("/").pop() ?? id;
   return tail.length > 12 ? `${tail.slice(0, 12)}…` : tail;
 }
+
+/** One side of the build-id readout. When a git commit hash is known (nix
+ *  builds bake it), render the short commit as a link to the GitHub commit UI —
+ *  the navigable identity the user actually wants. Otherwise (dev / a daemon
+ *  predating the `commitHash` field) fall back to the non-linked pty-host build
+ *  id short-form, so the readout is never blank. */
+const BuildRef: Component<{ commit: string | null; build: string | null }> = (
+  props,
+) => (
+  <Show when={props.commit} fallback={<span>{shortId(props.build)}</span>}>
+    {(commit) => (
+      <a
+        href={`${REPO_URL}/commit/${commit()}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="underline decoration-dotted underline-offset-2 hover:text-accent"
+      >
+        {commit().slice(0, 7)}
+      </a>
+    )}
+  </Show>
+);
 
 // Shared base for the square icon toggles in the control cluster
 // (maximize, dock, inspector). Active/idle coloring is layered on via
@@ -132,8 +156,10 @@ const ChromeBar: Component<{
   // Full build ids for the always-on readout's tooltip (short form is shown
   // inline; the tooltip carries the untruncated ids for copy/diagnosis).
   const ptyBuildIdLabel = () => {
-    const { server, daemon } = daemonBuildIds();
-    return `kolu-server pty-host build: ${server || "?"} · daemon: ${daemon ?? "(none — no live daemon)"}`;
+    const { server, daemon, serverCommit, daemonCommit } = daemonBuildIds();
+    const fmt = (commit: string | null, build: string | null) =>
+      `${commit || "(no commit)"} · pty-host ${build ?? "(none)"}`;
+    return `kolu-server ${fmt(serverCommit, server)} — daemon ${fmt(daemonCommit, daemon)}`;
   };
 
   return (
@@ -244,9 +270,21 @@ const ChromeBar: Component<{
             class="hidden sm:flex items-center gap-1 font-mono text-[10px] leading-none text-fg-3 pointer-events-auto select-none"
             classList={{ "text-warning": props.daemonState === "outdated" }}
           >
-            <span>srv {shortId(daemonBuildIds().server)}</span>
+            <span class="flex items-center gap-1">
+              srv
+              <BuildRef
+                commit={daemonBuildIds().serverCommit}
+                build={daemonBuildIds().server}
+              />
+            </span>
             <span class="text-fg-3/50">·</span>
-            <span>pty {shortId(daemonBuildIds().daemon)}</span>
+            <span class="flex items-center gap-1">
+              pty
+              <BuildRef
+                commit={daemonBuildIds().daemonCommit}
+                build={daemonBuildIds().daemon}
+              />
+            </span>
           </span>
         </Tip>
       </div>

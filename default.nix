@@ -185,6 +185,7 @@ let
       --set KOLU_CLIENT_DIST "${koluStamped}/packages/client/dist" \
       --set KOLU_GH_BIN "${koluEnv.KOLU_GH_BIN}" \
       --set KOLU_PTY_HOST_BUILD_ID "${ptyHostBuildId}" \
+      --set KOLU_COMMIT_HASH "${commitHash}" \
       --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.nodejs pkgs.git pkgs.gh ]
         # R4c (#951): the daemon supervisor shells out to `systemd-run` /
         # `systemctl --user` to spawn the PTY-host daemon in its own cgroup

@@ -55,7 +55,7 @@ import {
   prepareShellInit,
 } from "kolu-pty";
 import pkg from "../../package.json" with { type: "json" };
-import { currentBuildId } from "../daemon/buildId.ts";
+import { currentBuildId, currentCommitHash } from "../daemon/buildId.ts";
 import { tryAcquirePidFile } from "../daemon/daemonUtils.ts";
 import { ensureKoluRoot, koluShellDir } from "../koluRoot.ts";
 import { daemonPaths } from "../koluState.ts";
@@ -277,6 +277,7 @@ export async function runAgent(): Promise<void> {
         version: async () => ({
           contractVersion: PTY_HOST_CONTRACT_VERSION,
           buildId: currentBuildId(),
+          commitHash: currentCommitHash(),
           pid: process.pid,
           startedAt,
         }),

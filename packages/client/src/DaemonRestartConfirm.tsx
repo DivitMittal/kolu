@@ -22,6 +22,8 @@ import ModalDialog from "./ui/ModalDialog";
 import { surface } from "./ui/Surface";
 import { client, daemonBuildIds } from "./wire";
 
+const REPO_URL = "https://github.com/juspay/kolu";
+
 /** Short-form a build id for the daemon → server readout (nix store-hash head,
  *  dev dir basename, or em-dash for no live daemon). */
 function shortId(id: string | null): string {
@@ -31,6 +33,25 @@ function shortId(id: string | null): string {
   const tail = id.split("/").pop() ?? id;
   return tail.length > 12 ? `${tail.slice(0, 12)}…` : tail;
 }
+
+/** One side of the `daemon → server` readout: a link to the GitHub commit when
+ *  the git hash is known, else the non-linked pty-host build id short-form. */
+const BuildRef: Component<{ commit: string | null; build: string | null }> = (
+  props,
+) => (
+  <Show when={props.commit} fallback={<>{shortId(props.build)}</>}>
+    {(commit) => (
+      <a
+        href={`${REPO_URL}/commit/${commit()}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="underline decoration-dotted underline-offset-2 hover:text-accent"
+      >
+        {commit().slice(0, 7)}
+      </a>
+    )}
+  </Show>
+);
 
 const DaemonRestartConfirm: Component<{
   open: boolean;
@@ -92,8 +113,15 @@ const DaemonRestartConfirm: Component<{
             data-testid="daemon-restart-build-ids"
             class="font-mono text-[11px] text-fg-3"
           >
-            {shortId(daemonBuildIds().daemon)} →{" "}
-            {shortId(daemonBuildIds().server)}
+            <BuildRef
+              commit={daemonBuildIds().daemonCommit}
+              build={daemonBuildIds().daemon}
+            />{" "}
+            →{" "}
+            <BuildRef
+              commit={daemonBuildIds().serverCommit}
+              build={daemonBuildIds().server}
+            />
           </p>
         </div>
 

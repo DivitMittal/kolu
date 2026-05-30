@@ -529,6 +529,15 @@ export const DaemonStatusSchema = z.object({
    *  connected. Differs from `serverBuildId` exactly when `state === "outdated"`
    *  (the daemon survived a deploy whose terminal-host code moved on). */
   daemonBuildId: z.string().nullable(),
+  /** Git commit hash kolu-server was built from — the GitHub-navigable ref
+   *  (vs `serverBuildId`'s pty-host source hash). The ChromeBar readout links
+   *  it to the commit UI. `""` off-nix (dev). */
+  serverCommitHash: z.string(),
+  /** The live daemon's git commit hash, or null when no daemon is connected
+   *  (or `""` from a daemon predating the field). May differ from
+   *  `serverCommitHash` after a server-only deploy *without* being `outdated`
+   *  — the daemon's pty-host source is unchanged, only its commit is older. */
+  daemonCommitHash: z.string().nullable(),
 });
 
 /** Honest pre-connect default: until the supervisor reports a live daemon,
@@ -537,6 +546,8 @@ export const DEFAULT_DAEMON_STATUS: z.infer<typeof DaemonStatusSchema> = {
   state: "dead",
   serverBuildId: "",
   daemonBuildId: null,
+  serverCommitHash: "",
+  daemonCommitHash: null,
 };
 
 // ── The surface ───────────────────────────────────────────────────────

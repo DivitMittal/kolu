@@ -125,7 +125,15 @@ export const daemonState = (): DaemonChipState =>
 export const daemonBuildIds = (): {
   server: string;
   daemon: string | null;
+  /** GitHub-navigable git commit hashes (or "" / null when unknown). */
+  serverCommit: string;
+  daemonCommit: string | null;
 } => {
   const v = _daemonStatus.value();
-  return { server: v?.serverBuildId ?? "", daemon: v?.daemonBuildId ?? null };
+  return {
+    server: v?.serverBuildId ?? "",
+    daemon: v?.daemonBuildId ?? null,
+    serverCommit: v?.serverCommitHash ?? "",
+    daemonCommit: v?.daemonCommitHash ?? null,
+  };
 };

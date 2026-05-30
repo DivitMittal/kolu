@@ -54,7 +54,7 @@ import {
   type PtyHostSystemVersion,
   type ptyHostSurface,
 } from "./ptyHostSurface.ts";
-import { currentBuildId } from "./buildId.ts";
+import { currentBuildId, currentCommitHash } from "./buildId.ts";
 import { daemonExecArgv } from "./daemonUtils.ts";
 import { daemonPaths } from "../koluState.ts";
 import { log } from "../log.ts";
@@ -93,6 +93,9 @@ export interface DaemonHandle {
    *  to derive `outdated`, and surfaced to the client for the ChromeBar
    *  build-id readout. */
   daemonBuildId: string;
+  /** Daemon-reported git commit hash (GitHub-navigable), or `""` if the daemon
+   *  predates the optional `commitHash` field. Surfaced for the readout links. */
+  daemonCommitHash: string;
   /** Wire-compatible but running a different *pty-host source* than this
    *  kolu-server — the daemon survived a deploy whose terminal-host code moved
    *  on. (A server- or client-only deploy leaves this false.) Surfaced as the
@@ -281,13 +284,22 @@ export function getDaemonHandle(): DaemonHandle {
  *  build, else `"connected"`. */
 export function daemonStatusSnapshot(): DaemonStatus {
   const serverBuildId = currentBuildId();
+  const serverCommitHash = currentCommitHash();
   if (cached?.state() !== "live") {
-    return { state: "dead", serverBuildId, daemonBuildId: null };
+    return {
+      state: "dead",
+      serverBuildId,
+      daemonBuildId: null,
+      serverCommitHash,
+      daemonCommitHash: null,
+    };
   }
   return {
     state: cached.outdated ? "outdated" : "connected",
     serverBuildId,
     daemonBuildId: cached.daemonBuildId,
+    serverCommitHash,
+    daemonCommitHash: cached.daemonCommitHash || null,
   };
 }
 
@@ -491,6 +503,7 @@ async function connectAndVerify(): Promise<DaemonHandle> {
     daemonPid: versionInfo.pid,
     contractVersion: versionInfo.contractVersion,
     daemonBuildId: versionInfo.buildId,
+    daemonCommitHash: versionInfo.commitHash ?? "",
     outdated,
     state: () => state,
     dispose: () => socket?.destroy(),
