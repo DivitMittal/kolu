@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>kolu#951 R-4 — Local PTY daemon (@kolu/pty-host) — design + phases</title>
+<style>
+  :root {
+    --fg: #1a1c20;
+    --muted: #5b6470;
+    --bg: #fafaf7;
+    --panel: #ffffff;
+    --edge: #e6e2d6;
+    --accent: #6b4eff;
+    --accent-soft: #efebff;
+    --code-bg: #f4f1e8;
+    --code-fg: #2a2d33;
+    --ok: #1b7a3a;
+    --warn: #a96400;
+    --bad: #a02a2a;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, sans-serif;
+  }
+  body {
+    margin: 0;
+    font: 15px/1.55 var(--sans);
+    color: var(--fg);
+    background: var(--bg);
+  }
+  main {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 40px 32px 80px;
+  }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-size: 19px;
+    margin: 36px 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--edge);
+  }
+  h3 {
+    font-size: 15.5px;
+    margin: 20px 0 6px;
+    color: var(--accent);
+  }
+  h4 {
+    font-size: 14px;
+    margin: 14px 0 4px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  p, ul, ol { margin: 8px 0; }
+  ul, ol { padding-left: 22px; }
+  li { margin: 3px 0; }
+  code, kbd, samp {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  pre {
+    font-family: var(--mono);
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 12px 14px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.5;
+    border: 1px solid var(--edge);
+  }
+  pre code { background: transparent; padding: 0; }
+  .lead {
+    color: var(--muted);
+    font-size: 14.5px;
+    margin: 4px 0 18px;
+  }
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid #d4cbff;
+    vertical-align: middle;
+    margin-left: 6px;
+  }
+  .pill.ok   { background: #e3f4e9; color: var(--ok);  border-color: #b9e1c6; }
+  .pill.warn { background: #f8efd9; color: var(--warn);border-color: #e7d2a0; }
+  .pill.bad  { background: #f7e0e0; color: var(--bad); border-color: #e6b9b9; }
+  /* Standalone callout classes (not pills) — colour the text of a
+     <p>/<li> to flag a warning or a falsified-assumption note. */
+  p.warn, li.warn { color: var(--warn); }
+  p.bad,  li.bad  { color: var(--bad); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 12px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 13.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 7px 9px;
+    border-bottom: 1px solid var(--edge);
+    vertical-align: top;
+  }
+  th { background: var(--code-bg); font-weight: 600; }
+  td code { font-size: 12px; }
+  .cite {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  hr {
+    border: 0;
+    border-top: 1px dashed var(--edge);
+    margin: 32px 0;
+  }
+  .toc {
+    columns: 2;
+    column-gap: 28px;
+    font-size: 13.5px;
+    margin: 14px 0 28px;
+    padding: 12px 16px;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 6px;
+  }
+  .toc a { color: var(--fg); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+  .toc ol { margin: 0; padding-left: 18px; }
+  .meta-row {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 18px;
+  }
+  details > summary {
+    cursor: pointer;
+    font-weight: 600;
+    margin: 8px 0 4px;
+  }
+  /* Collapsed phase sections — summary is styled as the h2 it wraps. */
+  details.phase {
+    margin: 36px 0 10px;
+  }
+  details.phase > summary {
+    cursor: pointer;
+    list-style: none;
+    font-size: 19px;
+    font-weight: 600;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--edge);
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin: 0;
+  }
+  details.phase > summary::-webkit-details-marker { display: none; }
+  details.phase > summary::before {
+    content: "▶";
+    font-size: 12px;
+    color: var(--muted);
+    flex-shrink: 0;
+    width: 14px;
+    transition: transform 0.12s ease;
+  }
+  details.phase[open] > summary::before {
+    content: "▼";
+  }
+  details.phase > summary > h2 {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font-size: inherit;
+    font-weight: inherit;
+    display: inline;
+  }
+  details.phase[open] {
+    margin-bottom: 28px;
+  }
+</style>
+</head>
+<body>
+<main>
+<h1>R-4 — Local PTY daemonization + <code>@kolu/pty-host</code></h1>
+<p class="lead">Split out of <a href="remote-terminals.html">remote-terminals.html</a> on 2026-05-30 so the R-4 phases can be redesigned around the production restart failure below. R-1 / R-1.5 / R-1.6 (shipped) and R-2 / R-3 (post-R-4) stay in the <a href="remote-terminals.html">parent plan</a>; this file owns R-4 end-to-end. <strong>Read the constraints first — they supersede any conflicting detail in the historical sections that follow.</strong></p>
+
+<h2 id="r4ui-postmortem">⚠ Production failure (2026-05-30) — the R4c-UI restart that lost a session</h2>
+<p>The first R4c-UI build (the build-mismatch "update pending" nudge + a <em>Restart local PTY daemon</em> command — <a href="https://github.com/juspay/kolu/pull/1034">#1034</a>) shipped to production (Linux/systemd). The nudge fired correctly on a deploy; clicking restart then <strong>destroyed a live 20-terminal session and could not bring the daemon back</strong>. macOS was unaffected. Timeline from the user-service journal:</p>
+<pre><code>08:26  terminal created, total:20            &larr; 20 live terminals (Claude Code agents)
+08:29  "restarting local PTY-host daemon (user-triggered)"
+08:29  "killing all terminals" count:20       &larr; killAll drains ALL 20 first
+08:29  daemon socket closed / old daemon SIGTERM
+08:29  (old daemon: 13.5h old, 25G RAM / 40.6G swap &mdash; box thrashing)
+08:29  "Daemon failed to start: socket did not appear within 30s"  &larr; RESPAWN TIMED OUT
+08:31  new daemon finally binds (~2 min after SIGTERM)</code></pre>
+<p class="bad"><strong>Net effect:</strong> killAll ran <em>before</em> the new daemon was confirmed up; the respawn timed out at 30s while the overloaded box took ~2&nbsp;min to release the old daemon's pid-file + socket. The user was left with <strong>zero terminals and a dead daemon handle</strong>, and the canvas rendered <strong>empty</strong> — indistinguishable from "you have no terminals." The 20 PTYs (running agents + scrollback) were gone; restore re-created only fresh empty shells. No second daemon ever ran — single-instance held (pid-file <code>O_EXCL</code> + liveness probe, plus the systemd unit name); the failure was the respawn losing the race against the slow old-daemon exit.</p>
+
+<h3 id="r4ui-constraints">Hard constraints for the redo</h3>
+<ol>
+  <li class="bad"><strong>Restart must be recoverable, never kill-then-pray.</strong> <code>restartLocalPtyHostDaemon</code> drained all 20 terminals before confirming the new daemon could bind; the respawn then failed with no rollback. A daemon restart inherently loses the PTYs (accepted, confirmed cost) — but the <em>failure mode</em> must not be silent loss. Snapshot the session first; after respawn, auto-reattach / offer restore; if respawn fails, surface a loud, recoverable degraded state with the session preserved — never an empty canvas.</li>
+  <li><strong>Wait for the old daemon to fully exit — the single-instance lock fights the restart.</strong> SIGTERM-then-immediately-respawn races the pid-file (<code>O_EXCL</code> + liveness probe) and the <code>--unit=kolu-pty-host</code> name; the new daemon can't acquire until the old one is gone. <code>restartDaemon</code> waited 5s for the socket and polled 30s for the respawn — both far too short. Wait on the actual process exit (pid gone via <code>kill(pid,0)</code>) before spawning, with a generous, load-aware ceiling (prefer event-driven waits over fixed polls).</li>
+  <li><strong>Timeouts must fit a loaded production box, not an idle dev one.</strong> 20 heavy PTYs tearing down + a tsx cold-start under swap pressure &gt;&gt; 30s. macOS passed only because it was fast. Every restart / spawn deadline needs real headroom.</li>
+  <li class="bad"><strong>Never lie about state — show "Connecting…/degraded", not an empty canvas.</strong> A dead/absent daemon handle (<code>getDaemonHandle()</code> throwing) rendered as silent emptiness. It must surface as an explicit connecting / degraded UI state. The empty canvas is what made the user believe the session was permanently lost.</li>
+  <li><strong>A persistent PTY status indicator — always visible.</strong> The only daemon signal today is the amber nudge, shown <em>only</em> when <code>outdated</code>. There must always be a PTY status chip (distinct from the WebSocket dot) with explicit states — <strong>connected · connecting · degraded/dead · update-pending</strong> — so the daemon's health is always glanceable, exactly like the WS connection dot. <em>(Being implemented onto #1034 as a first cut.)</em></li>
+  <li><strong>Key staleness on pty-host, not the whole binary.</strong> <code>currentBuildId()</code> keys on the <code>/nix/store/&lt;hash&gt;-kolu-stamped</code> path = the <em>entire</em> kolu build, so <em>every</em> deploy (even server/client-only, pty-host untouched) fires the nudge — and acting on it costs a terminal-losing restart for <em>zero</em> benefit. Hash the <code>@kolu/pty-host</code> source/closure (or bake a pty-host-specific rev) so the soft nudge only fires when a restart actually gains something. Wire-incompatible contract changes stay on the forced-restart path. <em>(This trade-off was not surfaced at planning — it should have been.)</em></li>
+  <li><strong>Back up the session before a destructive restart.</strong> The saved session survived here only by luck (6 terminals on disk). Snapshot it to a timestamped backup before any kill-all / restart so a botched restart is recoverable. <em>(Issue to file.)</em></li>
+  <li><strong>Fix the preferences storm.</strong> During the churn the client emitted 200+ <code>rightPanel</code> <code>size</code>/<code>codeTabTreeSize</code> patches (bursts ~100–230/min) — a ResizeObserver-style feedback loop that saturated the server and contended with the autosave the restart relies on. Debounce / guard it (pre-existing, not introduced by #1034).</li>
+</ol>
+
+<h2 id="r4-salvage">Salvage scorecard — this PR (<a href="https://github.com/juspay/kolu/pull/1034">#1034</a>) vs. the constraints</h2>
+<p>Where the shipped PR stands against the constraints above — the salvage-vs-redo decision. The constraint numbers match the list in <a href="#r4ui-constraints">Hard constraints</a>.</p>
+<table>
+  <tr><th>Constraint</th><th>Current PR</th><th>To salvage</th></tr>
+  <tr><td><strong>5. Always-on PTY status chip</strong></td><td><span class="pill ok">done</span> — the chip ships connected/connecting/outdated/dead</td><td>—</td></tr>
+  <tr><td><strong>6. pty-host-keyed staleness</strong> (stop over-prompting)</td><td><span class="pill bad">no</span> — keyed on the whole-binary <code>/nix/store</code> hash</td><td><strong>Small, highest-leverage.</strong> Hash the <code>@kolu/pty-host</code> source/closure instead — it's why the nudge fired (and the restart happened) on a pty-host-unchanged deploy at all.</td></tr>
+  <tr><td><strong>1–3. Atomic / recoverable restart</strong> (the data-loss bug)</td><td><span class="pill bad">no</span> — kill-all-then-pray; 5s socket-gone wait + 30s respawn poll</td><td>Moderate. Snapshot session → wait for the old daemon's real exit → confirm respawn → auto-restore; load-aware timeouts.</td></tr>
+  <tr><td><strong>4. Honest state — no empty-canvas lie</strong></td><td><span class="pill warn">partial</span> — the chip shows <code>dead</code>, but a dead handle still blanks the canvas</td><td>Moderate. Surface degraded/connecting at the canvas, not only the chip.</td></tr>
+  <tr><td><strong>7. Session backup before a destructive restart</strong></td><td><span class="pill bad">no</span></td><td>Small — snapshot to a timestamped file (also the issue to file).</td></tr>
+  <tr><td><strong>8. Preferences storm</strong></td><td><span class="pill bad">no</span> — pre-existing, not introduced here</td><td>Separate — debounce the rightPanel resize loop.</td></tr>
+</table>
+<p><strong>Salvage-critical pair: #6 + #1–3.</strong> Together they stop both the unnecessary prompt <em>and</em> the destructive restart. #4 makes failures honest; #5 is in; #7/#8 are good follow-ups (#8 is genuinely pre-existing, not this PR's). If #6 + #1–3 land cleanly, salvage; if the restart rework proves deeper than expected, redo.</p>
+
+<hr/>
+
+<h2 id="r4-design">The design (forward)</h2>
+<p>The long-lived survivor is <strong><code>@kolu/pty-host</code> only</strong> — node-pty fds + the <code>@xterm/headless</code> mirror + the raw VT taps (cwd · title+fgPid · command-run · exit) + a unix socket. Everything volatile — the provider DAG (git context, agent detection, PR status, the most-edited code in the repo) — runs <strong>fresh in kolu-server</strong>, consuming the daemon's taps over the socket. That split is the whole point: a kolu-server restart (every deploy) re-runs the providers against the <em>surviving</em> PTYs, so detection is never stale, while the PTYs themselves persist. Only a change to <code>pty-host</code>'s own (rarely-changing) wire contract forces terminal loss; a provider change (frequent) restarts the cheap in-server layer with PTYs untouched. This corrects <a href="https://github.com/juspay/kolu/pull/1031">#1031</a>, which daemonized a survivor that <em>held</em> the providers and therefore served stale detection on every deploy.</p>
+
+<h3 id="r4-survive">Surviving a deploy — the cgroup mechanism <span class="pill ok">spike-verified</span></h3>
+<p>On Linux/systemd, kolu-server spawns the daemon via <code>systemd-run --user --unit=kolu-pty-host</code> (gated on <code>INVOCATION_ID</code>), landing it in its <strong>own transient cgroup</strong> — so <code>systemctl --user restart kolu</code> (a deploy) does <em>not</em> kill it. A plain detached / <code>setsid</code> child does <strong>not</strong> survive on cgroup-v2: the default <code>KillMode=control-group</code> walks <em>cgroup membership</em>, not the session, so the child stays in kolu-server's cgroup and dies with it — the #1031 Linux failure. On macOS the detached spawn already survives launchd; off-systemd (dev) it's a plain detached child. Single-instance is guaranteed two independent ways: the systemd unit name, plus a pid-file (<code>O_EXCL</code> create + liveness probe) the daemon acquires on start.</p>
+
+<h3 id="r4-phases-table">Phase plan</h3>
+<table>
+  <tr><th>Phase</th><th>Scope</th><th>Status</th></tr>
+  <tr><td><strong>R4a</strong></td><td>Extract <code>@kolu/pty-host</code> — the multi-client PTY-owner primitive (in-process).</td><td><span class="pill ok">shipped</span> <a href="https://github.com/juspay/kolu/pull/1023">#1023</a></td></tr>
+  <tr><td><strong>R4b</strong></td><td>Parameterize <code>providers.ts</code> over <code>ProviderHooks</code> so the DAG runs against any pty-host.</td><td><span class="pill ok">shipped</span> <a href="https://github.com/juspay/kolu/pull/1028">#1028</a></td></tr>
+  <tr><td><strong>R4c</strong></td><td>Move <em>only</em> <code>pty-host</code> into a <code>kolu --stdio</code> daemon (own cgroup, survives a deploy); providers stay fresh in kolu-server; reattach-by-id at boot.</td><td><span class="pill warn">redo</span> <a href="https://github.com/juspay/kolu/pull/1034">#1034</a></td></tr>
+  <tr><td><strong>R4c-UI</strong></td><td>Always-on PTY status chip + a <em>safe</em> (recoverable) restart + pty-host-keyed staleness — <strong>re-cut against the <a href="#r4ui-constraints">constraints</a></strong>.</td><td><span class="pill warn">redo</span> <a href="https://github.com/juspay/kolu/pull/1034">#1034</a></td></tr>
+</table>
+<p><em>Then R-2 = "add the ssh transport" (a remote pty-host + a re-provisioned remote provider process running the same engine); R-3 = version handshake + session-ID persistence. Both stay in the <a href="remote-terminals.html">parent plan</a>.</em></p>
+
+<h2 id="r4-learnings">History, summarized</h2>
+<ul>
+  <li><strong>R4a (<a href="https://github.com/juspay/kolu/pull/1023">#1023</a>) + R4b (<a href="https://github.com/juspay/kolu/pull/1028">#1028</a>) shipped clean</strong> as pure in-process refactors (byte-identical on screen).</li>
+  <li><strong>Two prototypes seeded the design:</strong> <a href="https://github.com/juspay/kolu/pull/994">#994</a> (the R-2 <em>remote</em> prototype) proved "providers in the agent", re-provisioned fresh per version; <a href="https://github.com/juspay/kolu/pull/1010">#1010</a> was a <em>local</em> PTY-only daemon — the thin-survivor model. The redo is their correct combination: #1010's thin survivor (pty-host only) + #994's providers-in-agent, but kept <em>fresh</em> in kolu-server rather than carried by the survivor.</li>
+  <li><strong>R4c first attempt — <a href="https://github.com/juspay/kolu/pull/1031">#1031</a> — was dropped</strong> after a macOS prod failure: it daemonized the R4b in-process agent (pty-host <em>plus</em> the provider DAG), combining the two prototypes <em>wrong</em>, so the survivor served stale detection on every deploy — and the staleness check keyed on the inert <code>pkgVersion="0.1.0"</code> constant, so <code>outdated</code> was <em>always false</em> and a 20-hour-old daemon was reused across deploys. Two fixes fell out: split <em>only</em> pty-host into the survivor, and key staleness on real <strong>build identity</strong>.</li>
+  <li><strong>The volatility insight</strong> (Parnas / Lowy — encapsulate what changes; surfaced by the whole-plan <code>/lowy</code> pass under <a href="https://github.com/srid/agency/pull/186">agency#186</a>): "no legacy agent" ⊗ "tmux feel" conflict <em>only</em> when the long-lived component's code changes, so the survivor must be the stable thin core (pty-host), never the volatile providers.</li>
+  <li><strong>R4c redo — <a href="https://github.com/juspay/kolu/pull/1034">#1034</a> (this PR) — 2026-05-30 (the postmortem above):</strong> build-keyed staleness + the nudge shipped, but the restart was non-atomic and the staleness key was the whole binary (over-prompting). That drove this redo — the <a href="#r4ui-constraints">constraints</a> are the result.</li>
+</ul>
+</main>
+<script>
+  // Auto-expand collapsed phase sections when navigated to via #anchor
+  // (TOC link, direct URL, hashchange). Modern browsers do this for
+  // <details> in some cases but not consistently — explicit handler is
+  // cheaper than tracking the spec churn.
+  function expandFromHash() {
+    if (!location.hash) return;
+    const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (!target) return;
+    target.closest("details")?.setAttribute("open", "");
+    target.scrollIntoView({ block: "start" });
+  }
+  window.addEventListener("DOMContentLoaded", expandFromHash);
+  window.addEventListener("hashchange", expandFromHash);
+</script>
+</body>
+</html>
