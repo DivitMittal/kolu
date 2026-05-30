@@ -45,7 +45,8 @@ Order = biggest-contributor-first (Ralph rule).
 | Cycle | Change | client/src LOC | Δ | Commit |
 |---|---|---|---|---|
 | 0 | baseline | 25,613 | — | — |
-| 1 | extract `@kolu/solid-icons` (Icons.tsx, 38 components, 26 import sites) | 24,998 | **−615** | _pending_ |
+| 1 | extract `@kolu/solid-icons` (Icons.tsx, 38 components, 26 import sites) | 24,998 | **−615** | 6bf9f39 |
+| 2 | extract `@kolu/solid-xterm` (`createXtermWebgl` — WebGL-context lifecycle out of Terminal.tsx) | 24,942 | **−56** | _pending_ |
 
 ## Dead ends
 
@@ -53,4 +54,19 @@ _(none yet)_
 
 ## Key findings
 
-_(pending)_
+- **`solid-xterm` is an extract-and-refactor, not a clean move.** Unlike the UI
+  atoms, xterm usage is complected with Kolu's session wiring in the 950-LOC
+  `Terminal.tsx`. There is *no automated guard* for the #591/#606/#575 heap
+  leaks — they were caught only by manual heap snapshots, and the cucumber e2e
+  covers terminal *behaviour* (resize/scroll/screenshot/file-refs) but not
+  disposal/memory. So a wholesale rip of the leak-critical async mount would be
+  irresponsible without heap-test infrastructure. The responsible seam is the
+  **WebGL-context lifecycle** (`createXtermWebgl`): the most reusable, hardest-won,
+  self-contained xterm knowledge (Chrome's ~16-context limit, the `loseContext`
+  canvas capture, link-layer exclusion, texture-atlas management). The
+  leak-critical mount/cleanup *ordering* stays at the call site; only the WebGL
+  function bodies move. The temporary `#591` zombie-context tracker stays in the
+  client (it's throwaway debug scaffolding) and is inverted into the primitive via
+  optional lifecycle hooks — so the library carries no Kolu debug dependency.
+  Gated by 74 passing e2e scenarios (canvas multi-tile + screenshot exercise the
+  WebGL paths) on top of unit + typecheck.

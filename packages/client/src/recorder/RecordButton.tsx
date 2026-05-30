@@ -20,7 +20,12 @@ import { type Component, createSignal, Match, Show, Switch } from "solid-js";
 import { match } from "ts-pattern";
 import { ACTIONS } from "../input/actions";
 import { formatKeybind } from "../input/keyboard";
-import { PauseIcon, RecordIcon, ResumeIcon, WebcamIcon } from "@kolu/solid-icons";
+import {
+  PauseIcon,
+  RecordIcon,
+  ResumeIcon,
+  WebcamIcon,
+} from "@kolu/solid-icons";
 import Tip from "../ui/Tip";
 import RecordPopover from "./RecordPopover";
 import {

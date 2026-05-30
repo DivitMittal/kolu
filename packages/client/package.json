@@ -18,6 +18,7 @@
     "@kolu/artifact-sdk": "workspace:*",
     "@kolu/solid-icons": "workspace:*",
     "@kolu/solid-pierre": "workspace:*",
+    "@kolu/solid-xterm": "workspace:*",
     "@kolu/surface": "workspace:*",
     "@orpc/client": "^1.13.13",
     "@pierre/diffs": "^1.2.1",

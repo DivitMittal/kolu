@@ -67,6 +67,9 @@ importers:
       '@kolu/solid-pierre':
         specifier: workspace:*
         version: link:../solid-pierre
+      '@kolu/solid-xterm':
+        specifier: workspace:*
+        version: link:../solid-xterm
       '@kolu/surface':
         specifier: workspace:*
         version: link:../surface
@@ -610,6 +613,25 @@ importers:
       '@pierre/trees':
         specifier: ^1.0.0-beta.4
         version: 1.0.0-beta.4(react@19.2.5)
+      solid-js:
+        specifier: ^1.9.0
+        version: 1.9.11
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/solid-xterm:
+    dependencies:
+      '@xterm/addon-webgl':
+        specifier: 0.20.0-beta.224
+        version: 0.20.0-beta.224(@xterm/xterm@6.1.0-beta.225)
+      '@xterm/xterm':
+        specifier: 6.1.0-beta.225
+        version: 6.1.0-beta.225
       solid-js:
         specifier: ^1.9.0
         version: 1.9.11
