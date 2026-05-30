@@ -45,6 +45,7 @@ Order = biggest-contributor-first (Ralph rule).
 | Cycle | Change | client/src LOC | Δ | Commit |
 |---|---|---|---|---|
 | 0 | baseline | 25,613 | — | — |
+| 1 | extract `@kolu/solid-icons` (Icons.tsx, 38 components, 26 import sites) | 24,998 | **−615** | _pending_ |
 
 ## Dead ends
 

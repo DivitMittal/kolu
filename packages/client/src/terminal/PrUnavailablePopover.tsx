@@ -15,7 +15,7 @@ import { Portal } from "solid-js/web";
 import { toast } from "solid-sonner";
 import { match } from "ts-pattern";
 import { writeTextToClipboard } from "../ui/clipboard";
-import { WarningIcon } from "../ui/Icons";
+import { WarningIcon } from "@kolu/solid-icons";
 import { surface } from "../ui/Surface";
 import { useAnchoredPopover } from "../ui/useAnchoredPopover";
 

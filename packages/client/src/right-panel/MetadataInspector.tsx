@@ -13,7 +13,7 @@ import {
   agentWorkflow,
   stateLabels,
 } from "../ui/agentDisplay";
-import { PrStateIcon, TerminalIcon, WorktreeIcon } from "../ui/Icons";
+import { PrStateIcon, TerminalIcon, WorktreeIcon } from "@kolu/solid-icons";
 import Row from "../ui/Row";
 import Section from "../ui/Section";
 

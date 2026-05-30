@@ -17,7 +17,7 @@ import { useTips } from "../settings/useTips";
 import AgentIndicator from "../terminal/AgentIndicator";
 import { useSubPanel } from "../terminal/useSubPanel";
 import { useTerminalStore } from "../terminal/useTerminalStore";
-import { ScreenshotIcon, SearchIcon, SplitToggleIcon } from "../ui/Icons";
+import { ScreenshotIcon, SearchIcon, SplitToggleIcon } from "@kolu/solid-icons";
 import Tip from "../ui/Tip";
 import { useThemeManager } from "../useThemeManager";
 

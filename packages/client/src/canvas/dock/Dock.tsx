@@ -66,7 +66,7 @@ import {
   DOCK_CARDS_SUBGRID_LEFT_RESTORE,
   RAIL_WIDTH_PX,
 } from "../../ui/chromeSpacing";
-import { ChevronDownIcon, PlusIcon, SearchIcon } from "../../ui/Icons";
+import { ChevronDownIcon, PlusIcon, SearchIcon } from "@kolu/solid-icons";
 import { useViewPosture } from "../useViewPosture";
 import { chipInitials } from "./chipInitials";
 import type { DockRowBucket } from "./dockRowRanking";

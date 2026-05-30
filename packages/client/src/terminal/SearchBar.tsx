@@ -15,7 +15,7 @@ import {
   onCleanup,
   Show,
 } from "solid-js";
-import { ChevronDownIcon, ChevronUpIcon, CloseIcon } from "../ui/Icons";
+import { ChevronDownIcon, ChevronUpIcon, CloseIcon } from "@kolu/solid-icons";
 import { surface } from "../ui/Surface";
 import Tip from "../ui/Tip";
 

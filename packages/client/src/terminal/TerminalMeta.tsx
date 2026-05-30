@@ -17,7 +17,7 @@ import { type Component, Show } from "solid-js";
 import { IntentMarkdownInline } from "../intent/IntentMarkdown";
 import { annotationLine } from "../intent/text";
 import { agentWorkflow } from "../ui/agentDisplay";
-import { PrStateIcon, WorktreeIcon } from "../ui/Icons";
+import { PrStateIcon, WorktreeIcon } from "@kolu/solid-icons";
 import Tip from "../ui/Tip";
 import ChecksIndicator from "./ChecksIndicator";
 import { PrUnavailableButton } from "./PrUnavailablePopover";

@@ -14,7 +14,7 @@
 import type { CodeTabView } from "kolu-common/surface";
 import { type Component, createMemo, createSignal, For, Show } from "solid-js";
 import { Dynamic, Portal } from "solid-js/web";
-import { ChevronDownIcon } from "../ui/Icons";
+import { ChevronDownIcon } from "@kolu/solid-icons";
 import { surface } from "../ui/Surface";
 import { useAnchoredPopover } from "../ui/useAnchoredPopover";
 

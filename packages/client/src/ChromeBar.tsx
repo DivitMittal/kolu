@@ -35,7 +35,7 @@ import {
   MaximizeIcon,
   RestoreIcon,
   SettingsIcon,
-} from "./ui/Icons";
+} from "@kolu/solid-icons";
 import Kbd from "./ui/Kbd";
 import Tip from "./ui/Tip";
 
