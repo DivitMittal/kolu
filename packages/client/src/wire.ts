@@ -102,12 +102,17 @@ const _terminalList = app.cells.terminalList.use({
 /** Subscription handle for the live terminal list. */
 export const terminalListSub = _terminalList.sub;
 
-// Local PTY-host daemon build status — server-driven. Drives the ChromeBar
-// "update pending" nudge + the restart command.
+// Local PTY-host daemon health status — server-driven. Drives the ChromeBar's
+// always-visible PTY status chip (and, when outdated, the "update pending"
+// nudge + the restart command).
 const _daemonStatus = app.cells.daemonStatus.use({
   onError: (err) => toast.error(`Daemon status error: ${err.message}`),
 });
-/** True when the surviving daemon is a different kolu build than this server
- *  — i.e. an update is pending until the user restarts the daemon. */
-export const daemonOutdated = (): boolean =>
-  _daemonStatus.value()?.outdated ?? false;
+
+/** The local PTY daemon's health as the chip should render it. `"connecting"`
+ *  is client-only: until the first server yield arrives (`value()` undefined)
+ *  we don't yet know the daemon's state, so we show a pending state rather than
+ *  prematurely claiming "dead". After that it mirrors the server's enum. */
+export type DaemonChipState = "connected" | "outdated" | "dead" | "connecting";
+export const daemonState = (): DaemonChipState =>
+  _daemonStatus.value()?.state ?? "connecting";

@@ -28,6 +28,7 @@ import { formatKeybind } from "./input/keyboard";
 import RecordButton from "./recorder/RecordButton";
 import { useRightPanel } from "./right-panel/useRightPanel";
 import type { WsStatus } from "./rpc/rpc";
+import type { DaemonChipState } from "./wire";
 import SettingsPopover from "./settings/SettingsPopover";
 import {
   DockToggleIcon,
@@ -46,6 +47,40 @@ const statusStyles: Record<WsStatus, string> = {
   closed: "bg-danger",
 };
 
+/** Per-state look + copy for the always-visible PTY status chip. `clickable`
+ *  gates whether the chip opens the restart confirm — only the actionable
+ *  states (outdated/dead) do; a healthy/connecting daemon is a passive glyph.
+ *  `dotClass` is the small trailing indicator (omitted when empty). */
+const ptyChipStyles: Record<
+  DaemonChipState,
+  { glyph: string; dotClass: string; label: string; clickable: boolean }
+> = {
+  connected: {
+    glyph: "text-fg-3",
+    dotClass: "",
+    label: "Local PTY daemon — connected",
+    clickable: false,
+  },
+  outdated: {
+    glyph: "text-warning",
+    dotClass: "bg-warning animate-pulse",
+    label: "A newer kolu build is available — restart the local PTY daemon",
+    clickable: true,
+  },
+  dead: {
+    glyph: "text-danger",
+    dotClass: "bg-danger",
+    label: "Local PTY daemon disconnected — terminals may be unavailable",
+    clickable: true,
+  },
+  connecting: {
+    glyph: "text-fg-3 animate-pulse",
+    dotClass: "",
+    label: "Local PTY daemon — connecting…",
+    clickable: false,
+  },
+};
+
 // Shared base for the square icon toggles in the control cluster
 // (maximize, dock, inspector). Active/idle coloring is layered on via
 // each button's own `classList`. Keep ring/size tweaks here so all
@@ -55,11 +90,11 @@ const toggleBtnClass =
 
 const ChromeBar: Component<{
   status: WsStatus;
-  /** The local PTY-host daemon is running a stale kolu build — show the
-   *  "update pending" nudge. Distinct from `status` (the WebSocket dot): this
-   *  is a terminal-glyph affordance, not a connection dot. */
-  updatePending: boolean;
-  /** Open the restart-daemon confirm (the nudge + the ⌘K command share it). */
+  /** Health of the local PTY-host daemon — drives the always-visible PTY
+   *  status chip. Distinct from `status` (the WebSocket dot): this is a
+   *  terminal-glyph affordance, not a connection dot. */
+  daemonState: DaemonChipState;
+  /** Open the restart-daemon confirm (the chip + the ⌘K command share it). */
   onRequestDaemonRestart: () => void;
   onOpenPalette: () => void;
 }> = (props) => {
@@ -79,6 +114,9 @@ const ChromeBar: Component<{
   const maximizeLabel = createMemo(() =>
     docked() ? "Restore canvas" : "Maximize terminal",
   );
+
+  // Look + copy for the PTY status chip, resolved from the daemon's state.
+  const ptyChip = createMemo(() => ptyChipStyles[props.daemonState]);
 
   return (
     <header
@@ -140,23 +178,43 @@ const ChromeBar: Component<{
             class={`inline-block w-2 h-2 rounded-full transition-colors ${statusStyles[props.status]}`}
           />
         </Tip>
-        {/* Update-pending nudge — only while the daemon is on a stale build.
-         *  A terminal-glyph button (not a dot) so it never reads as a second
-         *  connection state; amber to signal "action available, not broken". */}
-        <Show when={props.updatePending}>
-          <Tip label="A newer kolu build is available — restart the local PTY daemon">
-            <button
-              type="button"
-              data-testid="pty-update-pending"
-              class="pointer-events-auto flex items-center gap-1 h-5 pl-1 pr-1.5 rounded-md bg-warning/15 text-warning hover:bg-warning/25 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50"
-              aria-label="Update pending — restart local PTY daemon"
-              onClick={() => props.onRequestDaemonRestart()}
+        {/* PTY status chip — always visible, distinct from the WebSocket dot:
+         *  a terminal glyph (not a dot) so it never reads as a second
+         *  connection state. State drives glyph color, the trailing indicator,
+         *  the tooltip, and whether a click opens the restart confirm. The
+         *  inner `pty-update-pending` testid renders ONLY while outdated, so
+         *  the e2e nudge visible/hidden assertions still hold around the
+         *  permanent chip. */}
+        <Tip label={ptyChip().label}>
+          <button
+            type="button"
+            data-testid="pty-status"
+            data-state={props.daemonState}
+            class="pointer-events-auto flex items-center gap-1 h-5 pl-1 pr-1.5 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+            classList={{
+              [`hover:bg-surface-2 cursor-pointer ${ptyChip().glyph}`]:
+                ptyChip().clickable,
+              [`cursor-default ${ptyChip().glyph}`]: !ptyChip().clickable,
+            }}
+            aria-label={ptyChip().label}
+            disabled={!ptyChip().clickable}
+            onClick={() => {
+              if (ptyChip().clickable) props.onRequestDaemonRestart();
+            }}
+          >
+            <Show
+              when={props.daemonState === "outdated"}
+              fallback={<TerminalIcon class="w-3.5 h-3.5" />}
             >
-              <TerminalIcon class="w-3.5 h-3.5" />
-              <span class="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
-            </button>
-          </Tip>
-        </Show>
+              <span data-testid="pty-update-pending" class="flex items-center">
+                <TerminalIcon class="w-3.5 h-3.5" />
+              </span>
+            </Show>
+            <Show when={ptyChip().dotClass}>
+              <span class={`w-1.5 h-1.5 rounded-full ${ptyChip().dotClass}`} />
+            </Show>
+          </button>
+        </Tip>
       </div>
 
       {/* Middle spacer — pointer-events pass through to whatever the

@@ -65,7 +65,7 @@ import { surface } from "./ui/Surface";
 import { isMobile } from "./useMobile";
 import { useThemeManager } from "./useThemeManager";
 import { useVisualViewportHeight } from "./useVisualViewportHeight";
-import { client, daemonOutdated } from "./wire";
+import { client, daemonState } from "./wire";
 
 const App: Component = () => {
   const { store, crud, session, worktree, alerts } = useTerminals();
@@ -517,7 +517,7 @@ const App: Component = () => {
       <Show when={!isMobile()}>
         <ChromeBar
           status={wsStatus()}
-          updatePending={daemonOutdated()}
+          daemonState={daemonState()}
           onRequestDaemonRestart={() => setDaemonRestartOpen(true)}
           onOpenPalette={() => openPalette()}
         />

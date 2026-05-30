@@ -496,27 +496,34 @@ export function applyPreferencesPatch(
 // ── Local PTY-host daemon status (server-derived) ─────────────────────
 
 /**
- * Build/version status of the local `kolu --stdio` PTY-host daemon, as seen
+ * Health/version status of the local `kolu --stdio` PTY-host daemon, as seen
  * by this kolu-server. Server is sole writer; the client is read-only and
- * uses it to drive the "update pending" nudge + the restart command.
+ * uses it to drive the always-visible PTY status chip (and, when `outdated`,
+ * the "update pending" nudge + the restart command).
  *
- * Deliberately just `outdated` — the boolean is the whole stable client
- * contract. The build ids + pid that *derive* it are server internals (a
- * `/nix/store` hash, an OS pid) and stay server-side: they're already in the
- * supervisor's boot log, and pushing them to every browser would couple the
- * client to how staleness is keyed. A future diagnostics view should pull
- * them via a dedicated RPC, not widen this push cell.
+ * Deliberately just a UI-facing `state` enum — the three values are the whole
+ * stable client contract. The build ids + pid that *derive* `"outdated"` are
+ * server internals (a `/nix/store` hash, an OS pid) and stay server-side:
+ * they're already in the supervisor's boot log, and pushing them to every
+ * browser would couple the client to how staleness is keyed. A future
+ * diagnostics view should pull them via a dedicated RPC, not widen this cell.
+ *
+ *  - `connected` — a live daemon on this server's build; terminals are healthy.
+ *  - `outdated`  — a live daemon that is wire-compatible but a *different build*
+ *    than this kolu-server (it survived a deploy and serves stale code). The
+ *    whole binary's identity, not pty-host's specifically (a server-only change
+ *    bumps it too), so the nudge copy says "a newer kolu build is available".
+ *  - `dead`      — no live daemon connected (before the first connect, or after
+ *    the socket closed mid-session). Terminals may be unavailable.
  */
 export const DaemonStatusSchema = z.object({
-  /** The surviving daemon is wire-compatible but a *different build* than
-   *  this kolu-server — it's running stale code until restarted. The whole
-   *  binary's identity, not pty-host's specifically (a server-only change
-   *  bumps it too), so the nudge copy says "a newer kolu build is available". */
-  outdated: z.boolean(),
+  state: z.enum(["connected", "outdated", "dead"]),
 });
 
+/** Honest pre-connect default: until the supervisor reports a live daemon,
+ *  the client shows "disconnected", not a false-positive "connected". */
 export const DEFAULT_DAEMON_STATUS: z.infer<typeof DaemonStatusSchema> = {
-  outdated: false,
+  state: "dead",
 };
 
 // ── The surface ───────────────────────────────────────────────────────
@@ -565,10 +572,11 @@ export const surface = defineSurface({
       verbs: ["get"],
     },
 
-    /** Local PTY-host daemon build status — server-driven. Read-only on the
+    /** Local PTY-host daemon health status — server-driven. Read-only on the
      *  client; computed from the supervisor's current handle and republished
-     *  after a user-triggered daemon restart. Drives the "update pending"
-     *  nudge + the restart command. */
+     *  after a user-triggered daemon restart. Drives the always-visible PTY
+     *  status chip (and, when `outdated`, the "update pending" nudge + the
+     *  restart command). */
     daemonStatus: {
       schema: DaemonStatusSchema,
       default: DEFAULT_DAEMON_STATUS,

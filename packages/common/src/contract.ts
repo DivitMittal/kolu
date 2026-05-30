@@ -139,7 +139,8 @@ export const contract = oc.router({
     /** Restart the local PTY-host daemon — SIGTERM the running daemon (its
      *  PTYs die) and spawn a fresh one. The user-chosen, terminal-losing
      *  restart that clears a stale (build-mismatched) daemon. Returns the
-     *  fresh daemon status so the caller can confirm `outdated` cleared. */
+     *  fresh daemon status so the caller can confirm the state cleared back to
+     *  `connected`. */
     restartPtyHostDaemon: oc.output(DaemonStatusSchema),
   },
   terminal: {

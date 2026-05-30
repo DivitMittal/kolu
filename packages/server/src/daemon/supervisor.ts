@@ -254,15 +254,14 @@ export function getDaemonHandle(): DaemonHandle {
   return cached;
 }
 
-/** Snapshot the daemon's build status for the `daemonStatus` cell. Safe to
- *  call any time — returns `{ outdated: false }` when no daemon is connected
- *  or the socket has closed, so the cell never throws the way
- *  `getDaemonHandle()` deliberately does (a dead daemon isn't "an update
- *  pending"). */
+/** Snapshot the daemon's health status for the `daemonStatus` cell. Safe to
+ *  call any time — returns `{ state: "dead" }` when no daemon is connected or
+ *  the socket has closed, so the cell never throws the way `getDaemonHandle()`
+ *  deliberately does. A live daemon is `"outdated"` when it's serving a stale
+ *  build, else `"connected"`. */
 export function daemonStatusSnapshot(): DaemonStatus {
-  return {
-    outdated: cached?.state() === "live" ? cached.outdated : false,
-  };
+  if (cached?.state() !== "live") return { state: "dead" };
+  return { state: cached.outdated ? "outdated" : "connected" };
 }
 
 /** Restart the PTY-host daemon: SIGTERM the running daemon (its PTYs die),
