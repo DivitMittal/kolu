@@ -382,12 +382,13 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
         },
         {
           kind: "action",
-<<<<<<< HEAD
           name: "Restart local PTY daemon",
           description:
             "Apply the newer terminal host — closes running terminals",
           onSelect: () => deps.handleRestartDaemon(),
-=======
+        },
+        {
+          kind: "action",
           name: "Export session",
           description: "Download terminal session state as JSON",
           onSelect: () => deps.handleExportSession(),
@@ -397,7 +398,6 @@ export function createCommands(deps: CommandDeps): Accessor<PaletteCommand[]> {
           name: "Import session",
           description: "Restore terminals from a session JSON file",
           onSelect: () => deps.handleImportSession(),
->>>>>>> origin/master
         },
       ],
     },
