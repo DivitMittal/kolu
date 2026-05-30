@@ -101,21 +101,20 @@
               "machinectl -q shell alice@.host /run/current-system/sw/bin/systemctl --user is-active kolu.service"
           )
 
-          def alice_user(cmd):
-              return machine.succeed(
-                  "machinectl -q shell alice@.host "
-                  "/run/current-system/sw/bin/systemctl --user " + cmd
-              )
+          # Daemon pid file (the daemon writes it via tryAcquirePidFile). The
+          # service's KOLU_STATE_DIR is ~/.config/kolu (the nix wrapper sets it).
+          pidfile = "/home/alice/.config/kolu/pty-host.pid"
 
-          # Dump the kolu + daemon user journals — called on any health timeout
-          # so a boot that hangs/crashes before binding the port is legible in
-          # the CI log (user-service stdout doesn't reach the VM console).
+          # Dump the kolu + daemon journals on failure so a boot/daemon issue is
+          # legible in CI (user-service stdout doesn't reach the VM console).
+          # Read the SYSTEM journal as root (`_SYSTEMD_USER_UNIT=`), NOT via
+          # `machinectl shell journalctl` — the latter hung for an hour. Each
+          # call is `timeout`-guarded so the dump itself can never hang the run.
           def dump_journals():
               for unit in ("kolu.service", "kolu-pty-host.service"):
                   out = machine.succeed(
-                      "machinectl -q shell alice@.host "
-                      "/run/current-system/sw/bin/journalctl --user -u "
-                      + unit + " --no-pager -n 80 || true"
+                      "timeout 20 journalctl _SYSTEMD_USER_UNIT=" + unit
+                      + " --no-pager -n 100 2>&1 || echo '(no journal)'"
                   )
                   print("=== journal: " + unit + " ===\n" + out)
 
@@ -136,35 +135,32 @@
           wait_for_http(120)
 
           # R4c (#951): the PTY-host daemon must survive a kolu-server restart
-          # (a deploy). The daemon spawns at boot via
-          # `systemd-run --user --unit=kolu-pty-host` (its own cgroup), so it's
-          # already up. Capture its MainPID, restart kolu-server, and assert the
-          # MainPID is UNCHANGED — the direct guard for the cgroup-escape bug
-          # (`systemctl --user restart kolu` must NOT take the daemon down).
+          # (a deploy). It spawns at boot via `systemd-run --user
+          # --unit=kolu-pty-host` (its own cgroup). We assert survival by the
+          # daemon's *process pid* (from its pid file) rather than the systemd
+          # unit state — `kill -0` as root can't hang, and the pid is the real
+          # property under test: same live pid before and after the restart.
           try:
-              machine.wait_until_succeeds(
-                  "machinectl -q shell alice@.host "
-                  "/run/current-system/sw/bin/systemctl --user is-active kolu-pty-host.service",
-                  timeout=30,
-              )
+              machine.wait_until_succeeds("test -s " + pidfile, timeout=30)
           except Exception:
               dump_journals()
               raise
-          pid_before = alice_user(
-              "show kolu-pty-host.service --value -p MainPID"
-          ).strip()
-          assert pid_before not in ("", "0"), f"no daemon MainPID: {pid_before!r}"
+          pid_before = machine.succeed("cat " + pidfile).strip()
+          machine.succeed("kill -0 " + pid_before)  # daemon is alive pre-restart
 
-          # Restart kolu-server — the deploy. The daemon must NOT restart.
-          alice_user("restart kolu.service")
+          # Restart kolu-server — the deploy. The daemon (own cgroup) must NOT
+          # be taken down with it.
+          machine.succeed(
+              "machinectl -q shell alice@.host "
+              "/run/current-system/sw/bin/systemctl --user restart kolu.service"
+          )
           wait_for_http(120)
-          pid_after = alice_user(
-              "show kolu-pty-host.service --value -p MainPID"
-          ).strip()
+          pid_after = machine.succeed("cat " + pidfile).strip()
           assert pid_before == pid_after, (
               f"PTY-host daemon did NOT survive kolu-server restart: "
-              f"MainPID {pid_before} -> {pid_after}"
+              f"pid {pid_before} -> {pid_after}"
           )
+          machine.succeed("kill -0 " + pid_after)  # same daemon still running
         '';
       };
 
