@@ -1,19 +1,28 @@
-/** Iframe presenter for binary previewable files (`.html`, `.svg`, `.pdf`).
- *  Receives a server-built URL the iframe `src`-binds to; URL re-binds when
- *  the file changes (server bumps the `?v=<mtime>` query on save), so the
- *  iframe reloads via the same `fsReadFile` subscription path as text.
+/** Presenter for binary previewable files served by the file route. Two
+ *  renderers, picked from the extension below the `fsReadFile` wire
+ *  boundary (the server classifies all of these as `kind: "binary"`):
+ *
+ *    - Raster images (`.png`/`.jpg`/…) → a plain `<img>`, centered on a
+ *      checkerboard so transparency reads. No iframe, no comment bridge —
+ *      raster bytes never carried the spliced artifact-sdk script anyway.
+ *    - `.html`/`.svg`/`.pdf` → sandboxed iframe (SVG can carry scripts, so
+ *      it must stay in the `allow-scripts`-only opaque-origin sandbox).
+ *
+ *  Receives a server-built URL the renderer `src`-binds to; URL re-binds
+ *  when the file changes (server bumps the `?v=<mtime>` query on save), so
+ *  the preview reloads via the same `fsReadFile` subscription path as text.
  *
  *  Comments wiring (HTML only — SVG/PDF served verbatim by the route):
  *  the server splices `<script src="/api/artifact-sdk.js?v=<hash>">` into
  *  text/html responses. `CommentIframeSurface` owns the parent ↔ iframe
- *  bridge (selection capture + highlight push); this component is just
- *  the iframe element + its sandbox config.
+ *  bridge (selection capture + highlight push).
  *
  *  Security: parent ↔ iframe communicates by postMessage only. The bridge
  *  validates by `event.source === iframe.contentWindow` since
  *  `event.origin` is the literal `"null"` under opaque sandbox. */
 
-import { type Component, createSignal } from "solid-js";
+import { isRasterImage } from "kolu-git/previewable";
+import { type Component, createSignal, Show } from "solid-js";
 import { CommentIframeSurface } from "../comments/CommentIframeSurface";
 
 export type BrowsePreviewViewProps = {
@@ -26,7 +35,24 @@ const BrowsePreviewView: Component<BrowsePreviewViewProps> = (props) => {
   const [iframeEl, setIframeEl] = createSignal<HTMLIFrameElement | undefined>();
 
   return (
-    <>
+    <Show
+      when={!isRasterImage(props.filePath)}
+      fallback={
+        <div
+          data-testid="browse-preview-image"
+          // `image-preview-checkerboard` is a CSS class in `index.css` —
+          // Tailwind's bg-[image:...] arbitrary form cannot line-break
+          // a four-gradient value, so it lives in the stylesheet instead.
+          class="image-preview-checkerboard flex h-full w-full items-center justify-center overflow-auto p-4"
+        >
+          <img
+            src={props.url}
+            alt={props.filePath}
+            class="max-h-full max-w-full object-contain"
+          />
+        </div>
+      }
+    >
       <iframe
         ref={setIframeEl}
         data-testid="browse-preview-iframe"
@@ -47,7 +73,7 @@ const BrowsePreviewView: Component<BrowsePreviewViewProps> = (props) => {
         path={props.filePath}
         iframe={iframeEl()}
       />
-    </>
+    </Show>
   );
 };
 

@@ -42,27 +42,16 @@ export function buildIframePreviewUrl(
   return `${TERMINAL_FILE_ROUTE_BASE}/${terminalId}/${TERMINAL_FILE_ROUTE_FILE_SEGMENT}/${encodedPath}?v=${Math.floor(mtimeMs)}`;
 }
 
-/** Extensions whose contents the browser renders natively in an iframe.
- *  Lives here (next to `CONTENT_TYPES`) because both lists are facets of
- *  the same iframe-rendering decision — adding a new previewable extension
- *  means adding its Content-Type below, and they can no longer drift
- *  across packages. `.html`/`.htm` are the primary use case (agent-
- *  generated artifacts); `.svg`/`.pdf` come along for free. */
-export const IFRAME_PREVIEWABLE_EXTENSIONS = [
-  ".html",
-  ".htm",
-  ".svg",
-  ".pdf",
-] as const;
-
-export function isIframePreviewable(filePath: string): boolean {
-  const lower = filePath.toLowerCase();
-  return IFRAME_PREVIEWABLE_EXTENSIONS.some((ext) => lower.endsWith(ext));
-}
-
+/** Content-Type per extension for files served by this route. Every
+ *  extension in `BINARY_PREVIEWABLE_EXTENSIONS` (the node-free classifier in
+ *  `kolu-git/previewable` that decides `FsReadFileOutput.kind`) must have a
+ *  real entry here, or the route serves it as `application/octet-stream` and
+ *  the browser downloads it instead of rendering. That coverage invariant is
+ *  asserted in `iframePreviewRoute.test.ts`. The extra `.css`/`.js`/font
+ *  entries below are asset siblings a previewable HTML page references via
+ *  relative `<link>`/`<script>`/`<img>` — not themselves previewable. */
 const CONTENT_TYPES: Record<string, string> = {
-  // Iframe-previewable kinds — co-located with
-  // `IFRAME_PREVIEWABLE_EXTENSIONS` above. Drift impossible.
+  // Sandbox-previewable kinds.
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
   ".svg": "image/svg+xml",

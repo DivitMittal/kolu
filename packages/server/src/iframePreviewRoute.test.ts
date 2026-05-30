@@ -1,12 +1,31 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { BINARY_PREVIEWABLE_EXTENSIONS } from "kolu-git";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   contentTypeForPath,
   resolvePreviewPath,
   serveResolvedFile,
 } from "./iframePreviewRoute";
+
+// The classifier (`isBinaryPreviewable` / `isRasterImage`) and its own tests
+// live in `kolu-git/previewable`. This suite covers the route's serving
+// layer and the one invariant that couples it to that classifier:
+
+describe("CONTENT_TYPES covers every binary-previewable extension", () => {
+  // `isBinaryPreviewable` routes these to `kind:"binary"`; if any lacks a
+  // real Content-Type the route serves `application/octet-stream` and the
+  // browser downloads instead of rendering. Keeps the two in step now that
+  // the extension list lives in a different package from CONTENT_TYPES.
+  it.each(
+    BINARY_PREVIEWABLE_EXTENSIONS,
+  )("%s has a non-octet Content-Type", (ext) => {
+    expect(contentTypeForPath(`file${ext}`)).not.toBe(
+      "application/octet-stream",
+    );
+  });
+});
 
 describe("contentTypeForPath", () => {
   it("maps the iframe-previewable extensions", () => {
