@@ -445,18 +445,36 @@ importers:
 
   packages/pty-host:
     dependencies:
+      '@kolu/surface':
+        specifier: workspace:*
+        version: link:../surface
+      '@orpc/server':
+        specifier: ^1.13.13
+        version: 1.13.13(ws@8.20.1)
       '@xterm/addon-serialize':
         specifier: ^0.14.0
         version: 0.14.0
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
+      kolu-common:
+        specifier: workspace:*
+        version: link:../common
+      kolu-pty:
+        specifier: workspace:*
+        version: link:../integrations/pty
       kolu-shared:
         specifier: workspace:*
         version: link:../shared
       node-pty:
         specifier: github:juspay/node-pty#fix/darwin-pty-fd-leak
         version: https://codeload.github.com/juspay/node-pty/tar.gz/cc137d90e39bb9e5c72ca8b9d81210e5005c5fa3
+      pino:
+        specifier: ^10.3.1
+        version: 10.3.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

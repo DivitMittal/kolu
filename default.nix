@@ -64,6 +64,12 @@ let
   # terminal-losing restart for zero benefit. Computed independently of
   # commitHash so docs/server-only commits don't bust it.
   #
+  # One package, one hash: this fileset now covers the daemon's ENTIRE closure
+  # — the wire contract (ptyHostSurface.ts) and the entrypoint (daemonMain.ts)
+  # live inside @kolu/pty-host, not just the node-pty primitive. So an Axis-2
+  # wire-shape change genuinely flips the key; before, the contract lived in
+  # packages/server/ (outside this hash) and a wire change went undetected.
+  #
   # Cross-platform reproducible (Darwin+Linux must agree, like pnpmDeps):
   # `find | sort` for a stable file order, then a single sha256 over the
   # concatenated curated bytes. node-pty / @xterm versions ride along via

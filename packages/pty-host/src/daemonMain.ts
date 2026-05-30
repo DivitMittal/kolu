@@ -34,8 +34,8 @@
 
 import { randomUUID } from "node:crypto";
 import { chmodSync, rmSync, unlinkSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createServer } from "node:net";
-import { createPtyHost, type PtyHost, type PtyId } from "@kolu/pty-host";
 import { serveOverStdio } from "@kolu/surface/peer-server";
 import {
   flattenSurfaceRouter,
@@ -45,21 +45,26 @@ import {
 import { ORPCError } from "@orpc/server";
 import { DEFAULT_SCROLLBACK } from "kolu-common/config";
 import {
-  PTY_HOST_CONTRACT_VERSION,
-  ptyHostSurface,
-} from "../daemon/ptyHostSurface.ts";
-import {
   cleanEnv,
   configureNixShellEnv,
   koluIdentityEnv,
   prepareShellInit,
 } from "kolu-pty";
-import pkg from "../../package.json" with { type: "json" };
-import { currentBuildId, currentCommitHash } from "../daemon/buildId.ts";
-import { tryAcquirePidFile } from "../daemon/daemonUtils.ts";
-import { ensureKoluRoot, koluShellDir } from "../koluRoot.ts";
-import { daemonPaths } from "../koluState.ts";
-import { log } from "../log.ts";
+import { ensureKoluRoot, koluShellDir } from "kolu-shared/koluRoot";
+import { daemonPaths } from "kolu-shared/runtimePaths";
+import { currentBuildId, currentCommitHash } from "./buildId.ts";
+import { createPtyHost, type PtyHost, type PtyId } from "./ptyHost.ts";
+import { tryAcquirePidFile } from "./daemonUtils.ts";
+import { log } from "./daemonLog.ts";
+import { PTY_HOST_CONTRACT_VERSION, ptyHostSurface } from "./ptyHostSurface.ts";
+
+// Read this package's version at runtime (createRequire) rather than a typed
+// JSON import: `package.json` sits outside `src/` (the tsconfig rootDir), and a
+// JSON module import would pull it into the TS program's output layout. The
+// version is only a cosmetic KOLU_VERSION env var for tooling.
+const pkg = createRequire(import.meta.url)("../package.json") as {
+  version: string;
+};
 
 /** Wait up to `ms` for a PTY to exit, abort-cleanly on timeout (the
  *  abort-aware `exitPromise` removes its waiter, so no leak). Returns whether

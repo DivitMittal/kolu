@@ -28,9 +28,8 @@
  * local) shelling out to `kolu-git` directly.
  */
 
-import type { ForegroundSample } from "@kolu/pty-host";
+import type { ForegroundSample, PtyHostListEntry } from "@kolu/pty-host";
 import { inMemoryChannel } from "@kolu/surface/server";
-import type { PtyHostListEntry } from "../daemon/ptyHostSurface.ts";
 import type {
   DaemonStatus,
   SavedTerminal,

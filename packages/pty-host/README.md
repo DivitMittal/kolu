@@ -81,11 +81,15 @@ host.kill(id); // exitPromise(id) still resolves
 
 ## Scope
 
-This package is a pure primitive extracted from kolu's in-process PTY code
-(`#951` R-4, slice R4a). Since R4c it runs **in a `kolu --stdio` daemon** that
-owns only this primitive and serves it over a unix socket (the `ptyHostSurface`
-wire contract in `kolu-common`), so local terminals survive a kolu-server
-restart. The daemon, socket supervisor, build-identity version handshake, and
-reattach all live in `kolu-server` (`src/daemon/`, `src/agent/main.ts`) — this
-package stays a transport-agnostic primitive and knows nothing about the
-socket, providers, or reattach.
+The PTY-owner primitive was extracted from kolu's in-process PTY code
+(`#951` R-4, slice R4a). Since R4c the daemon's **entire closure** lives here:
+the primitive, the `ptyHostSurface` wire contract, the build identity, the
+startup utils, and the runnable `kolu --stdio` entrypoint (`daemonMain.ts`, the
+`./daemon` subpath export). This is the "one package, one hash" boundary —
+`KOLU_PTY_HOST_BUILD_ID` (hashed from this package by `default.nix`) covers
+everything that defines the long-lived daemon, so a wire-shape change flips the
+staleness key. The socket **supervisor** (connect/spawn/reattach, the
+build-identity handshake) stays in `kolu-server` (`src/daemon/supervisor.ts`)
+since it rides kolu-server's lifecycle; the provider DAG (git / PR / agent
+detection) likewise runs in kolu-server, never here — that split is what makes a
+surviving daemon safe.

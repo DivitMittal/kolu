@@ -38,7 +38,7 @@
  * client). That is correct for R4c — a dead daemon has lost its PTYs, so there
  * is nothing to recover, only to surface; graceful mid-session resurrection +
  * reconnect is R-3 resilience work. The single-instance gate + exec-arg filter
- * live in `./daemonUtils.ts` (a different volatility axis), shared with the
+ * live in `@kolu/pty-host` (a different volatility axis), shared with the
  * daemon entrypoint.
  */
 
@@ -49,13 +49,14 @@ import { createStdioCellsClient } from "@kolu/surface/links/stdio";
 import type { ClientRetryPluginContext } from "@orpc/client/plugins";
 import type { ContractRouterClient } from "@orpc/contract";
 import {
+  currentBuildId,
+  currentCommitHash,
+  daemonExecArgv,
   isPtyHostContractCompatible,
   PTY_HOST_CONTRACT_VERSION,
   type PtyHostSystemVersion,
   type ptyHostSurface,
-} from "./ptyHostSurface.ts";
-import { currentBuildId, currentCommitHash } from "./buildId.ts";
-import { daemonExecArgv } from "./daemonUtils.ts";
+} from "@kolu/pty-host";
 import { daemonPaths } from "../koluState.ts";
 import { log } from "../log.ts";
 import type { DaemonStatus } from "kolu-common/surface";
