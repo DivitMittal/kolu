@@ -49,11 +49,47 @@ Order = biggest-contributor-first (Ralph rule).
 | 2 | extract `@kolu/solid-xterm` (`createXtermWebgl` — WebGL-context lifecycle out of Terminal.tsx) | 24,942 | **−56** | f39fc9d |
 | 3 | extract `@kolu/solid-ui` (Toggle, Kbd, SegmentedControl, Row, Section, Surface, stackLayers, Tip; 36 sites) | 24,662 | **−280** | f4fc1e1 |
 | 4 | extract `@kolu/solid-overlay` (useAnchoredPopover +test, OptionMenu; test now runs in-package) | 24,405 | **−257** | 2678d46 |
-| 5 | extract `@kolu/platform` (keyboard, os, clipboard — framework-agnostic, no `solid-` prefix; 23 sites) | 24,201 | **−204** | _pending_ |
+| 5 | extract `@kolu/platform` (keyboard, os, clipboard — framework-agnostic, no `solid-` prefix; 23 sites) | 24,201 | **−204** | ffe6fdf |
+| — | fix: register the 5 new packages in `default.nix` build fileset + README | 24,201 | 0 | 3092585 |
+
+**Final: 25,613 → 24,201 LOC (−1,412, −5.5%); 189 → 174 files.**
+6 reusable packages now sit under `packages/` (5 new + the pre-existing
+`solid-pierre` precedent).
 
 ## Dead ends
 
-_(none yet)_
+- **Full `solid-xterm` lifecycle rip.** Investigated lifting the whole xterm
+  mount/dispose out of `Terminal.tsx`. Rejected: the async mount is a minefield
+  of heap-leak fixes (#591/#606/#575) with *no automated guard* — only the
+  WebGL-context sub-concern was safe to move. See Key findings.
+- **Extracting `webglTracker.ts` into the package.** Rejected: it's explicitly
+  *temporary* debug scaffolding ("remove when #591 is fixed"). Enshrining
+  throwaway instrumentation as a package API is the wrong boundary (Hickey). It
+  stays in the client; the primitive inverts it via optional hooks.
+- **"Subpath exports break the production build."** A red herring. The nix build
+  failed to resolve `@kolu/solid-ui/stackLayers`, which *looked* like a subpath-
+  export problem — but `tsc`, the dev server, the local prod build, and Node's
+  own resolver all handled it. The real cause: `default.nix`'s `src` fileset is
+  an explicit allowlist and the 5 new package dirs weren't listed, so they were
+  absent from the sandbox. Fixed by registering them. **Lesson: a new
+  `packages/<x>` dir must be added to the `default.nix` fileset or the nix
+  build silently can't see it.**
+- **Candidates left in the client (diminishing returns).** `ModalDialog`
+  (imports `canvas/activeTerminal`), `CodeContextMenu` (Kolu code menu),
+  `lineRef` (entangled with `useLineSelection`/`CodeView`), `stickyModifiers`
+  (Kolu mobile key-bar feature). All carry Kolu-domain coupling — extracting
+  them is refactor work, not a clean move, so they're out of scope under the
+  behaviour-preserving constraint.
+
+## Verification
+
+Every CI gate run locally and green on the final branch:
+`typecheck` (`pnpm -r`), `biome lint`, `unit` (server+client+solid-overlay),
+`fmt-check`, `nix build` (server+client), `pnpm-hash-fresh`,
+`surface-example-build`, `smoke` (boots packaged binary, `/api/health` 200),
+and e2e (106 scenarios across terminal/canvas/screenshot/sub-terminal +
+command-palette/keyboard-shortcuts). The WebGL extraction specifically rides
+the canvas-multi-tile and screenshot e2e paths.
 
 ## Key findings
 
