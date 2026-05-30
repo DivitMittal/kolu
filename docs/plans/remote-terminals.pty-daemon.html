@@ -304,6 +304,11 @@
 </table>
 <p><em>Then R-2 = "add the ssh transport" (a remote pty-host + a re-provisioned remote provider process running the same engine); R-3 = version handshake + session-ID persistence. Both stay in the <a href="remote-terminals.html">parent plan</a>.</em></p>
 
+<h2 id="r4-todo">Open follow-ups</h2>
+<ul>
+  <li>[ ] <strong>Evaluate <code>surface</code> ↔ pty-host upstreaming / changes.</strong> Now that the daemon's full closure lives in <code>@kolu/pty-host</code> (contract + entrypoint + build-id + startup utils) and it depends on <code>@kolu/surface</code>, review what — if anything — should move into <code>@kolu/surface</code> itself vs. stay package-local: e.g. the daemon's stdio-serve glue, the version/build-id handshake pattern, or contract-compat helpers that any surface-over-stdio consumer would want. Decide upstream vs. keep, and what API changes that implies.</li>
+</ul>
+
 <h2 id="r4-learnings">History, summarized</h2>
 <ul>
   <li><strong>R4a (<a href="https://github.com/juspay/kolu/pull/1023">#1023</a>) + R4b (<a href="https://github.com/juspay/kolu/pull/1028">#1028</a>) shipped clean</strong> as pure in-process refactors (byte-identical on screen).</li>
