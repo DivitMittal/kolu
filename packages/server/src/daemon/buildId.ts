@@ -81,3 +81,13 @@ export function currentBuildId(): string {
     });
   return cached;
 }
+
+/** The git commit hash this kolu was built from — the nix wrapper bakes
+ *  `KOLU_COMMIT_HASH` (the flake's `self.shortRev` / `dirtyShortRev`). Unlike
+ *  `currentBuildId()` (a pty-host *source* hash, the staleness key) this is the
+ *  real, GitHub-navigable commit, surfaced to the client so the ChromeBar
+ *  build-id readout + the restart dialog link to the commit UI. Returns `""`
+ *  off-nix (dev / tsx), where the wrapper isn't in play. */
+export function currentCommitHash(): string {
+  return process.env.KOLU_COMMIT_HASH ?? "";
+}
