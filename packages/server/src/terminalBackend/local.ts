@@ -69,7 +69,9 @@ import {
 } from "../daemon/supervisor.ts";
 import { log } from "../log.ts";
 import { terminalsDirtyChannel } from "../publisher.ts";
+import { cancelPendingAutosave, saveSession } from "../session.ts";
 import { surfaceCtx } from "../surfaceCtx.ts";
+import { snapshotSession } from "../terminals.ts";
 import {
   drainTerminals,
   getTerminal,
@@ -648,10 +650,36 @@ export async function reattachLocalTerminals(
  *  its PTYs are reaped cleanly before the process is replaced. */
 export async function restartLocalPtyHostDaemon(): Promise<DaemonStatus> {
   log.info("restarting local PTY-host daemon (user-triggered)");
+  // Capture the session BEFORE the destructive kill so a botched restart is
+  // recoverable: on a respawn failure the user keeps a restorable session
+  // instead of an empty void (the #1034 data-loss mode). The PTYs themselves
+  // are lost (the accepted cost) — but never silently. (#1040 adds a separate
+  // timestamped on-disk backup; here we keep the live saved-session intact.)
+  const preRestart = snapshotSession();
   await backend.killAllTerminals();
-  await restartDaemon();
+  let restartErr: unknown;
+  try {
+    await restartDaemon();
+  } catch (err) {
+    restartErr = err;
+    log.error(
+      { err },
+      "PTY-host daemon respawn failed; session preserved for restore",
+    );
+  }
+  // Re-preserve the pre-restart session: killAllTerminals armed the 500ms
+  // debounced autosave, which fires during the (multi-second) respawn wait and
+  // would clear the session to null. Cancel it and write our snapshot so the
+  // restore card offers the pre-restart terminals. (No-op write of null if
+  // there were none.)
+  cancelPendingAutosave();
+  saveSession(preRestart);
   const status = daemonStatusSnapshot();
   // Push the fresh status so subscribed clients re-read and drop the nudge.
   surfaceCtx.cells.daemonStatus.set(status);
+  // On respawn failure rethrow AFTER preserving the session + publishing the
+  // (dead) status: the client toasts the error and the degraded canvas renders.
+  // Never swallow — a silent failure is the #1034 empty-void mode.
+  if (restartErr) throw restartErr;
   return status;
 }

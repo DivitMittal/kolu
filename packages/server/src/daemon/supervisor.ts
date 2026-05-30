@@ -60,6 +60,18 @@ import { daemonPaths } from "../koluState.ts";
 import { log } from "../log.ts";
 import type { DaemonStatus } from "kolu-common/surface";
 
+/** How long to wait for the old daemon's process to actually exit after
+ *  SIGTERM before respawning. Generous: on a loaded box, tearing down ~20
+ *  heavy PTYs under swap pressure can take well over a minute. */
+const DAEMON_EXIT_TIMEOUT_MS = 60_000;
+/** After the process is gone, a short grace for its socket-file unlink. */
+const DAEMON_SOCKET_GONE_TIMEOUT_MS = 5_000;
+/** How long to wait for a freshly-spawned daemon to bind its socket. A tsx
+ *  cold-start (esbuild transpiling the entry graph) under parallel-process
+ *  contention or swap pressure can take far longer than a dev box's; give it
+ *  real headroom so a slow-but-fine spawn isn't declared dead. */
+const DAEMON_SPAWN_TIMEOUT_MS = 90_000;
+
 /** The typed client for the daemon's `ptyHostSurface` contract, with the
  *  `ClientRetryPlugin` context threaded through (the same shape
  *  `createStdioCellsClient` returns). Procedures and streams are nested under
@@ -324,9 +336,37 @@ async function waitForSocketGone(
   }
 }
 
-/** SIGTERM whatever daemon currently owns the socket (best-effort) and wait
- *  for the socket to clear. Used by the forced-restart path in
- *  `ensureDaemonImpl`. */
+/** Poll until `pid` is gone (process exited) via `kill(pid, 0)` → ESRCH. The
+ *  daemon isn't our child (own cgroup / detached), so we can't await its exit
+ *  event — and its single-instance lock (pid-file O_EXCL + the systemd unit
+ *  name) is held until the process actually dies, so a fresh daemon can't bind
+ *  until then. This pid barrier is the real precondition for respawn; the
+ *  socket file (unlinked in the daemon's SIGTERM cleanup) can linger if the
+ *  daemon is killed hard. Resolves early once gone; resolves anyway at the
+ *  deadline (caller then proceeds — a respawn against a still-held lock fails
+ *  loudly with a clear error rather than hanging forever). */
+export async function waitForPidGone(
+  pid: number,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ESRCH") return; // gone
+      // EPERM etc — process exists but not signalable by us; treat as alive.
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/** SIGTERM whatever daemon currently owns the socket (best-effort), wait for
+ *  the PROCESS to actually exit (its single-instance lock release — the real
+ *  precondition for a fresh daemon to bind), then a short grace for the socket
+ *  file. Used by `restartDaemon` and the forced-restart path in
+ *  `ensureDaemonImpl`. Pid-gone is the barrier; socket-gone is best-effort
+ *  cleanup. */
 async function killRunningDaemon(
   daemonPid: number,
   socketPath: string,
@@ -340,7 +380,8 @@ async function killRunningDaemon(
       "supervisor: SIGTERM to daemon failed (already gone?)",
     );
   }
-  await waitForSocketGone(socketPath, 5_000);
+  await waitForPidGone(daemonPid, DAEMON_EXIT_TIMEOUT_MS);
+  await waitForSocketGone(socketPath, DAEMON_SOCKET_GONE_TIMEOUT_MS);
 }
 
 /** Connect, run the version handshake, and build the handle. Throws
@@ -354,12 +395,14 @@ async function connectAndVerify(): Promise<DaemonHandle> {
   let socket = await tryConnect(socketPath, 200);
   if (!socket) {
     spawnDaemon(logFile);
-    // 30s, not 5s: the daemon is a fresh tsx cold-start (esbuild-transpiling
-    // the entry graph), which under parallel-process contention (e.g. the e2e
-    // suite cold-starting a server + daemon per worker) can take well over 5s
-    // to bind the socket. A short poll here made boot fail-exit (or, under the
-    // earlier lazy spawn, every worker's first terminal fail) — see #951 CI.
-    const deadline = Date.now() + 30_000;
+    // Generous, not 5s: the daemon is a fresh tsx cold-start (esbuild-
+    // transpiling the entry graph), which under parallel-process contention
+    // (e.g. the e2e suite cold-starting a server + daemon per worker) or swap
+    // pressure (the #1034 prod failure: a slow-but-fine respawn declared dead)
+    // can take far longer than a dev box's to bind the socket. A short poll
+    // here made boot fail-exit (or, under the earlier lazy spawn, every
+    // worker's first terminal fail) — see #951 CI.
+    const deadline = Date.now() + DAEMON_SPAWN_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
       socket = await tryConnect(socketPath, 200);
@@ -368,7 +411,8 @@ async function connectAndVerify(): Promise<DaemonHandle> {
   }
   if (!socket) {
     throw new Error(
-      `Daemon failed to start: socket ${socketPath} did not appear within 30s. ` +
+      `Daemon failed to start: socket ${socketPath} did not appear within ` +
+        `${Math.round(DAEMON_SPAWN_TIMEOUT_MS / 1000)}s. ` +
         `See ${logFile} (or 'journalctl --user -u kolu-pty-host') for its log.`,
     );
   }
