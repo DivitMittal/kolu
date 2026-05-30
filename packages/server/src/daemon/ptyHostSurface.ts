@@ -124,6 +124,12 @@ const SystemVersionOutputSchema = z.object({
    *  source means `outdated` flips only when a restart picks up new terminal-
    *  host code. See `server/src/daemon/buildId.ts`. */
   buildId: z.string(),
+  /** Git commit hash the daemon was built from (the GitHub-navigable ref, vs
+   *  `buildId`'s pty-host source hash). OPTIONAL on the wire so a daemon from
+   *  before this field existed stays compatible — no forced, terminal-losing
+   *  restart just to add a diagnostic; kolu-server treats a missing value as
+   *  unknown. Additive; no contract-version bump. */
+  commitHash: z.string().optional(),
   pid: z.number().int(),
   startedAt: z.number(),
 });
