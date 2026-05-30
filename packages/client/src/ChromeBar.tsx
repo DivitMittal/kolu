@@ -36,8 +36,8 @@ import {
   RestoreIcon,
   SettingsIcon,
 } from "@kolu/solid-icons";
-import Kbd from "./ui/Kbd";
-import Tip from "./ui/Tip";
+import Kbd from "@kolu/solid-ui/Kbd";
+import Tip from "@kolu/solid-ui/Tip";
 
 const statusStyles: Record<WsStatus, string> = {
   connecting: "bg-warning animate-pulse",

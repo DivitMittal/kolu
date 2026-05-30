@@ -4,7 +4,7 @@
 import type { Component } from "solid-js";
 import { ACTIONS } from "./input/actions";
 import { formatKeybind } from "./input/keyboard";
-import Kbd from "./ui/Kbd";
+import Kbd from "@kolu/solid-ui/Kbd";
 
 type SplitStripProps =
   | { variant: "prompt"; onClick: () => void }

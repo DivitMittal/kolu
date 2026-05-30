@@ -13,9 +13,9 @@ import { getDiagnostics } from "./terminal/useTerminalDiagnostics";
 import { webglLifecycleSnapshot } from "./terminal/webglTracker";
 import { writeTextToClipboard } from "./ui/clipboard";
 import ModalDialog, { refocusTerminal } from "./ui/ModalDialog";
-import Row from "./ui/Row";
-import Section from "./ui/Section";
-import { surface } from "./ui/Surface";
+import Row from "@kolu/solid-ui/Row";
+import Section from "@kolu/solid-ui/Section";
+import { surface } from "@kolu/solid-ui/Surface";
 import { isMobile } from "./useMobile";
 
 /** WebGL2 support detection creates a throwaway canvas + WebGL context

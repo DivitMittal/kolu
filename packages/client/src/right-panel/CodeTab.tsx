@@ -52,7 +52,7 @@ import {
   pierreIconConfig,
   pierreTreesStyle,
 } from "../ui/pierreTheme";
-import { Z_HANDLE_INNER } from "../ui/stackLayers";
+import { Z_HANDLE_INNER } from "@kolu/solid-ui/stackLayers";
 import { app } from "../wire";
 import BrowseFileDispatcher from "./BrowseFileDispatcher";
 import CodeMenuFrame from "./CodeMenuFrame";

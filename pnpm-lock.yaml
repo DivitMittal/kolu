@@ -67,6 +67,9 @@ importers:
       '@kolu/solid-pierre':
         specifier: workspace:*
         version: link:../solid-pierre
+      '@kolu/solid-ui':
+        specifier: workspace:*
+        version: link:../solid-ui
       '@kolu/solid-xterm':
         specifier: workspace:*
         version: link:../solid-xterm
@@ -613,6 +616,22 @@ importers:
       '@pierre/trees':
         specifier: ^1.0.0-beta.4
         version: 1.0.0-beta.4(react@19.2.5)
+      solid-js:
+        specifier: ^1.9.0
+        version: 1.9.11
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
+  packages/solid-ui:
+    dependencies:
+      '@corvu/tooltip':
+        specifier: ^0.2.2
+        version: 0.2.2(solid-js@1.9.11)
       solid-js:
         specifier: ^1.9.0
         version: 1.9.11

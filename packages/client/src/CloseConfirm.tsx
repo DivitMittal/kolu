@@ -10,7 +10,7 @@ import ChecksIndicator from "./terminal/ChecksIndicator";
 import { prTooltip } from "./terminal/prTooltip";
 import { PrStateIcon, WorktreeIcon } from "@kolu/solid-icons";
 import ModalDialog from "./ui/ModalDialog";
-import { surface } from "./ui/Surface";
+import { surface } from "@kolu/solid-ui/Surface";
 
 /** Reasons why the "Remove worktree" action is suppressed.
  *

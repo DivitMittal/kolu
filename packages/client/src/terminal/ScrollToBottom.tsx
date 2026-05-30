@@ -2,7 +2,7 @@
 
 import { type Component, Show } from "solid-js";
 import { ScrollDownIcon } from "@kolu/solid-icons";
-import Tip from "../ui/Tip";
+import Tip from "@kolu/solid-ui/Tip";
 
 const ScrollToBottom: Component<{
   visible: boolean;

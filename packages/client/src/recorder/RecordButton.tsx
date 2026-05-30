@@ -26,7 +26,7 @@ import {
   ResumeIcon,
   WebcamIcon,
 } from "@kolu/solid-icons";
-import Tip from "../ui/Tip";
+import Tip from "@kolu/solid-ui/Tip";
 import RecordPopover from "./RecordPopover";
 import {
   formatElapsed,

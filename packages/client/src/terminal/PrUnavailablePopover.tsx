@@ -16,7 +16,7 @@ import { toast } from "solid-sonner";
 import { match } from "ts-pattern";
 import { writeTextToClipboard } from "../ui/clipboard";
 import { WarningIcon } from "@kolu/solid-icons";
-import { surface } from "../ui/Surface";
+import { surface } from "@kolu/solid-ui/Surface";
 import { useAnchoredPopover } from "../ui/useAnchoredPopover";
 
 const AUTH_COMMAND = "gh auth login -s repo,read:org";
