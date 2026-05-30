@@ -68,9 +68,8 @@ import {
 } from "../daemon/supervisor.ts";
 import { log } from "../log.ts";
 import { terminalsDirtyChannel } from "../publisher.ts";
-import { cancelPendingAutosave, saveSession } from "../session.ts";
+import { getSavedSession, setSavedSession } from "../session.ts";
 import { surfaceCtx } from "../surfaceCtx.ts";
-import { snapshotSession } from "../terminals.ts";
 import {
   drainTerminals,
   getTerminal,
@@ -649,12 +648,14 @@ export async function reattachLocalTerminals(
  *  its PTYs are reaped cleanly before the process is replaced. */
 export async function restartLocalPtyHostDaemon(): Promise<DaemonStatus> {
   log.info("restarting local PTY-host daemon (user-triggered)");
-  // Capture the session BEFORE the destructive kill so a botched restart is
-  // recoverable: on a respawn failure the user keeps a restorable session
-  // instead of an empty void (the #1034 data-loss mode). The PTYs themselves
-  // are lost (the accepted cost) — but never silently. (#1040 adds a separate
-  // timestamped on-disk backup; here we keep the live saved-session intact.)
-  const preRestart = snapshotSession();
+  // Capture the persisted session BEFORE the destructive kill so a botched
+  // restart is recoverable: on a respawn failure the user keeps a restorable
+  // session instead of an empty void (the #1034 data-loss mode). Read the
+  // persisted session (not the live registry via terminals.ts) — it's the same
+  // source the restore card reads, and it keeps this file off the terminals.ts
+  // import cycle. The PTYs themselves are lost (the accepted cost) — but never
+  // silently. (#1040 adds a separate timestamped on-disk backup file.)
+  const preRestart = getSavedSession();
   await backend.killAllTerminals();
   let restartErr: unknown;
   try {
@@ -666,13 +667,12 @@ export async function restartLocalPtyHostDaemon(): Promise<DaemonStatus> {
       "PTY-host daemon respawn failed; session preserved for restore",
     );
   }
-  // Re-preserve the pre-restart session: killAllTerminals armed the 500ms
+  // Re-assert the pre-restart session: killAllTerminals armed the 500ms
   // debounced autosave, which fires during the (multi-second) respawn wait and
-  // would clear the session to null. Cancel it and write our snapshot so the
-  // restore card offers the pre-restart terminals. (No-op write of null if
-  // there were none.)
-  cancelPendingAutosave();
-  saveSession(preRestart);
+  // would clear the session to null. setSavedSession cancels that pending save
+  // and writes our captured session atomically, so the restore card offers the
+  // pre-restart terminals. (Writes null when there was nothing to preserve.)
+  setSavedSession(preRestart);
   const status = daemonStatusSnapshot();
   // Push the fresh status so subscribed clients re-read and drop the nudge.
   surfaceCtx.cells.daemonStatus.set(status);
