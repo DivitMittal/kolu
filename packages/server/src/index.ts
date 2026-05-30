@@ -12,6 +12,11 @@
  * stack, and server mode never loads the socket-serving path. The `--stdio`
  * check reads `process.argv` directly (cleye flag parsing lives in
  * `./server.ts`, which never sees `--stdio` — it routes here).
+ *
+ * Note: this file lives in `packages/server/`, outside the `@kolu/pty-host`
+ * source tree the staleness hash (`KOLU_PTY_HOST_BUILD_ID`) covers — so a
+ * change here bumps the server's git commit but NOT the pty-host build id; a
+ * surviving daemon stays current and is not nudged for a restart.
  */
 
 export {};
