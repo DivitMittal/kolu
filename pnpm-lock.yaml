@@ -64,6 +64,9 @@ importers:
       '@kolu/solid-pierre':
         specifier: workspace:*
         version: link:../solid-pierre
+      '@kolu/solid-xterm':
+        specifier: workspace:*
+        version: link:../solid-xterm
       '@kolu/surface':
         specifier: workspace:*
         version: link:../surface
