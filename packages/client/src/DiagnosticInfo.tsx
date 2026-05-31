@@ -39,7 +39,7 @@ function browserFacts() {
     webgl2Supported: WEBGL2_SUPPORTED,
     crossOriginIsolated: self.crossOriginIsolated,
     devicePixelRatio: window.devicePixelRatio,
-    xtermVersion: __XTERM_VERSION__,
+    xtermVersion: XTERM_VERSION,
   };
 }
 
