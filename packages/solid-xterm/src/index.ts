@@ -16,6 +16,11 @@ export {
   type LineLinkOpts,
 } from "./links.ts";
 export {
+  createTerminalSearch,
+  type SearchAddon,
+  type TerminalSearch,
+} from "./search.ts";
+export {
   getTerminalRefs,
   registerTerminalRefs,
   type TerminalProbes,
