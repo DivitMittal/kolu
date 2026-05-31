@@ -8,9 +8,11 @@ import type { TerminalId } from "kolu-common/surface";
 import { type Component, createMemo, For, Show } from "solid-js";
 import { toast } from "solid-sonner";
 import { serverProcessId, wsStatus } from "./rpc/rpc";
-import { getTerminalRefs } from "@kolu/solid-xterm";
-import { getDiagnostics } from "@kolu/solid-xterm";
-import { webglLifecycleSnapshot } from "@kolu/solid-xterm";
+import {
+  getDiagnostics,
+  getTerminalRefs,
+  webglLifecycleSnapshot,
+} from "@kolu/solid-xterm";
 import { writeTextToClipboard } from "./ui/clipboard";
 import ModalDialog, { refocusTerminal } from "./ui/ModalDialog";
 import Row from "./ui/Row";
