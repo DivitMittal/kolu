@@ -49,3 +49,4 @@ export {
   type WebglLifecycleSnapshot,
   webglLifecycleSnapshot,
 } from "./webglTracker.ts";
+export { XTERM_VERSION } from "./version.ts";

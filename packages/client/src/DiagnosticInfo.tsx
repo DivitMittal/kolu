@@ -12,6 +12,7 @@ import {
   getDiagnostics,
   getTerminalRefs,
   webglLifecycleSnapshot,
+  XTERM_VERSION,
 } from "@kolu/solid-xterm";
 import { writeTextToClipboard } from "./ui/clipboard";
 import ModalDialog, { refocusTerminal } from "./ui/ModalDialog";
