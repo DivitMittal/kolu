@@ -623,6 +623,28 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  packages/solid-xterm:
+    dependencies:
+      '@xterm/addon-serialize':
+        specifier: ^0.14.0
+        version: 0.14.0
+      '@xterm/xterm':
+        specifier: 6.1.0-beta.225
+        version: 6.1.0-beta.225
+      kolu-common:
+        specifier: workspace:*
+        version: link:../common
+      solid-js:
+        specifier: ^1.9.0
+        version: 1.9.11
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   packages/surface:
     dependencies:
       '@orpc/client':

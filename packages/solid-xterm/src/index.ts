@@ -1,0 +1,11 @@
+/** `@kolu/solid-xterm` — the single package that owns xterm.js.
+ *
+ *  Like electricity becoming a utility, every consumer (the browser UI in
+ *  `kolu-client`, the headless screen mirror in `kolu-pty-host`) plugs into
+ *  this package instead of wiring `@xterm/*` directly. Nothing else in the
+ *  repo imports `@xterm/*`.
+ *
+ *  This file re-exports the public surface; implementation lives in sibling
+ *  modules. It grows as the ralph loop pulls mechanics out of the client. */
+
+export {};
