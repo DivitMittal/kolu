@@ -8,4 +8,10 @@
  *  This file re-exports the public surface; implementation lives in sibling
  *  modules. It grows as the ralph loop pulls mechanics out of the client. */
 
-export {};
+export { createScrollLock } from "./scrollLock.ts";
+export { createSafeClipboardProvider } from "./clipboard.ts";
+export {
+  createLineLinkProvider,
+  type LineLinkMatch,
+  type LineLinkOpts,
+} from "./links.ts";

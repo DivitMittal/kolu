@@ -625,6 +625,9 @@ importers:
 
   packages/solid-xterm:
     dependencies:
+      '@xterm/addon-clipboard':
+        specifier: ^0.2.0
+        version: 0.2.0
       '@xterm/addon-serialize':
         specifier: ^0.14.0
         version: 0.14.0

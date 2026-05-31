@@ -29,8 +29,13 @@ import {
 } from "solid-js";
 import { toast } from "solid-sonner";
 import { match } from "ts-pattern";
-import { SafeClipboardProvider, writeTextToClipboard } from "../ui/clipboard";
+import { writeTextToClipboard } from "../ui/clipboard";
 import "@xterm/xterm/css/xterm.css";
+import {
+  createLineLinkProvider,
+  createSafeClipboardProvider,
+  createScrollLock,
+} from "@kolu/solid-xterm";
 import { streamCall } from "@kolu/surface/solid";
 import { DEFAULT_SCROLLBACK } from "kolu-common/config";
 import type { TerminalId } from "kolu-common/surface";
@@ -42,10 +47,9 @@ import { createZoom } from "../input/zoom";
 import { refitOnTabVisible } from "../refitOnTabVisible";
 import { openInCodeTab } from "../right-panel/openInCodeTab";
 import { isExpectedCleanupError } from "../rpc/streamCleanup";
-import { createScrollLock } from "../scrollLock";
 import { isTouch } from "../useMobile";
 import { client, preferences } from "../wire";
-import { createFileRefLinkProvider } from "./fileRefLinkProvider";
+import { matchFileRefs } from "./fileRefLink";
 import ScrollToBottom from "./ScrollToBottom";
 import { applyStickyModifiers } from "./stickyModifiers";
 import SearchBar from "./SearchBar";
@@ -479,7 +483,8 @@ const Terminal: Component<{
           // terminal store at click time (not at mount) so a cwd
           // change keeps subsequent clicks anchored to the new repo.
           linkProviderDisposable = term.registerLinkProvider(
-            createFileRefLinkProvider(term, {
+            createLineLinkProvider(term, {
+              match: matchFileRefs,
               onActivate: (ref) => {
                 const meta = terminalStore.getMetadata(props.terminalId);
                 const repoRoot = meta?.git?.repoRoot ?? null;
@@ -497,7 +502,10 @@ const Terminal: Component<{
           term.loadAddon(search);
           setSearchAddon(search);
           term.loadAddon(
-            new ClipboardAddon(undefined, new SafeClipboardProvider()),
+            new ClipboardAddon(
+              undefined,
+              createSafeClipboardProvider(writeTextToClipboard),
+            ),
           );
           term.loadAddon(new Unicode11Addon());
           term.unicode.activeVersion = "11";

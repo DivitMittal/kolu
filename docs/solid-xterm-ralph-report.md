@@ -76,9 +76,36 @@ Typecheck gate: `nix develop path:. --quiet --command pnpm -r typecheck`.
 
 ## Optimization log
 
-| Cycle | Change | terminal/ LOC | client @xterm files | typecheck |
-| --- | --- | --- | --- | --- |
-| baseline | none | 4481 | 8 | green |
+| Cycle | Change | terminal/ LOC | client @xterm sites | client @xterm files | typecheck |
+| --- | --- | --- | --- | --- | --- |
+| baseline | none | 4481 | 19 | 8 | green |
+| 1 | move scrollLock + clipboard provider + line-link provider into solid-xterm | 4449 | 15 | 5 | green |
+
+### Cycle 1 detail
+
+Three leaf mechanics extracted into `@kolu/solid-xterm` (~213 LOC of new
+package), each via a **dependency-injection seam** so the package stays free of
+Kolu domain knowledge:
+
+- **`createScrollLock`** — moved verbatim; `scrollLock.ts` left `client/src`
+  entirely (~120 lines gone from the client).
+- **`createSafeClipboardProvider(write)`** — the xterm `IClipboardProvider`
+  adapter now takes the clipboard writer as a parameter. The non-secure-context
+  `execCommand` fallback (`writeTextToClipboard`) stays in the client (it's
+  used for PR URLs, comments, diagnostics — nothing terminal-specific). The
+  client's `ui/clipboard.ts` shed its `@xterm/addon-clipboard` import and the
+  `SafeClipboardProvider` class (111 → 91 LOC).
+- **`createLineLinkProvider(term, {match, onActivate})`** — generic xterm
+  link-provider machinery. The Kolu file-ref matcher (`fileRefLink.ts`, was
+  `fileRefLinkProvider.ts`) is now pure domain: it returns `{text, index,
+  payload}` matches with zero `@xterm` imports (60 → 30 LOC).
+
+`Terminal.tsx` imports all three from `@kolu/solid-xterm` instead of three
+local modules.
+
+Environment note: after adding a `workspace:*` dependency, `pnpm install`
+reported "up to date" without creating the symlink — `pnpm install --force`
+was required to relink before typecheck could resolve the new package.
 
 ## Dead ends
 
