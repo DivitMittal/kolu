@@ -115,10 +115,56 @@ Environment note: after adding a `workspace:*` dependency, `pnpm install`
 reported "up to date" without creating the symlink — `pnpm install --force`
 was required to relink before typecheck could resolve the new package.
 
-## Dead ends
+## Final result (2026-05-30)
 
-_(recorded as encountered)_
+| Metric | Baseline | Final | Δ |
+| --- | --- | --- | --- |
+| `client/src/terminal/` LOC | 4481 | **3438** | −1043 (−23%) |
+| `Terminal.tsx` LOC | 957 | **335** | −622 (−65%) |
+| `@xterm/*` import sites in `client/src` | 19 | **0** | −19 |
+| client files importing `@xterm/*` | 8 | **0** | −8 |
+| `pty-host` `@xterm/*` import sites | (CJS interop) | **0** | eliminated |
+| packages importing `@xterm/*` at runtime | 4 | **2** | solid-xterm (11 deps) + terminal-themes (1, type-only) |
+| `@kolu/solid-xterm` src | 0 | **1480 LOC, 9 files** | new package |
+
+**The electricity is invented.** Every `@xterm/*` runtime import now lives in
+`@kolu/solid-xterm`. The Kolu client (the "home") and `pty-host` plug into the
+grid through contracts — `createXterm` (browser socket) and
+`createHeadlessMirror` (server socket) — instead of each running their own
+wiring. The only other package naming `@xterm` is `terminal-themes`, and only as
+a type.
 
 ## Key findings
 
-_(filled at wrap-up)_
+- **The seam was real and clean.** xterm mechanics and Kolu domain changed for
+  different reasons (Lowy's volatility axis) yet shared one 957-line file. Once
+  named, the split fell out naturally: a `createXterm(opts): XtermHandle`
+  primitive (mechanics + the three pure-xterm reactivity inputs) and a 335-line
+  consumer that injects domain via callbacks and drives the handle.
+- **Dependency injection kept the package domain-free.** Clipboard writer, link
+  matcher, key policy, stream attach, upload handlers — all injected. The
+  package knows nothing about oRPC, themes-by-name, sub-panels, or zoom. The
+  leak-fix invariants (#591 owner capture/restore across `await`, #606 disposal
+  ordering) moved *verbatim* inside the primitive.
+- **One grid, two sockets.** Browser (`@xterm/xterm` + 8 addons) and server
+  (`@xterm/headless`) are genuinely different xterm builds; modelling them as
+  two subpaths of one package (`.` and `./headless`) let pty-host stay its own
+  deployable unit (future SSH) while still plugging in.
+- **terminal-themes is a feature, not a leak.** Leaving its type-only `ITheme`
+  import respects dependency direction — a deliberate /lowy call, documented
+  above.
+
+## Dead ends / corrections
+
+- **Baseline typecheck was unverified.** First run before `pnpm install`, so
+  `tsc` wasn't on PATH. Re-run after install: green. Lesson — establish the
+  measurement harness *works* before trusting a baseline.
+- **Missing workspace dep shipped red.** Cycles 1–3 were committed before
+  `@kolu/solid-xterm` was added to `client/package.json`, so the new imports
+  didn't resolve (an early Edit silently didn't persist). Caught at cycle 4,
+  fixed forward in one commit. Lesson — gate every cycle on a *clean* `pnpm -r
+  typecheck`, and verify the dep landed on disk, not just that the Edit reported
+  success.
+- **`pnpm install` won't relink a new workspace dep** when the lockfile looks
+  satisfied; `pnpm install --force` was needed before typecheck could resolve
+  `@kolu/solid-xterm`.
