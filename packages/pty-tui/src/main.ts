@@ -100,11 +100,13 @@ async function cmdSnapshot(conn: Connection, id: string): Promise<void> {
     throw new Error(`expected a snapshot first frame, got "${frame.kind}"`);
   }
   await writeOut(frame.data.endsWith("\n") ? frame.data : `${frame.data}\n`);
-  // Trailer to stderr so stdout stays clean scrollback (scriptable).
-  const { entries } = await conn.client.surface.terminal.list({});
-  const entry = entries.find((e) => e.id === id);
-  const where = entry ? ` · pid ${entry.pid} · ${entry.cwd}` : "";
-  process.stderr.write(`— ${id}${where}\n`);
+  // Trailer to stderr so stdout stays clean, scriptable scrollback. Derived
+  // from the snapshot we already hold — no second round-trip to decorate it
+  // (the screen state and its line count are one artifact, not two reads).
+  const lines = frame.data
+    ? frame.data.replace(/\n+$/, "").split("\n").length
+    : 0;
+  process.stderr.write(`— ${id} · ${lines} line${lines === 1 ? "" : "s"}\n`);
 }
 
 async function run(conn: Connection, args: Args): Promise<void> {
