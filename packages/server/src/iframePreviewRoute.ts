@@ -17,6 +17,7 @@
 
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { encodePreviewPath } from "kolu-common/preview";
 import { resolveUnder } from "kolu-git";
 
 /** Base URL for the iframe-preview file route. Used by both
@@ -38,7 +39,7 @@ export function buildIframePreviewUrl(
   filePath: string,
   mtimeMs: number,
 ): string {
-  const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+  const encodedPath = encodePreviewPath(filePath);
   return `${TERMINAL_FILE_ROUTE_BASE}/${terminalId}/${TERMINAL_FILE_ROUTE_FILE_SEGMENT}/${encodedPath}?v=${Math.floor(mtimeMs)}`;
 }
 

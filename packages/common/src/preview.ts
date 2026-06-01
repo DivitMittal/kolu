@@ -79,3 +79,24 @@ export function isRasterImage(filePath: string): boolean {
 export function isMarkdown(filePath: string): boolean {
   return hasExtension(filePath, MARKDOWN_EXTENSIONS);
 }
+
+/** Per-segment codec for the repo-relative path embedded in the iframe-preview
+ *  URL (`/api/terminals/{id}/file/{encoded/path}`). Same kolu-common rationale
+ *  as the classifiers above: both sides of the wire must agree. The SERVER
+ *  builds the URL (`buildIframePreviewUrl` in `iframePreviewRoute.ts`) and the
+ *  CLIENT inverts it (`repoPathFromPreviewPathname` in
+ *  `right-panel/iframePreviewNav.ts`, to follow in-iframe link navigation) — a
+ *  single source keeps the encode/decode from drifting, so links into
+ *  subdirectories or paths with spaces resolve to the right file.
+ *
+ *  Slashes stay literal (segment boundaries); each segment is percent-encoded
+ *  so a name with spaces or reserved characters survives the URL round-trip. */
+export function encodePreviewPath(repoRelPath: string): string {
+  return repoRelPath.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Invert `encodePreviewPath`. Throws on a malformed percent-sequence (the
+ *  caller decides whether that means "ignore" or "error"). */
+export function decodePreviewPath(encoded: string): string {
+  return encoded.split("/").map(decodeURIComponent).join("/");
+}

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   BINARY_PREVIEWABLE_EXTENSIONS,
+  decodePreviewPath,
+  encodePreviewPath,
   isBinaryPreviewable,
   isMarkdown,
   isRasterImage,
@@ -83,6 +85,30 @@ describe("the binary-previewable partition is structural", () => {
     for (const ext of MARKDOWN_EXTENSIONS) {
       expect(isBinaryPreviewable(`file${ext}`)).toBe(false);
       expect(isMarkdown(`file${ext}`)).toBe(true);
+    }
+  });
+});
+
+describe("encodePreviewPath / decodePreviewPath", () => {
+  it("keeps slashes literal and percent-encodes each segment", () => {
+    expect(encodePreviewPath("docs/a.html")).toBe("docs/a.html");
+    expect(encodePreviewPath("my notes/page one.html")).toBe(
+      "my%20notes/page%20one.html",
+    );
+    expect(encodePreviewPath("100%/=done?.html")).toBe(
+      "100%25/%3Ddone%3F.html",
+    );
+  });
+
+  it("round-trips any repo path (decode ∘ encode = id)", () => {
+    for (const p of [
+      "first.html",
+      "docs/nested/dir/b.html",
+      "weird & name.html",
+      "café/résumé.html",
+      "100%/=done?.html",
+    ]) {
+      expect(decodePreviewPath(encodePreviewPath(p))).toBe(p);
     }
   });
 });
