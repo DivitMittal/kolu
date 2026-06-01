@@ -17,6 +17,13 @@ export function relativeTime(ms: number, now: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+/** Last path segment of a process path — `/run/…/bin/bash` → `bash`. Empty in,
+ *  empty out (the caller falls through to the next field). */
+export function commandName(process: string | undefined): string {
+  if (process === undefined || process === "") return "";
+  return process.split("/").pop() ?? process;
+}
+
 /** Collapse a leading `$HOME` to `~` for a shorter, familiar cwd. */
 export function tildeify(cwd: string, home?: string): string {
   if (home === undefined || home === "") return cwd;
@@ -35,21 +42,25 @@ export function formatList(
     id: e.id,
     pid: String(e.pid),
     idle: relativeTime(e.lastActivity, opts.now),
+    // The OSC 0/2 title if set (e.g. "claude: implement …"), else the foreground
+    // command's basename, else an em-dash. "" is falsy so it falls through.
+    cmd: e.title || commandName(e.foregroundProcess) || "—",
     cwd: tildeify(e.cwd, opts.home),
   }));
-  const header = { id: "ID", pid: "PID", idle: "IDLE", cwd: "CWD" };
+  const header = { id: "ID", pid: "PID", idle: "IDLE", cmd: "CMD", cwd: "CWD" };
   const width = (key: keyof typeof header): number =>
     Math.max(header[key].length, ...rows.map((r) => r[key].length));
   const w = {
     id: width("id"),
     pid: width("pid"),
     idle: width("idle"),
+    cmd: width("cmd"),
     cwd: width("cwd"),
   };
   const line = (r: typeof header): string =>
     `${r.id.padEnd(w.id)}  ${r.pid.padStart(w.pid)}  ${r.idle.padStart(
       w.idle,
-    )}  ${r.cwd}`;
+    )}  ${r.cmd.padEnd(w.cmd)}  ${r.cwd}`;
   return [line(header), ...rows.map(line)].join("\n");
 }
 

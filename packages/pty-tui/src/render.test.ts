@@ -1,6 +1,7 @@
 import type { PtyHostListEntry } from "@kolu/pty-host";
 import { describe, expect, it } from "vitest";
 import {
+  commandName,
   formatList,
   formatListJson,
   relativeTime,
@@ -29,6 +30,15 @@ describe("relativeTime", () => {
   });
 });
 
+describe("commandName", () => {
+  it("takes the basename of a process path, empty passes through", () => {
+    expect(commandName("/run/current-system/sw/bin/bash")).toBe("bash");
+    expect(commandName("vim")).toBe("vim");
+    expect(commandName("")).toBe("");
+    expect(commandName(undefined)).toBe("");
+  });
+});
+
 describe("tildeify", () => {
   it("collapses $HOME to ~", () => {
     expect(tildeify("/home/srid/code/kolu", "/home/srid")).toBe("~/code/kolu");
@@ -47,7 +57,7 @@ describe("formatList", () => {
     expect(formatList([], { now: 0 })).toBe("no live terminals.");
   });
 
-  it("renders a header + one row per terminal, cwd tilde'd, columns aligned", () => {
+  it("renders a header + one row each, cmd from title|foreground, cwd tilde'd", () => {
     const now = 60_000;
     const out = formatList(
       [
@@ -56,28 +66,48 @@ describe("formatList", () => {
           pid: 100,
           cwd: "/home/srid/code/kolu",
           lastActivity: now - 5_000,
+          title: "claude: implement",
+          foregroundProcess: "node",
         }),
         entry({
           id: "longer-id",
           pid: 12,
           cwd: "/etc",
           lastActivity: now - 120_000,
+          title: "",
+          foregroundProcess: "vim",
         }),
       ],
       { now, home: "/home/srid" },
     );
     const lines = out.split("\n");
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toMatch(/^ID\s+PID\s+IDLE\s+CWD$/);
-    expect(lines[1]).toMatch(/^abc\s+100\s+5s\s+~\/code\/kolu$/);
-    expect(lines[2]).toMatch(/^longer-id\s+12\s+2m\s+\/etc$/);
+    expect(lines[0]).toMatch(/^ID\s+PID\s+IDLE\s+CMD\s+CWD$/);
+    // title wins when set
+    expect(lines[1]).toMatch(
+      /^abc\s+100\s+5s\s+claude: implement\s+~\/code\/kolu$/,
+    );
+    // falls back to the foreground command when the title is empty
+    expect(lines[2]).toMatch(/^longer-id\s+12\s+2m\s+vim\s+\/etc$/);
+  });
+
+  it("shows an em-dash when a terminal has neither title nor foreground", () => {
+    const out = formatList(
+      [entry({ id: "x", title: "", foregroundProcess: "" })],
+      { now: 0 },
+    );
+    expect(out.split("\n")[1]).toMatch(/—/);
   });
 });
 
 describe("formatListJson", () => {
-  it("emits a top-level array (jq '.[]'-friendly), not a wrapper object", () => {
-    const parsed = JSON.parse(formatListJson([entry({ id: "x" })]));
+  it("emits a top-level array (jq '.[]'-friendly) carrying the full entry", () => {
+    const parsed = JSON.parse(
+      formatListJson([
+        entry({ id: "x", title: "zsh", foregroundProcess: "zsh" }),
+      ]),
+    );
     expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed[0]).toMatchObject({ id: "x", pid: 12843 });
+    expect(parsed[0]).toMatchObject({ id: "x", pid: 12843, title: "zsh" });
   });
 });

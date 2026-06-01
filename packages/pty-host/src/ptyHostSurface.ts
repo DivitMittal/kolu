@@ -50,7 +50,7 @@ import { z } from "zod";
  *  ones. Internal refactors (the kolu binary, the provider DAG) do NOT bump
  *  it — that's the point, so a long-lived pty-host survives most kolu
  *  upgrades. */
-export const PTY_HOST_CONTRACT_VERSION = "2.0";
+export const PTY_HOST_CONTRACT_VERSION = "2.1";
 
 /** Whether a pty-host reporting `reportedVersion` is wire-compatible with a
  *  consumer built against `expected` (both `major.minor`). Compatible when the
@@ -112,6 +112,12 @@ const TerminalListEntrySchema = z.object({
   pid: z.number().int(),
   cwd: z.string(),
   lastActivity: z.number(),
+  // Added in contract 2.1 (additive · optional): the metadata-tap snapshots, so
+  // a one-shot `list` carries the full picture without per-row tap subscriptions.
+  // The in-process host always populates them; `optional()` keeps an older
+  // server wire-compatible with a 2.1 client.
+  title: z.string().optional(),
+  foregroundProcess: z.string().optional(),
 });
 
 const TerminalDataMsgSchema = z.discriminatedUnion("kind", [
