@@ -29,7 +29,7 @@ import { randomUUID } from "node:crypto";
 import { directLink } from "@kolu/surface/links/direct";
 import { implementSurface, inMemoryChannelByName } from "@kolu/surface/server";
 import type { ContractRouterClient } from "@orpc/contract";
-import { ORPCError } from "@orpc/server";
+import { implement, ORPCError } from "@orpc/server";
 import { DEFAULT_SCROLLBACK } from "kolu-common/config";
 import { cleanEnv, koluIdentityEnv, prepareShellInit } from "kolu-pty";
 import type { Logger } from "kolu-shared";
@@ -236,26 +236,33 @@ export function servePtyHost(deps: InProcessPtyHostDeps) {
   });
 }
 
-/** The transport-agnostic pty-host router — the `.router` field of
- *  `servePtyHost`. The same value feeds `directLink` (the in-process web
- *  client) AND `serveOverStdio` (a unix-socket listener for `kolu-tui`), so
- *  both transports share one PTY host. */
+/** The raw `implementSurface` fragment router — the `.router` field of
+ *  `servePtyHost`. `directLink` consumes this fragment directly (the
+ *  in-process web client); over-the-wire serving needs it wrapped first — see
+ *  `createInProcessPtyHost`'s `servedRouter`. */
 export type PtyHostRouter = ReturnType<typeof servePtyHost>["router"];
 
-/** Build the in-process pty-host ONCE and return both its router (the
- *  transport-agnostic seam) and a contract-typed identity-link client over
- *  it. kolu-server consumes `.client` for the web path (no wire, via
- *  `directLink`) and serves the SAME `.router` over a unix socket for
- *  `kolu-tui` (R-4 Phase 1) — one PTY host, two transports, byte-identical
- *  handlers. Call this once per process; calling it twice spawns two
- *  independent hosts. */
+/** Build the in-process pty-host ONCE and return three views of the same host:
+ *   - `client` — the no-wire `directLink` client kolu-server's web path uses;
+ *   - `servedRouter` — the host's router wrapped in a top-level contract router,
+ *     ready to hand straight to `serveOverStdio` (the unix socket for kolu-tui;
+ *     the ssh stdio for a daemon). The bare fragment can't route over the wire
+ *     (the StandardRPCHandler answers "Not Found"), so the wrap lives here —
+ *     once, beside the contract it references — rather than at every serving
+ *     call site;
+ *   - `router` — the raw fragment, for advanced in-process use.
+ *  Call once per process; calling twice spawns two independent hosts. */
 export function createInProcessPtyHost(deps: InProcessPtyHostDeps): {
   router: PtyHostRouter;
+  // biome-ignore lint/suspicious/noExplicitAny: the contract-wrapped served router's context type doesn't line up with serveOverStdio's `Router<any, Context>`, though the runtime shape is exactly what it wants (mini-ci types its served router `any` for the same reason).
+  servedRouter: any;
   client: PtyHostClient;
 } {
   const router = servePtyHost(deps).router;
   return {
     router,
+    // biome-ignore lint/suspicious/noExplicitAny: the implementSurface fragment's procedure-context type doesn't line up with implement().router()'s contract-derived param, though the runtime shape is correct.
+    servedRouter: implement(ptyHostSurface.contract).router(router as any),
     client: directLink<typeof ptyHostSurface.contract>(router),
   };
 }

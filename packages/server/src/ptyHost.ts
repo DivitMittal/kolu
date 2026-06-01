@@ -5,8 +5,9 @@
  * the host once and exposes both views of it —
  *   - `ptyHostClient` — the identity-link (`directLink`, no wire) client the
  *     `LocalTerminalBackend` (the web path) consumes;
- *   - `ptyHostRouter` — the SAME router, which `index.ts` serves over a unix
- *     socket so `kolu-tui` (the raw CLI client) can reach the same PTYs.
+ *   - `ptyHostServedRouter` — the same host's contract-wrapped router, which
+ *     `index.ts` serves over a unix socket so `kolu-tui` (the raw CLI client)
+ *     can reach the same PTYs.
  *
  * One PTY host, two transports, byte-identical handlers. Instantiating here
  * (rather than inside `local.ts`) keeps it a single shared instance — both
@@ -24,8 +25,9 @@ const ptyHost = createInProcessPtyHost({
   version: pkg.version,
 });
 
-/** The transport-agnostic router — served over the unix socket in `index.ts`. */
-export const ptyHostRouter = ptyHost.router;
+/** The contract-wrapped router — served over the unix socket in `index.ts`
+ *  for kolu-tui (and, later, a standalone daemon). */
+export const ptyHostServedRouter = ptyHost.servedRouter;
 
 /** The in-process (no-wire) client the LocalTerminalBackend consumes. */
 export const ptyHostClient = ptyHost.client;

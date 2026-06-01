@@ -28,7 +28,7 @@ import {
 } from "./iframePreviewRoute.ts";
 import { ensureKoluRoot, shutdownCleanup } from "./koluRoot.ts";
 import { log } from "./log.ts";
-import { ptyHostRouter } from "./ptyHost.ts";
+import { ptyHostServedRouter } from "./ptyHost.ts";
 import { pwaIdentityForHostname } from "./pwaIdentity.ts";
 import { appRouter } from "./router.ts";
 import { initSessionAutoSave } from "./session.ts";
@@ -322,7 +322,7 @@ server.on("upgrade", (req, socket, head) => {
 // koluRoot, so it gets its own exit-time cleanup.
 const ptyHostSocketListener = await servePtyHostOverUnixSocket({
   socketPath: getPtyHostSocketPath(argv.flags.ptyHostSocket),
-  router: ptyHostRouter,
+  router: ptyHostServedRouter,
   log,
 });
 process.on("exit", () => ptyHostSocketListener.close());

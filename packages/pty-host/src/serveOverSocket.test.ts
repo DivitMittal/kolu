@@ -13,7 +13,10 @@ import { stdioLink } from "@kolu/surface/links/stdio";
 import type { Logger } from "kolu-shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createInProcessPtyHost } from "./inProcessPtyHost.ts";
-import { PTY_HOST_CONTRACT_VERSION, ptyHostSurface } from "./ptyHostSurface.ts";
+import {
+  PTY_HOST_CONTRACT_VERSION,
+  type ptyHostSurface,
+} from "./ptyHostSurface.ts";
 import {
   type PtyHostSocketListener,
   servePtyHostOverUnixSocket,
@@ -38,14 +41,14 @@ describe("servePtyHostOverUnixSocket — real unix-socket round-trip", () => {
       mkdtempSync(join(tmpdir(), "kolu-pty-sock-")),
       "pty-host.sock",
     );
-    const { router } = createInProcessPtyHost({
+    const { servedRouter } = createInProcessPtyHost({
       log: silentLog,
       shellDir: mkdtempSync(join(tmpdir(), "kolu-pty-shell-")),
       version: "test",
     });
     listener = await servePtyHostOverUnixSocket({
       socketPath,
-      router,
+      router: servedRouter,
       log: silentLog,
     });
   });
