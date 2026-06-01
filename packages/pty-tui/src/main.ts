@@ -22,6 +22,7 @@ const HELP = `kolu-tui — a terminal-side client for kolu-server's pty-host (be
 Usage:
   kolu-tui list [--json]       list your live terminals
   kolu-tui snapshot <id>       print a terminal's current scrollback, then exit
+  kolu-tui help                show this help
 
 Options:
   --socket <path>   pty-host socket (default $XDG_RUNTIME_DIR/kolu/pty-host.sock)
