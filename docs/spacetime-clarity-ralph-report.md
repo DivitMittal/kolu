@@ -151,6 +151,17 @@ by the skeptic, and replaced with the skeptic's own endorsed fix.
 | 1 | #11 | "**occasionally**" + "rarely" stacked | two frequency qualifiers collide | "agree on a location only occasionally — and even when they do, they rarely prescribe…" | ✅ approved |
 | 1 | #12 | "**space-like observer**" | physics: observers aren't space-like | adjective moved onto the slice/reading: "a space-like slice" / "the time-like reading" | ✅ skeptic-tweak |
 | 1 | #14 | "the **third**, synthesizing read" | ordinal before reads were counted | "a third read … yours, after theirs, synthesizing the two" | ✅ approved |
+| 2 | #2 | "revisions keep introducing **the defects both lenses catch together**" | near-circular causation; scope-ambiguous | dropped the circular clause: "the few that surfaced clustered in the later passes, after the revisions went in" | ✅ 3/3 lenses |
+
+**Pass 2 method.** Three candidate rewrites of #2 from different angles
+(depth-mechanism, minimal, drop-causal), each vetted by a perspective-diverse
+skeptic panel (meaning+thesis / voice / clarity). Only **drop-causal** passed
+all three lenses. The other two cleared the *clarity* lens but were rejected on
+meaning+thesis for re-introducing a depth-accretion mechanism that implies
+single-axis defects are shallower — the same thesis violation that sank the
+pass-1 attempt — and on voice for bloating the terse aside. The clean
+observation beat every clever explanation, exactly as the rewrite brief
+anticipated.
 
 ## Dead ends
 
@@ -170,11 +181,14 @@ The over-fixing the post itself warns against, caught in the act.
   braided concerns (what's maximized / when the client is caught up / how to
   avoid a flash). Explaining early would make that paragraph read as redundant.
   **Deliberate keep.**
-- **#2 — the near-circular binocular sentence (6/6 judges).** Real defect, but
-  the pass-1 rewrite was rejected: it introduced a "shallow slip = single-axis"
+- **#2 — the near-circular binocular sentence (6/6 judges).** Real defect; the
+  pass-1 rewrite was rejected for introducing a "shallow slip = single-axis"
   taxonomy that contradicts the post's own thesis (its two centerpieces are
-  *single-axis* defects, emphatically not shallow). **Deferred to pass 2** with
-  that contradiction ruled out.
+  *single-axis* defects, emphatically not shallow). **Fixed in pass 2** by
+  dropping the causal clause entirely. Two pass-2 candidates that tried to
+  supply a real mechanism (depth-accretion) re-committed the same thesis
+  violation and were rejected — logged here as the dead end they were: there is
+  no honest non-circular *cause* to state, so the clean observation is the fix.
 
 ## Key findings
 
