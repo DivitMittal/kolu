@@ -23,7 +23,6 @@
   code{ font-family:var(--mono); font-size:.85em; background:#f4f1e8; padding:.08em .35em; border-radius:4px; color:#2a2d33; }
   .muted{ color:var(--dim); }
   strong{ color:#101216; }
-  .big{ font-size:1.5rem; font-weight:700; color:var(--accent2); letter-spacing:-.01em; }
   .tag{ display:inline-block; font-family:var(--mono); font-size:.64rem; text-transform:uppercase; letter-spacing:.04em; padding:.1em .5em; border-radius:999px; vertical-align:middle; border:1px solid transparent; }
   .tag.seedling{ background:#f8efd9; color:#8a5200; border-color:#e8d3a3; }
   .tag.accent{ background:#efebff; color:#5a3ff0; border-color:#d4cbff; }
@@ -51,6 +50,7 @@
   .stat .l{ font-size:.78rem; color:var(--dim); }
   hr{ border:none; border-top:1px solid var(--line); margin:2.4rem 0; }
   .verdict{ background:linear-gradient(180deg,#fff,#faf7ff); }
+  blockquote{ margin:1rem 0; padding:.6rem 1rem; border-left:3px solid var(--accent2); background:var(--panel2); border-radius:0 8px 8px 0; font-size:.95rem; }
 </style>
 </head>
 <body>
@@ -59,142 +59,175 @@
 <p class="crumb">docs / plans / askuser-xterm-detect</p>
 
 <h1>Detecting <code>AskUserQuestion</code> by scraping the xterm buffer</h1>
-<p class="sub">A spike for <a href="https://github.com/juspay/kolu/issues/905">#905</a>. The issue's fix is a Claude&nbsp;Code <code>PreToolUse</code> hook + sidecar file — which means <strong>editing the user's <code>~/.claude/settings.json</code> on every machine</strong>. This asks the alternative the title poses: light the "Awaiting input" badge by <em>reading the rendered terminal</em>, so the user configures nothing. The fragility worry is real but — measured below — <strong>small and test-catchable</strong>. Plan: a dedicated, fixture-tested <code>packages/xterm-scrape</code>, read server-side. <span class="tag seedling">seedling</span> <span class="tag accent">#905</span></p>
+<p class="sub">A spike for <a href="https://github.com/juspay/kolu/issues/905">#905</a>. The issue's fix is a Claude&nbsp;Code <code>PreToolUse</code> hook + sidecar — which means editing the user's <code>~/.claude/settings.json</code> on every machine. This asks the alternative the title poses: light the "Awaiting input" badge by <em>reading the rendered terminal</em>, so the user configures nothing. Fragility, measured below, is small and test-catchable. Reviewed by <code>/hickey</code> + <code>/lowy</code> (Opus, 2-round debate to consensus) and a Löwy <em>electricity-analogy</em> pass; their consensus edits are folded in and recorded in §9. <span class="tag seedling">seedling</span> <span class="tag accent">#905</span></p>
 
 <div class="panel accent">
-<p style="margin-top:0"><strong>The one-paragraph version.</strong> Two things you'd assume need building already exist. (1) The <em>destination</em>: <code>awaiting_user</code> is a fully-wired state — enum member, "Awaiting input" label, alert-colored badge, dock attention bucket — that is <strong>dead code today</strong>, documented in <code>schemas.ts</code> as "never fires under the current SDK." (2) The <em>source</em>: kolu already runs a headless xterm mirror of every PTY <strong>server-side</strong> and exposes its plain-text screen via an RPC. So "scrape the xterm" is reading a buffer we already maintain and feeding a badge we already shipped. The remaining questions were "how fragile is the signature, really?" and "is dodging the hook's config worth it?" — both now answered with numbers.</p>
+<p style="margin-top:0"><strong>The one-paragraph version, in Löwy's terms.</strong> The consumer-facing <strong>receptacle already exists</strong>: <code>AgentInfo.state === "awaiting_user"</code>, which the badge, dock pip, and OS alert already plug into. Behind that receptacle sit interchangeable <em>power sources</em> for the one fact "the agent is awaiting the user": the live JSONL classifier (starved during the SDK's buffering window), this xterm scrape, and #905's hook. So the work isn't new wiring for consumers — it's adding one more generator behind a socket that's already standardized, and the volatile part ("what a prompt looks like on screen") gets encapsulated in its own utility package. The badge never learns which generator powered it.</p>
 </div>
 
-<h2>1 · Why JSONL polling is blind here (recap)</h2>
-<p>kolu derives every agent's state server-side by tailing the Claude transcript JSONL and classifying the newest message <span class="cite">session-watcher.ts:224–274 → core.ts:307 <code>deriveState</code></span>. It already knows these two tools mean "needs the human":</p>
+<h2>1 · Why JSONL polling is blind here</h2>
+<p>kolu derives every agent's state server-side by tailing the Claude transcript JSONL and classifying the newest message <span class="cite">session-watcher.ts:224–274 → core.ts:307 <code>deriveState</code></span>. The classifier that produces <code>awaiting_user</code> is <strong>live, not dead</strong> — it already knows these two tools mean "needs the human":</p>
 <pre><span class="c">// packages/integrations/claude-code/src/core.ts:231</span>
 <span class="k">const</span> AWAITING_USER_TOOLS = <span class="k">new</span> Set([<span class="g">"AskUserQuestion"</span>, <span class="g">"ExitPlanMode"</span>]);
-<span class="c">// :273 toolUseOrAwaitingUser() → classifies the assistant tool_use as awaiting_user</span></pre>
-<p>The catch, per #905: the Claude Agent SDK <strong>buffers the in-flight assistant message</strong> (carrying the <code>tool_use</code> block) in memory and flushes it to disk only <em>after</em> the user answers. During the wait, the block isn't on disk, so <code>deriveState</code> reads the prior <code>end_turn</code> entry and reports <code>waiting</code>, never <code>awaiting_user</code>. <code>schemas.ts:36–43</code> documents it verbatim: <em>"…this case never fires under the current SDK. Fix tracked in #905."</em></p>
+<span class="c">// :273-285 toolUseOrAwaitingUser() → classifyByAwaiting() → awaiting_user</span></pre>
+<p>The catch, per #905: the Claude Agent SDK <strong>buffers the in-flight assistant message</strong> (carrying the <code>tool_use</code> block) in memory and flushes it to disk only <em>after</em> the user answers. During the wait the block isn't on disk, so the classifier is <strong>input-starved</strong> — <code>deriveState</code> reads the prior <code>end_turn</code> entry and reports <code>waiting</code>. <code>schemas.ts:36–43</code> documents it: <em>"…this case never fires under the current SDK. Fix tracked in #905."</em></p>
 <div class="panel warn">
-<p style="margin:0"><strong>The bug is a missing <em>signal</em>, not missing <em>machinery</em>.</strong> Anything that flips <code>ClaudeCodeInfo.state</code> to <code>awaiting_user</code> during the wait — a hook, or a screen scrape — lights the badge with zero downstream work. The whole "attention" chain (label, color, dock pip, OS badge, alert) already keys off that one enum value <span class="cite">schemas.ts:50–56 · agentDisplay.ts <code>stateLabels</code> · AgentIndicator.tsx:26 · agentState.ts:23</span>.</p>
+<p style="margin:0"><strong>So it's a starved source, not absent machinery — and that has a consequence the first draft missed.</strong> The <em>destination</em> (badge chain) is wired-but-unreached; the <em>source classifier</em> is live-but-starved. Once the scrape ships there are <strong>two live signals for one fact</strong> (and three with the hook), so the plan must state a composition rule — see §6. The receptacle that both lenses confirmed is one enum value the whole attention chain keys off <span class="cite">schemas.ts:54 · lifecycle.ts:16-17 <code>classifyByAwaiting</code> · AgentIndicator.tsx:26 · agentState.ts:23</span>.</p>
 </div>
 
 <h2>2 · The "xterm contents" already live server-side</h2>
-<p>kolu's PTY host keeps a headless terminal emulator per PTY, parses every byte through it, and exposes its contents two ways — both first-class RPCs <span class="cite">ptyHostSurface.ts:214–225</span>, already re-surfaced by the server router as <code>terminal.screenText</code> / <code>screenState</code> <span class="cite">router.ts:150–158</span>:</p>
+<p>kolu's PTY host keeps a headless terminal emulator per PTY, parses every byte through it, and exposes its contents — first-class RPCs <span class="cite">ptyHostSurface.ts:214–225</span>, re-surfaced by the server router as <code>terminal.screenText</code> / <code>screenState</code> <span class="cite">router.ts:150–158</span>:</p>
 <pre><span class="c">// packages/pty-host/src/ptyHost.ts — :4 "…an @xterm/headless screen mirror…"</span>
 <span class="c">// :483  PTY data → headless.write(data, () =&gt; publish(data))  // buffer fresh before fan-out</span>
 <span class="k">getScreenText</span>(id, startLine?, endLine?): string  <span class="c">// PLAIN TEXT, already VT-parsed — ANSI stripping is free</span></pre>
 <ul>
-<li><strong>Plain text out</strong> — the emulator already applied SGR/ANSI and resolved the grid. We never parse escape codes ourselves.</li>
-<li><strong>Always live, every PTY</strong> — independent of focus or mount state, and it's the established home for stream-derived signals (the same headless terminal already runs OSC handlers for cwd / title / shell-integration <span class="cite">ptyHost.ts:415,433,446</span>).</li>
+<li><strong>Plain text out</strong> — the emulator already applied SGR/ANSI and resolved the grid; we never parse escape codes ourselves.</li>
+<li><strong>Always live, every PTY</strong> — independent of focus or mount state. <code>TerminalHandle.getScreenText</code> already abstracts local vs remote/SSH (<a href="./remote-terminals.html">#951</a>) <span class="cite">local.ts:231</span>, so detection inherits that coverage for free.</li>
 </ul>
-<div class="panel good"><p style="margin:0"><strong>Server-side, decisively.</strong> Reading this mirror covers background tiles, mobile (where the client xterm is unmounted), and remote/SSH PTYs — none of which a client-side buffer read can promise. Client-side scraping is therefore <em>off the table</em> here; it buys nothing and loses coverage. <span class="muted">(Footnote: the client buffer + <code>SerializeAddon</code> exist via <code>terminalRefs.ts</code> if ever needed, but there's no reason to.)</span></p></div>
+<div class="panel good"><p style="margin:0"><strong>Server-side, decisively.</strong> Reading this mirror covers background tiles, mobile (client xterm unmounted), and remote/SSH PTYs — none of which a client-side buffer read can promise. Client-side scraping is off the table; it buys nothing and loses coverage.</p></div>
 
 <h2>3 · Quantifying the fragility <span class="muted" style="font-size:.8rem;font-weight:400">— "TUI pixels" measured, not feared</span></h2>
-<p>The honest worry was "we're scraping a closed, fast-moving TUI's output." I measured it against four Claude&nbsp;Code builds on disk (<code>2.1.77</code>, <code>2.1.81</code>, <code>2.1.92</code>, current <code>2.1.159</code>) by extracting the bytes the binary actually emits.</p>
+<p>The honest worry was "we're scraping a closed, fast-moving TUI." I measured it against four Claude&nbsp;Code builds on disk (<code>2.1.77</code>, <code>2.1.81</code>, <code>2.1.92</code>, current <code>2.1.159</code>) by extracting the bytes the binary actually emits.</p>
 <div class="stat">
-  <div><div class="n">≈ 1 / day</div><div class="l">patch-release cadence (2.1.157→.159 shipped 2026-05-29 → 05-31)</div></div>
+  <div><div class="n">≈ 1 / day</div><div class="l">patch-release cadence (2.1.157→.159 over 2026-05-29 → 05-31)</div></div>
   <div><div class="n">82 releases</div><div class="l">span from oldest on disk (2.1.77) to current (2.1.159)</div></div>
   <div><div class="n">0 changes</div><div class="l">to the prompt's defining strings across all 82</div></div>
 </div>
-<p><strong>The prompts are anchored on stable literals and a stable library — not arbitrary pixels.</strong> What's actually on screen, and how durable each part is:</p>
 <table>
 <tr><th>Element</th><th>On-screen token</th><th>Source</th><th>2.1.77→159</th></tr>
 <tr><td>ExitPlanMode title</td><td><code>Ready to code?</code></td><td>string literal</td><td class="y">identical</td></tr>
 <tr><td>ExitPlanMode body</td><td><code>…is ready to execute. Would you like to proceed?</code></td><td>string literal</td><td class="y">identical</td></tr>
 <tr><td>ExitPlanMode decline</td><td><code>No, keep planning</code></td><td>string literal</td><td class="y">identical</td></tr>
-<tr><td>Selection caret</td><td><code>❯</code> (ASCII fallback <code>&gt;</code>)</td><td><code>figures</code> npm lib <span class="cite">pointer:"❯" / pointer:"&gt;"</span></td><td class="y">identical</td></tr>
+<tr><td>Selection caret</td><td><code>❯</code> (ASCII fallback <code>&gt;</code>)</td><td><code>figures</code> npm lib <span class="cite">pointer:"❯" / "&gt;"</span></td><td class="y">identical</td></tr>
 <tr><td>Option / radio markers</td><td><code>◉ ◯</code> / <code>● ○</code></td><td><code>figures</code> lib</td><td class="y">identical</td></tr>
 <tr><td>Select footer hint</td><td><code>(↓ to select)</code>, <code>↑/↓ to select</code></td><td>string literal</td><td class="y">present</td></tr>
 </table>
 <div class="panel">
-<p style="margin-top:0"><strong>Two findings that directly shape the detector:</strong></p>
+<p style="margin-top:0"><strong>Three findings that shape the detector:</strong></p>
 <ul style="margin-bottom:0">
-<li><strong>ExitPlanMode is rock-solid</strong> — three exact literals, byte-identical across 82 daily releases. This one is essentially as stable as a tool name.</li>
-<li><strong>AskUserQuestion has thinner fixed chrome</strong> — its question text and option labels are model-supplied, so detection leans on <em>structure</em>: the <code>figures</code> caret/markers + the select footer, not fixed phrasing. The <code>figures</code> library ships an automatic ASCII fallback (<code>❯→&gt;</code>), so glyph drift is a <em>known finite mapping</em>, not open-ended.</li>
-<li><strong>No box-drawing glyphs anywhere</strong> — Claude's prompt boxes use no <code>╭/┌</code> corners. <em>The signature must not depend on borders.</em> (A naïve "look for a framed box" detector would have failed.)</li>
+<li><strong>ExitPlanMode is rock-solid</strong> — three exact literals, byte-identical across 82 daily releases; as stable as a tool name.</li>
+<li><strong>AskUserQuestion has thinner fixed chrome</strong> — its question + option labels are model-supplied, so detection leans on <em>structure</em> (the <code>figures</code> caret/markers + select footer). The <code>figures</code> lib ships an automatic ASCII fallback (<code>❯→&gt;</code>), so glyph drift is a <em>known finite mapping</em>.</li>
+<li><strong>No box-drawing glyphs anywhere</strong> — Claude's prompt boxes use no <code>╭/┌</code> corners. <em>The signature must not depend on borders.</em></li>
 </ul>
 </div>
-<p>Net: fragility is real but <strong>bounded and observable</strong>. A break would be a discrete event (a specific literal changes), caught by a fixture test on the next Claude bump — exactly the "solid test coverage" posture, made concrete in §5. It is <em>not</em> the "constant churn" the generic worry implies: zero churn in 82 releases.</p>
+<p>Net: fragility is real but <strong>bounded and observable</strong>. A break is a discrete event (a specific literal changes), caught by a fixture test on the next Claude bump — not the "constant churn" the generic worry implies (zero churn in 82 releases).</p>
 
-<h2>4 · What dodging the hook actually buys <span class="muted" style="font-size:.8rem;font-weight:400">— the no-config benefit, quantified</span></h2>
-<p>The hook isn't free. It means installing <strong>two stanzas into <code>~/.claude/settings.json</code></strong> (PreToolUse + PostToolUse), per machine and per user, plus an unresolved install-UX decision the issue itself flags (auto-edit the user's settings vs. an opt-in <code>kolu claude install-hooks</code>). The scrape writes <strong>zero files</strong> and reads a stream kolu already owns. Concretely, the scrape covers cases the hook structurally cannot — or can only with N× the setup:</p>
+<h2>4 · What dodging the hook buys <span class="muted" style="font-size:.8rem;font-weight:400">— which generators are connected, not how the current is consumed</span></h2>
+<p>The hook isn't free: two stanzas in <code>~/.claude/settings.json</code> (PreToolUse + PostToolUse), per machine and user, plus an unresolved install-UX decision the issue itself flags. The scrape writes <strong>zero files</strong> and reads a stream kolu already owns. Coverage the hook structurally can't match without N× setup:</p>
 <table>
 <tr><th>Context</th><th>Hook</th><th>Server-side scrape</th></tr>
 <tr><td>Local Claude, hook installed</td><td class="y">works (robust)</td><td class="y">works</td></tr>
-<tr><td>Remote / SSH PTY (<a href="./remote-terminals.html">#951</a>)</td><td class="n">needs install on every remote box</td><td class="y">works (kolu proxies the PTY)</td></tr>
-<tr><td>Fresh machine / first session before install</td><td class="n">silent miss</td><td class="y">works day one</td></tr>
+<tr><td>Remote / SSH PTY (<a href="./remote-terminals.html">#951</a>)</td><td class="n">needs install on every box</td><td class="y">works (kolu proxies the PTY)</td></tr>
+<tr><td>Fresh machine / first session</td><td class="n">silent miss</td><td class="y">works day one</td></tr>
 <tr><td>Shared / multi-user host</td><td class="n">per-user settings edit</td><td class="y">works</td></tr>
-<tr><td>Hook timeout / failure (5s cap)</td><td class="n">fails (open)</td><td class="y">unaffected</td></tr>
+<tr><td>Hook timeout / failure (5s cap)</td><td class="n">fails</td><td class="y">unaffected</td></tr>
 <tr><td>Files written to user's home</td><td>2 settings stanzas</td><td class="y">none</td></tr>
-<tr><td>Clean question text for the tooltip</td><td class="y"><code>tool_input.question</code></td><td>only what's on screen (parse)</td></tr>
+<tr><td>Clean question text for tooltip</td><td class="y"><code>tool_input.question</code></td><td>only what's on screen (parse)</td></tr>
 </table>
-<div class="panel accent"><p style="margin:0"><strong>So they're complementary, and the scrape is the better <em>default</em>:</strong> zero-install, works everywhere kolu can see a PTY, and agent-agnostic (the same package can recognize Codex/OpenCode TUI prompts). The hook stays available as a robustness <em>upgrade</em> for local Claude and for clean question text — but it should be opt-in, not a prerequisite for the badge to work at all.</p></div>
+<div class="panel accent"><p style="margin:0"><strong>The electricity correction (§9).</strong> Scrape and hook are <em>interchangeable generators</em> feeding one receptacle, not a "default" and an "upgrade." "Scrape is the zero-install default, hook adds robustness + clean question text" is a true statement about <strong>which generators are connected in a given environment</strong> — a <em>deployment</em> fact, never an architectural ranking. How the current is consumed (the <code>awaiting_user</code> badge) never varies; which sources are wired in does. Stating it this way keeps a future Codex/OpenCode scraper or a remote-only hook from re-litigating priority.</p></div>
 
-<h2>5 · The package: <code>packages/xterm-scrape</code> <span class="muted" style="font-size:.8rem;font-weight:400">— encapsulate the one volatile thing, test it hard</span></h2>
-<p>The fragile knowledge ("what an interactive terminal prompt looks like on screen") is exactly <em>one volatility</em> — so it belongs behind <em>one</em> module boundary (Parnas / lowy: encapsulate what changes). A dedicated leaf package keeps the blast radius of any future TUI drift to one place, and makes the test corpus first-class.</p>
-<pre><span class="c">packages/xterm-scrape/                  // pure, browser-safe, zero node:* deps (mirrors schemas.ts discipline)</span>
-  src/signatures.ts   <span class="c">// declarative per-tool signatures: feature predicates, not one regex</span>
-  src/detect.ts       <span class="c">// detectPrompt(screenText, opts) → { tool, confidence, question? } | null</span>
+<h2>5 · The package: <code>packages/xterm-scrape</code> <span class="muted" style="font-size:.8rem;font-weight:400">— encapsulate the one volatile thing</span></h2>
+<p>The fragile knowledge ("what an interactive terminal prompt looks like on screen") is exactly <em>one volatility</em>, so it lives behind <em>one</em> module boundary (Parnas/Löwy: encapsulate what changes). This is the "even though powering the house is functional, power is not specific to the house's domain" move — the package is a domain-agnostic <strong>utility</strong>, with <strong>no <code>claude</code> import</strong>; the Claude integration is merely its first consumer. A dedicated leaf package keeps the blast radius of TUI drift to one place and makes the fixture corpus first-class.</p>
+<pre><span class="c">packages/xterm-scrape/                  // pure, browser-safe, zero node:* deps, zero agent imports</span>
+  src/signatures.ts   <span class="c">// PRIVATE: declarative per-tool signatures (predicates, not one regex)</span>
+  src/detect.ts       <span class="c">// the ONLY export: detectPrompt() + its return type</span>
   src/detect.test.ts  <span class="c">// positives from every fixture + adversarial negatives</span>
   fixtures/           <span class="c">// real getScreenText() dumps, version-stamped — the regression corpus</span>
-    exit-plan-mode.2.1.159.txt
-    ask-user-question.2.1.159.txt
-    neg-scrollback-proceed.txt   neg-numbered-list.txt   neg-narrow-wrap.txt</pre>
-<h3>Heuristics, not a substring match (the false-positive answer)</h3>
-<p><code>buffer.active</code> includes scrollback, so a lone "proceed" or a numbered list in agent output must <em>not</em> trip the badge. <code>detectPrompt</code> scores the <strong>bottom region near the cursor</strong> (via <code>getScreenText(id, startLine, endLine)</code>) on multiple co-occurring features and fires only past a threshold:</p>
-<ul>
-<li><strong>Region gate</strong> — only the last N rows; the live prompt is always at the bottom, history isn't.</li>
-<li><strong>Multi-feature score</strong> — caret <code>❯/&gt;</code> <em>and</em> an option/marker column <em>and</em> (ExitPlanMode literal <em>or</em> select-footer hint). One feature alone never fires.</li>
-<li><strong>ExitPlanMode fast-path</strong> — its three exact literals are high-confidence on their own.</li>
-<li><strong>Recompute, don't latch</strong> — re-scored each poll; absence of the box ⇒ revert to the JSONL-derived state. No separate "dismiss" detector.</li>
-</ul>
-<div class="panel good"><p style="margin:0"><strong>Why the package makes the fragility tolerable.</strong> Every supported Claude version drops a captured fixture into <code>fixtures/</code>; the test asserts each is detected and each negative is rejected. When a future bump <em>does</em> change a literal, CI goes red against the new fixture the moment we add it — the silent-failure mode (badge quietly stops working) becomes a loud, located test failure in one package. That is the entire bet, made testable.</p></div>
+    exit-plan-mode.2.1.159.txt   ask-user-question.2.1.159.txt
+    neg-scrollback-proceed.txt   neg-numbered-list.txt   neg-narrow-wrap.txt
 
-<h2>6 · Wiring it in (server-side)</h2>
-<p>Two integration facts beyond the package:</p>
+<span class="c">// detectPrompt: a STABLE loop over VARIABLE per-tool signatures (no per-tool branch in the loop)</span>
+<span class="c">// Return is a tool-keyed discriminated union — question present iff AskUserQuestion (type-level invariant):</span>
+detectPrompt(text): { tool: <span class="g">"ExitPlanMode"</span> } | { tool: <span class="g">"AskUserQuestion"</span>, question: string | null } | null</pre>
+
+<h3>Boolean conjunction, not a confidence score (hickey H5)</h3>
+<p>Every load-bearing feature is a discrete, byte-stable token — a finite set, not a noisy signal. So detection is an explicit <strong>boolean conjunction</strong> over the bottom-region text, not a real-valued score against a tunable threshold (which would manufacture a magic number and threshold-drift as a new failure mode):</p>
 <ul>
-<li><strong>session ↔ PtyId.</strong> The claude <code>SessionWatcher</code> is keyed by Claude session and imports nothing from pty-host today. The bridge belongs in the server layer that already owns both — <code>LocalTerminalBackend</code> wires the pty-host client and matches sessions by foreground pid <span class="cite">terminalBackend/local.ts · agent-provider.ts <code>resolveSession(foregroundPid)</code></span>. Expose that pid→PtyId association to the detector.</li>
-<li><strong>Its own clock.</strong> The JSONL <code>fs.watch</code> is silent during the wait, so the scrape needs a timer: poll <code>getScreenText</code> at ≈0.5–1s, <em>gated to run only while JSONL state is idle</em> (<code>waiting</code>/<code>end_turn</code>). When <code>detectPrompt</code> fires, promote to <code>awaiting_user</code> through the existing <code>onUpdate</code>/<code>claudeInfoEqual</code> gate — the same spot <code>running_background</code> is promoted today <span class="cite">core.ts:378–385; session-watcher.ts:261</span>.</li>
+<li><strong>Region gate</strong> — only the last N rows near the cursor (<code>getScreenText(id, startLine, endLine)</code>); the live prompt is always at the bottom, history isn't.</li>
+<li><strong>AskUserQuestion</strong> fires iff <code>caret(❯/&gt;)</code> <strong>AND</strong> <code>option/marker column</code> <strong>AND</strong> <code>select-footer literal</code>. One feature alone never fires.</li>
+<li><strong>ExitPlanMode</strong> is its own <strong>exact-literal predicate</strong> (boolean-certain), expressed as a sibling signature in <code>signatures.ts</code> — not a "fast-path" exception wedged inside the AskUserQuestion scorer (hickey H4). The two recognition problems never share a code path; the fixture corpus splits per tool.</li>
+<li>Add a real-valued score later <em>only</em> if adversarial negatives force it, with fixtures justifying it.</li>
 </ul>
-<div class="flow">deriveState(lines)  ─ idle? ─▶  poll getScreenText(ptyId, -N, -1)
-        │                              │
-   (JSONL path)              xterm-scrape: detectPrompt(text)
-        │                              │ tool? confidence ≥ θ
-        ▼                              ▼
-   state = waiting  ───override──▶  state = awaiting_user  ──▶ onUpdate ──▶ badge
-                     (box gone ⇒ revert to JSONL state)</div>
+<div class="panel good"><p style="margin:0"><strong>Why the package makes fragility tolerable.</strong> Every supported Claude version drops a captured fixture; the test asserts each is detected and each negative rejected. When a future bump changes a literal, CI goes red against the new fixture the moment we add it — the silent-failure mode (badge quietly stops) becomes a <em>loud, located</em> test failure in one package.</p></div>
+
+<h2>6 · Wiring it in <span class="muted" style="font-size:.8rem;font-weight:400">— at the providers seam, not in the watcher</span></h2>
+<p>This section changed the most under review. The override does <strong>not</strong> go in the Claude session-watcher.</p>
+<ul>
+<li><strong>Keep <code>session-watcher.ts</code> JSONL-only (hickey/lowy H1).</strong> Today it has <em>zero</em> pty-host imports — pure <code>fs.watch</code> + <code>deriveState</code>; <code>running_background</code> promotion is pure JSONL <span class="cite">core.ts:383-385</span> and is <em>not</em> a precedent for a screen scrape. Injecting <code>getScreenText</code> there would braid JSONL-format volatility with TUI-rendering volatility (two independent change-clocks). Do the work one level up, at <code>startAgentProvider</code>'s <code>createWatcher</code>/<code>setAgentMetadataVia</code> callback <span class="cite">providers.ts:454-461</span>, which already holds <code>terminalId</code> and the pty-host client and funnels every emitted <code>ClaudeCodeInfo</code>.</li>
+<li><strong>No pid→PtyId bridge (hickey H2 / lowy M1).</strong> <code>TerminalId == PtyId</code> — the same UUID is passed to <code>spawn({id})</code> and <code>getScreenText({id})</code> <span class="cite">local.ts:361-362, 231-232</span>. There is no namespace to bridge; the screen is reachable directly by the <code>terminalId</code> already in scope, captured as a one-line <code>getScreenText</code> thunk. <em>(Dropped: the old "session↔PtyId seam" decision and its risk row.)</em></li>
+<li><strong>Leave the shared <code>AgentProvider.createWatcher</code> contract UNCHANGED (lowy, conceded).</strong> Do not thread a screen handle through it <span class="cite">anyagent agent-provider.ts:97</span> — that leaks pty-host (a lower layer) into the agent-agnostic contract and forces Codex/OpenCode to carry/stub an unused concept. Resolve the screen capability at <code>providers.ts</code> and hand it only to the Claude path.</li>
+<li><strong>One fact, stateless merge (hickey/lowy H3).</strong> At the seam, a pure transform on each emitted <code>ClaudeCodeInfo</code>: <code>awaiting_user</code> fires if <em>any</em> contributor says so; the scrape only <strong>promotes</strong> <code>waiting/end_turn → awaiting_user</code> (never demotes), filling the gap while the JSONL classifier is starved. The contributors are <strong>concordant by construction</strong> (same tool set), so they reinforce. Write the precedence/merge rule once as a named, commented function; add a "message-flushes-mid-wait" fixture asserting the JSONL and scrape paths agree.</li>
+<li><strong>Recompute-don't-latch is structural, not a policy (hickey L1).</strong> Because the merge is a stateless transform, "no box detected → input passes through unchanged" — there is no <code>scrapeOverride</code> variable to clear, no revert step.</li>
+<li><strong>One lifecycle object owns the clock (hickey L2).</strong> The JSONL <code>fs.watch</code> is silent during the wait, so a poller samples <code>getScreenText</code> at ≈0.5–1s — but the idle-gate + clock + teardown + merge are one object owned by the seam wrapper: started when state goes idle, stopped the instant it goes non-idle or the watcher tears down (tied to <code>watcher.destroy</code> as the single stop point).</li>
+</ul>
+<div class="flow">JSONL fs.watch ──▶ deriveState(lines) ──▶ ClaudeCodeInfo  (BASE — event-driven, no screen, no clock)
+                                                  │
+                              providers.ts seam (startAgentProvider callback, terminalId in scope)
+                                                  │  state idle? lifecycle obj polls getScreenText(terminalId,-N,-1)
+                                                  ▼
+                            mergeAwaitingInput(info, xterm-scrape.detectPrompt(text))   ← named rule, stateless
+                                                  │  promote waiting → awaiting_user iff a prompt is on screen
+                                                  ▼
+                                       setAgentMetadataVia ──▶ awaiting_user receptacle ──▶ badge</div>
+<p class="muted" style="font-size:.85rem">The receptacle is <code>awaiting_user</code>; the generators (JSONL base + scrape promoter, later the #905 hook promoter) plug in behind the named merge rule. A hook becomes a <em>swap</em>, not a rewrite — the electricity payoff.</p>
 
 <h2>7 · Phase 0 — empirical capture <span class="tag good">done (static)</span></h2>
-<p>Captured from the on-disk binaries (results are §3). Settled: the exact ExitPlanMode literals, the <code>figures</code> caret + ASCII fallback, the absence of box glyphs, and byte-stability across 82 releases. <strong>One thing static analysis can't fully settle — confirm with a live capture before Phase&nbsp;1:</strong></p>
-<div class="panel warn"><p style="margin:0"><strong>Live confirmation needed (≈1 hr):</strong> run a real Claude session in a kolu PTY, trigger <code>ExitPlanMode</code> (and an <code>AskUserQuestion</code> if the model offers one), and dump <code>terminal.screenText</code>. Verify: (a) the prompt text actually lands in <code>getScreenText</code>; (b) whether it renders in the main buffer or the <em>alternate screen</em> — <code>?1049h</code> sequences exist in the binary, and <code>buffer.active</code> tracks whichever screen is active, so either is fine, but alt-screen would <em>remove</em> scrollback false-positives entirely; (c) its row position relative to the cursor (sets the region gate's N). The dumps become the first <code>fixtures/</code>.</p></div>
+<p>Captured from the on-disk binaries (results in §3): the exact ExitPlanMode literals, the <code>figures</code> caret + ASCII fallback, the absence of box glyphs, and byte-stability across 82 releases. <strong>One thing static analysis can't settle — confirm with a live capture before Phase 1:</strong></p>
+<div class="panel warn"><p style="margin:0"><strong>Live confirmation (≈1 hr):</strong> run a real Claude session in a kolu PTY, trigger <code>ExitPlanMode</code> (and an <code>AskUserQuestion</code> if offered), and dump <code>terminal.screenText</code>. Verify: (a) the prompt lands in <code>getScreenText</code>; (b) main buffer vs <em>alternate screen</em> (<code>?1049h</code> exists in the binary; <code>buffer.active</code> tracks whichever is active, and alt-screen would <em>remove</em> scrollback false-positives); (c) row position relative to the cursor (sets the region gate's N). The dumps become the first <code>fixtures/</code>.</p></div>
 
 <h2>8 · Plan</h2>
 <ol>
-<li><strong>Phase 0 live capture</strong> → first fixtures (above).</li>
-<li><strong><code>packages/xterm-scrape</code></strong> — <code>signatures.ts</code> + <code>detect.ts</code> + the fixture/negative test corpus. Pure, no node deps; ship behind a green test suite first.</li>
-<li><strong>Server wiring</strong> — pid→PtyId seam + idle-gated poller in the claude integration; promote to <code>awaiting_user</code> via the existing gate. Badge lights, self-clears.</li>
-<li><strong>Tooltip enrichment (optional)</strong> — surface the parsed question on the indicator; this is where the hook is cleaner, so it can come later or via the hook path.</li>
+<li><strong>Phase 0 live capture</strong> → first fixtures.</li>
+<li><strong><code>packages/xterm-scrape</code></strong> — private <code>signatures.ts</code> + <code>detectPrompt</code> (boolean conjunction, per-tool signatures, discriminated-union return) + fixture/negative corpus. Pure, no agent imports; ship behind a green suite first.</li>
+<li><strong>Server wiring at the providers seam</strong> — one lifecycle object (idle-gate + poll clock + teardown), the named stateless <code>mergeAwaitingInput</code> rule, <code>getScreenText</code> thunk closed over <code>terminalId</code>. <code>session-watcher.ts</code> + the shared <code>createWatcher</code> contract stay untouched. Badge lights, self-clears.</li>
+<li><strong>Tooltip enrichment (optional)</strong> — surface the parsed question (the union already carries it); the hook does this cleaner, so it can come via the hook path later.</li>
+<li><strong>Scope decision (state it explicitly):</strong> Codex/OpenCode TUI detection is <em>not</em> in this first PR. That collapses the one open framing crux (§9) — under both lenses the first-cut output is identical (per-tool declarative signatures, uniform <code>detectPrompt</code> loop).</li>
 </ol>
 
-<h2>9 · Risks at a glance</h2>
+<h2>9 · What <code>/hickey</code> + <code>/lowy</code> + the electricity pass changed</h2>
+<p>An Opus <code>/hickey</code> ⇄ <code>/lowy</code> debate ran to <strong>consensus in 2 rounds</strong> (sound-with-changes — refinement, not rework; both cuts — the package boundary and server-side detection — earned a clean bill). A separate Löwy <em>electricity-analogy</em> lowy pass reframed the composition. Both kept the load-bearing structure and fixed the wiring.</p>
+<div class="panel good">
+<strong>Reframe (electricity).</strong> <code>awaiting_user</code> is the <em>receptacle</em> (consumer-facing, immutable); the sources (JSONL / scrape / hook) are interchangeable <em>generators</em>; the merge rule is the bus. Do <strong>not</strong> solder a generator's identity onto the socket — no <code>source: "jsonl"|"scrape"|"hook"</code> field on <code>AgentInfo</code>.
+<div class="cite">sharpest line, now in §4/§6: "scrape = default, hook = opt-in" is a statement about which generators are connected in an environment, never about how the current is wired or consumed.</div>
+</div>
+<table>
+<tr><th>Change</th><th>From → To</th><th>Source</th></tr>
+<tr><td>Override locus</td><td>inside <code>session-watcher</code> → <code>providers.ts</code> seam; watcher stays JSONL-only</td><td>hickey/lowy H1</td></tr>
+<tr><td>pid→PtyId bridge</td><td>new exported seam → deleted; <code>TerminalId == PtyId</code>, a one-line thunk</td><td>hickey H2 / lowy M1</td></tr>
+<tr><td>"dead code" framing</td><td>"dead" → classifier is <em>live but starved</em>; two signals for one fact</td><td>hickey H3</td></tr>
+<tr><td>Composition</td><td>unstated → named stateless merge; scrape only promotes; concordance fixture</td><td>hickey/lowy H3</td></tr>
+<tr><td>Detector scoring</td><td>numeric score + θ → boolean conjunction</td><td>hickey H5</td></tr>
+<tr><td>Detector shape</td><td>one scorer + fast-path → per-tool signatures, uniform loop, discriminated-union return</td><td>hickey H4 / L1</td></tr>
+<tr><td>recompute-don't-latch</td><td>policy → structural (stateless transform)</td><td>hickey L1</td></tr>
+<tr><td>clock + gate</td><td>two mechanisms → one lifecycle object tied to <code>watcher.destroy</code></td><td>hickey L2</td></tr>
+<tr><td>shared contract</td><td>extend <code>createWatcher</code> → leave unchanged; resolve screen at the seam</td><td>lowy (conceded)</td></tr>
+<tr><td>package surface</td><td>export <code>signatures.ts</code> too → export only <code>detectPrompt</code>; keep <code>claude</code>-free</td><td>electricity F4</td></tr>
+<tr><td>hook framing</td><td>architectural "opt-in upgrade" → deployment fact (which generators are connected)</td><td>electricity F3</td></tr>
+</table>
+<p><strong>Two surviving cruxes, both labelled non-material by both sides</strong> (left to the implementer): (a) whether the merge rule is a named contract vs ~4 inline lines — resolved by writing it once as a named function; (b) whether ExitPlanMode-exact vs AskUserQuestion-structural are two problems or two variables — collapses to the §8 scope decision (only material once per-agent signature <em>sets</em> enter scope).</p>
+
+<h2>10 · Risks at a glance</h2>
 <table>
 <tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr>
 <tr><td>A Claude release changes a prompt literal</td><td>Low / discrete <span class="muted">(0 in 82 releases)</span></td><td>Per-version fixture in <code>xterm-scrape</code>; CI fails loud, fix is local</td></tr>
-<tr><td>False positive from scrollback / agent output</td><td>Med</td><td>Bottom-region gate + multi-feature score; adversarial negatives in the corpus</td></tr>
-<tr><td>Prompt renders in alt screen / not in buffer</td><td>Settles approach</td><td>Phase-0 live capture confirms before Phase 1 (<code>buffer.active</code> tracks alt anyway)</td></tr>
+<tr><td>False positive from scrollback / agent output</td><td>Med</td><td>Bottom-region gate + boolean conjunction; adversarial negatives in the corpus</td></tr>
+<tr><td>Two live signals disagree</td><td>Med</td><td>Named stateless merge (promote-only, concordant by construction) + mid-wait fixture</td></tr>
+<tr><td>Prompt renders in alt screen / not in buffer</td><td>Settles approach</td><td>Phase-0 live capture confirms first (<code>buffer.active</code> tracks alt anyway)</td></tr>
 <tr><td>Glyph fallback on legacy terminals (<code>❯→&gt;</code>)</td><td>Low</td><td>Match the <code>figures</code> fallback set, not just Unicode</td></tr>
-<tr><td>session↔PtyId mapping absent in integration</td><td>Med</td><td>Expose the existing pid match from <code>LocalTerminalBackend</code></td></tr>
-<tr><td>Poll cost across many sessions</td><td>Low</td><td>Idle-gated; coarse cadence; <code>getScreenText</code> is cheap (buffer pre-parsed)</td></tr>
+<tr><td>Poll cost across many sessions</td><td>Low</td><td>Idle-gated lifecycle object; coarse cadence; <code>getScreenText</code> is cheap (pre-parsed)</td></tr>
 </table>
 
-<h2>10 · Recommendation</h2>
+<h2>11 · Recommendation</h2>
 <div class="panel verdict accent">
-<p style="margin-top:0"><strong>Build it — server-side, in <code>packages/xterm-scrape</code>, fixture-tested — as the zero-config default.</strong></p>
+<p style="margin-top:0"><strong>Build it — server-side, in <code>packages/xterm-scrape</code>, fixture-tested, merged at the providers seam — as the zero-config default. Both review lenses converged on sound-with-changes; the changes are folded in above.</strong></p>
 <ol style="margin-bottom:0">
-<li><strong>The fragility is measured and small:</strong> 0 changes to the prompt signature across 82 daily releases; the one durable weak spot (AskUserQuestion's dynamic text) is handled by structural heuristics, and any future break is a loud, localized test failure — not a silent one.</li>
-<li><strong>The no-config win is the point:</strong> nothing written to the user's home, and it works on remote/SSH/fresh/shared hosts where the hook needs N× setup or silently misses.</li>
-<li><strong>Keep #905's hook as an opt-in robustness upgrade</strong> for local Claude and clean question text — complementary, not a prerequisite.</li>
+<li><strong>Fragility is measured and small:</strong> 0 changes across 82 daily releases; the one durable weak spot (AskUserQuestion's dynamic text) is a boolean conjunction over discrete tokens, and any break is a loud, localized test failure.</li>
+<li><strong>The no-config win is the point:</strong> nothing written to the user's home; works on remote/SSH/fresh/shared hosts where the hook needs N× setup or silently misses.</li>
+<li><strong>One receptacle, swappable generators:</strong> the JSONL base + scrape promoter compose by a named stateless merge, so #905's hook drops in later as a swap, not a rewrite — and consumers never learn which generator powered the badge.</li>
 <li><strong>Next:</strong> the Phase-0 live capture (≈1 hr) to lock the buffer behavior and seed the corpus, then drive the package with <code>/do</code>.</li>
 </ol>
 </div>
-<p class="muted" style="margin-top:1.2rem">Verified in-tree: <code>core.ts:231,273,307,378</code> · <code>schemas.ts:36–56</code> · <code>session-watcher.ts:224–274</code> · <code>ptyHost.ts:4,483,549–560</code> · <code>ptyHostSurface.ts:214–225</code> · <code>router.ts:150–158</code> · <code>AgentIndicator.tsx:26</code> · <code>agentState.ts:23</code>. Measured from binaries: claude-code <code>2.1.77 / .81 / .92 / .159</code> (cadence from <code>2.1.157–.159</code>, 2026-05-29→05-31). Related: <a href="./dynamic-workflow-viewer.html">dynamic-workflow-viewer.html</a> (sibling "surface exists, source is wrong" Claude-state plan).</p>
+<p class="muted" style="margin-top:1.2rem">Verified in-tree: <code>core.ts:231,273-285,307,383</code> · <code>schemas.ts:36–56</code> · <code>session-watcher.ts:224–274</code> · <code>ptyHost.ts:4,483,549–560</code> · <code>ptyHostSurface.ts:214–225</code> · <code>router.ts:150–158</code> · <code>local.ts:231,361</code> · <code>providers.ts:454-461</code> · <code>anyagent agent-provider.ts:97</code> · <code>lifecycle.ts:16-17</code> · <code>AgentIndicator.tsx:26</code> · <code>agentState.ts:23</code>. Measured from binaries: claude-code <code>2.1.77/.81/.92/.159</code>. Reviews: Opus <code>/hickey</code>⇄<code>/lowy</code> 2-round debate (consensus) + Löwy electricity pass. Related: <a href="./dynamic-workflow-viewer.html">dynamic-workflow-viewer.html</a> · <a href="./mobile-architecture-review.html">mobile-architecture-review.html</a> ("Is Mobile Electricity?").</p>
 
 </main>
 </body>
