@@ -24,9 +24,11 @@ import {
   isClaudeSubtreeIdle,
   liveOutstandingTasks,
   nextWorkflowStaleDeadline,
+  observeWorkflowRun,
   outstandingBackgroundTasks,
   PROJECTS_DIR,
   type SessionFile,
+  type WorkflowObservation,
   TAIL_BYTES,
   tailJsonlLines,
   watchOrWaitForDir,
@@ -149,8 +151,8 @@ export function createSessionWatcher(
   // spinner would never self-clear if the agent dies on a still-fresh journal.
   // Re-armed on every check, cleared on destroy.
   let staleDeadlineTimer: NodeJS.Timeout | null = null;
-  // Watcher over the per-session `workflows/` dir (dynamic-workflow journals).
-  // Journals update while the agent is busy-waiting and the transcript is
+  // Watcher over the per-session `workflows/` dir (completion snapshots).
+  // Snapshots land while the agent is busy-waiting and the transcript is
   // otherwise quiet, so this keeps the fan-out count live. Null until set up.
   let workflowsDirWatcher: (() => void) | null = null;
 
@@ -284,6 +286,22 @@ export function createSessionWatcher(
     if (transcriptWatching.kind !== "watching") return;
 
     const lines = tailJsonlLines(transcriptWatching.path, TAIL_BYTES);
+    // observeWorkflowRun is the single source of truth; the three projections
+    // below (liveOutstandingTasks / nextWorkflowStaleDeadline /
+    // deriveWorkflowProgress) all read its result. Observe each distinct runId
+    // ONCE per check pass and memoize into this Map — each observation is now a
+    // readdir + N stats over the live streaming dir (#1123), so re-observing the
+    // same run three times would walk disk 3× per pass, scaling with sub-agent
+    // count. The `observe` lookup hands the same observation to every projection.
+    const obs = new Map<string, WorkflowObservation>();
+    const observe = (runId: string): WorkflowObservation => {
+      let o = obs.get(runId);
+      if (o === undefined) {
+        o = observeWorkflowRun(session, runId);
+        obs.set(runId, o);
+      }
+      return o;
+    };
     // Drop tasks that can't keep the session "working": a `Workflow` whose
     // journal has gone terminal/stale (orphaned by a restart). `deriveState`
     // further narrows to runId-bearing `Workflow` runs, so a bare backgrounded
@@ -292,6 +310,8 @@ export function createSessionWatcher(
     const outstanding = liveOutstandingTasks(
       session,
       outstandingBackgroundTasks(lines),
+      Date.now(),
+      observe,
     );
     const derived = deriveState(lines, outstanding);
     if (!derived) {
@@ -322,7 +342,12 @@ export function createSessionWatcher(
     let publishedState = derived.state;
     let staleDeadline: number | null = null;
     if (derived.state === "running_background") {
-      staleDeadline = nextWorkflowStaleDeadline(session, outstanding);
+      staleDeadline = nextWorkflowStaleDeadline(
+        session,
+        outstanding,
+        Date.now(),
+        observe,
+      );
     } else {
       const now = Date.now();
       const quietMs = transcriptQuietMs(transcriptWatching.path, now);
@@ -354,7 +379,7 @@ export function createSessionWatcher(
     // fan-out count refreshes via the workflows-dir watcher below.
     const workflow =
       publishedState === "running_background"
-        ? deriveWorkflowProgress(session, outstanding)
+        ? deriveWorkflowProgress(session, outstanding, observe)
         : null;
 
     const info: ClaudeCodeInfo = {
@@ -466,11 +491,13 @@ export function createSessionWatcher(
     }
   }
 
-  /** Watch the per-session `workflows/` dir so journal updates (fan-out
-   *  count climbing, status flipping to completed) re-derive state even when
-   *  the transcript itself is quiet. Routed through the same debounced check
-   *  as transcript events. `watchOrWaitForDir` handles the dir not existing
-   *  yet (created lazily on the first `Workflow` launch). */
+  /** Watch the per-session `workflows/` snapshot dir so a workflow's completion
+   *  snapshot (`<runId>.json`) re-derives progress even when the transcript is
+   *  quiet. Live progress under `subagents/workflows/<runId>/` is NOT watched
+   *  (a recursive watch there proved unreliable on macOS, #1123); the reused
+   *  stale-recheck timer (`nextWorkflowStaleDeadline`, anchored on the live run
+   *  dir's newest file) drives live re-derivation instead, so the fan-out count
+   *  refreshes each window rather than on every append. */
   function setupWorkflowsWatching() {
     workflowsDirWatcher = watchOrWaitForDir(
       workflowsDirFor(session),
