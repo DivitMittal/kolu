@@ -947,17 +947,40 @@ export interface ProcEntry {
   ppid: number;
 }
 
+/** Lazy lookup for the pinned `ps` binary path. Reads `KOLU_PS_BIN`, set by the
+ *  Nix wrapper / dev shell (see `nix/env.nix`) — `procps` on Linux, the system
+ *  BSD `/bin/ps` on Darwin. Pinning the absolute path keeps the subtree probe
+ *  off the ambient runtime `PATH`: if the server ran where `PATH` lacked `ps`,
+ *  the decay would silently never fire and the phantom pill would spin forever
+ *  (#1121). Throws when unset rather than silently falling back to a bare `"ps"`
+ *  PATH lookup — `snapshotProcessTree` calls this inside its own `try`, so an
+ *  unset env still fails open to `null` ("can't tell", never de-escalate) there
+ *  instead of crashing the watcher. Mirrors `getGhBin` in the github
+ *  integration. Read fresh (not cached): this is the rare stale-transient path,
+ *  so there's no perf reason to cache, and re-reading keeps it test-injectable. */
+function getPsBin(): string {
+  const v = process.env.KOLU_PS_BIN;
+  if (!v) {
+    throw new Error(
+      "KOLU_PS_BIN is not set. Run kolu through the Nix wrapper or `nix develop`.",
+    );
+  }
+  return v;
+}
+
 /** Snapshot every live process's pid→ppid in a single `ps` call. The invocation
- *  (`ps -A -o pid=,ppid=`) is portable across Linux procps and macOS/BSD ps.
- *  Returns null when ps is unavailable or errors — callers treat null as "can't
- *  tell" and must NOT de-escalate, so a probe failure never clears a genuinely
- *  working pill. Synchronous: it runs only on the (rare) stale-transient
- *  recheck, never the hot transcript-event path, so the brief event-loop block
- *  is acceptable and keeps the watcher's control flow non-async. */
+ *  (`ps -A -o pid=,ppid=`) is portable across Linux procps and macOS/BSD ps, and
+ *  the binary is resolved from the pinned `KOLU_PS_BIN` (see `getPsBin`) rather
+ *  than the runtime PATH. Returns null when ps is unavailable, unpinned, or
+ *  errors — callers treat null as "can't tell" and must NOT de-escalate, so a
+ *  probe failure never clears a genuinely working pill. Synchronous: it runs only
+ *  on the (rare) stale-transient recheck, never the hot transcript-event path, so
+ *  the brief event-loop block is acceptable and keeps the watcher's control flow
+ *  non-async. */
 export function snapshotProcessTree(): ProcEntry[] | null {
   let out: string;
   try {
-    out = execFileSync("ps", ["-A", "-o", "pid=,ppid="], {
+    out = execFileSync(getPsBin(), ["-A", "-o", "pid=,ppid="], {
       encoding: "utf8",
       timeout: 2_000,
       maxBuffer: 16 * 1024 * 1024,

@@ -13,4 +13,13 @@
   # both the packaged wrapper (default.nix) and the dev shell (shell.nix)
   # pick it up via `koluEnv`.
   KOLU_GH_BIN             = "${pkgs.gh}/bin/gh";
+  # Pinned ps binary — the claude-code provider's process-subtree probe
+  # (`snapshotProcessTree`, #1121) consumes this so the phantom-pill decay never
+  # depends on the runtime PATH carrying `ps`. Unlike `gh`, `ps` is not one
+  # cross-platform package: nixpkgs `procps` is Linux-only, while macOS needs its
+  # system BSD `ps` (it reads kernel structures the procps binary can't). So the
+  # path is resolved per-platform. The Darwin branch is a plain system path —
+  # `/bin/ps` ships in the base OS and isn't a nix store path.
+  KOLU_PS_BIN             =
+    if pkgs.stdenv.isDarwin then "/bin/ps" else "${pkgs.procps}/bin/ps";
 }

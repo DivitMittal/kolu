@@ -196,9 +196,13 @@ let
       --add-flags "${koluStamped}/packages/server/src/index.ts" \
       --set KOLU_CLIENT_DIST "${koluStamped}/packages/client/dist" \
       --set KOLU_GH_BIN "${koluEnv.KOLU_GH_BIN}" \
+      --set KOLU_PS_BIN "${koluEnv.KOLU_PS_BIN}" \
       --set KOLU_COMMIT_HASH "${commitHash}" \
       --set KOLU_PTY_HOST_BUILD_ID "${ptyHostBuildId}" \
-      --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs pkgs.git pkgs.gh ]} \
+      --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.nodejs pkgs.git pkgs.gh ]
+        # procps (Linux `ps`) only — macOS uses its system /bin/ps, which is not
+        # a nix package; the probe resolves it via KOLU_PS_BIN regardless.
+        ++ pkgs.lib.optional pkgs.stdenv.isLinux pkgs.procps)} \
       --run 'if [ -n "''${KOLU_DIAG_DIR:-}" ]; then
                KOLU_DIAG_DIR="$KOLU_DIAG_DIR/$(date +%Y%m%dT%H%M%S)-$$"
                if ! mkdir -p "$KOLU_DIAG_DIR" || ! cd "$KOLU_DIAG_DIR"; then

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   decayTransientState,
   deriveState,
@@ -210,19 +211,44 @@ describe("hasNoDescendants", () => {
   });
 });
 
+// --- The pinned `ps` binary (#1121) ---
+//
+// `snapshotProcessTree` resolves `ps` from `KOLU_PS_BIN` (pinned by Nix —
+// `nix/env.nix`), never the ambient PATH, so the phantom-pill decay can't
+// silently stop firing in an environment whose PATH lacks `ps`. These tests pin
+// the path explicitly so they assert the real probe regardless of the harness's
+// PATH, and prove the env var — not PATH — is what's consulted.
+
 describe("snapshotProcessTree", () => {
   const children: ReturnType<typeof spawn>[] = [];
+  // A real system `ps` to pin for the positive cases. The dev shell already
+  // exports `KOLU_PS_BIN` (the nix procps/BSD path); fall back to the standard
+  // system locations so the test stands alone outside `nix develop`.
+  const realPs = [process.env.KOLU_PS_BIN, "/bin/ps", "/usr/bin/ps"].find(
+    (p): p is string => !!p && fs.existsSync(p),
+  );
+  let savedPsBin: string | undefined;
+  beforeEach(() => {
+    savedPsBin = process.env.KOLU_PS_BIN;
+  });
   afterEach(() => {
     for (const c of children.splice(0)) c.kill("SIGKILL");
+    if (savedPsBin === undefined) delete process.env.KOLU_PS_BIN;
+    else process.env.KOLU_PS_BIN = savedPsBin;
   });
 
-  it("samples the live process table including this process", () => {
+  it("samples the live process table including this process (the build/runtime probe)", () => {
+    if (!realPs) return; // no system ps on this host — nothing to pin
+    process.env.KOLU_PS_BIN = realPs;
     const procs = snapshotProcessTree();
     expect(procs).not.toBeNull();
+    expect(procs?.length).toBeGreaterThan(0);
     expect(procs?.some((p) => p.pid === process.pid)).toBe(true);
   });
 
   it("detects a spawned child as a descendant (the genuine-work signal)", async () => {
+    if (!realPs) return;
+    process.env.KOLU_PS_BIN = realPs;
     const child = spawn("sleep", ["30"]);
     children.push(child);
     await new Promise((r) => setTimeout(r, 150));
@@ -232,5 +258,20 @@ describe("snapshotProcessTree", () => {
       procs?.some((p) => p.pid === child.pid && p.ppid === process.pid),
     ).toBe(true);
     expect(hasNoDescendants(process.pid, procs ?? [])).toBe(false);
+  });
+
+  it("fails open to null when KOLU_PS_BIN is unset (never de-escalates a working pill)", () => {
+    // An unpinned probe must read as "can't tell" — null — so the decay never
+    // fires on a misbuilt server rather than silently clearing a genuine pill.
+    delete process.env.KOLU_PS_BIN;
+    expect(snapshotProcessTree()).toBeNull();
+  });
+
+  it("resolves the pinned path, not PATH — a bogus KOLU_PS_BIN yields null even with ps on PATH", () => {
+    // The #1121 hardening: the probe consults the pinned binary, so a bad pin
+    // can't fall through to an ambient `ps`. If it still found a table here, it
+    // would mean PATH resolution leaked back in.
+    process.env.KOLU_PS_BIN = "/nonexistent/definitely/not/ps";
+    expect(snapshotProcessTree()).toBeNull();
   });
 });
