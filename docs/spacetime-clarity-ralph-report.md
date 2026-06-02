@@ -153,6 +153,10 @@ by the skeptic, and replaced with the skeptic's own endorsed fix.
 | 1 | #14 | "the **third**, synthesizing read" | ordinal before reads were counted | "a third read … yours, after theirs, synthesizing the two" | ✅ approved |
 | 2 | #2 | "revisions keep introducing **the defects both lenses catch together**" | near-circular causation; scope-ambiguous | dropped the circular clause: "the few that surfaced clustered in the later passes, after the revisions went in" | ✅ 3/3 lenses |
 
+| 3 | R1 | binocular-stats sentence: ratio + 3-pass scope + later-skew jammed into one dash-spliced run-on; "the few that surfaced" anchored to the wrong noun | overloaded sentence / under-anchored referent | split into two beats; re-named subject "binocular ones" so the skew can't attach to single-axis | ✅ 3/3 lenses |
+| 3 | R4 | "two **orthogonal** agent reviewers" | "orthogonal" parses as "reviewers perpendicular to each other" | "two agent reviewers — one per axis —" (orthogonality belongs to the axes) | ✅ 3/3 lenses |
+| 3 | R2 | "the factoring … the real structure … the code's analogue of **that frame-invariant interval**" | over-stuffed triple appositive (self-inflicted in pass 1 #1); physics callback overclaims | defined factoring inline ("the way the code is carved into parts"), cut to one appositive, dropped the overclaiming callback (metaphor stays in its home section) | ✅ 3/3 lenses |
+
 **Pass 2 method.** Three candidate rewrites of #2 from different angles
 (depth-mechanism, minimal, drop-causal), each vetted by a perspective-diverse
 skeptic panel (meaning+thesis / voice / clarity). Only **drop-causal** passed

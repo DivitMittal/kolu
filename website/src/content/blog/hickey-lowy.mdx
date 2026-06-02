@@ -46,9 +46,9 @@ longer typed by hand — [Claude Code](https://claude.com/claude-code)
 writes it from high-level intent, faster than line-by-line human
 review can keep up with. Diff-inspection has quietly stopped being
 the highest-leverage human activity during review; **structural
-review** has become that. And structural review is exactly what two orthogonal
-agent reviewers, aimed at a finished diff and run in parallel, are
-good at. The human's remaining job is to pick the lenses, read the
+review** has become that. And structural review is exactly what two
+agent reviewers — one per axis — aimed at a finished diff and run in
+parallel, are good at. The human's remaining job is to pick the lenses, read the
 findings, and decide.
 
 I ran both reviewers on [PR #623](https://github.com/juspay/kolu/pull/623)[^1]
@@ -327,16 +327,16 @@ flag, and the oRPC mutation, and moved the signal to
 90 deletions.
 
 When both lenses fire at the same coordinate, it's because the
-factoring itself is wrong — and the factoring is the real
-structure underneath both projections, the code's analogue of
-that frame-invariant interval. Get it wrong and the defect shows
-up in both at once: spatially (right now, in the propagation
+factoring is wrong — the way the code is carved into parts, the
+real structure underneath both projections. Get it wrong and the
+defect shows up in both at once: spatially (right now, in the propagation
 chain) and temporally (in the mismatched clocks the fields were
 bound to). Call it **binocular agreement**.
 It's a particularly sharp signal when it happens. It's also the
-minority. In PR #623, binocular findings were outnumbered several-
-to-one by single-axis ones across three review passes — and the few that surfaced
-clustered in the later passes, after the revisions went in. Most findings, including the two centerpieces of this
+minority. In PR #623, across three review passes, single-axis findings
+outnumbered binocular ones several-to-one. The few binocular ones
+that surfaced clustered in the later passes, after the revisions
+went in. Most findings, including the two centerpieces of this
 post, were single-axis. That's the common shape.
 
 ## Why the two passes catch different things
