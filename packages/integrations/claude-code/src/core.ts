@@ -27,6 +27,7 @@ import path from "node:path";
 import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import { classifyByAwaiting } from "anyagent";
 import { type Logger, readTailLines } from "kolu-shared";
+import { parseIsoTimestamp } from "kolu-transcript-core";
 import { match } from "ts-pattern";
 import { z } from "zod";
 import type {
@@ -80,6 +81,13 @@ export interface SessionFile {
   pid: number;
   sessionId: string;
   cwd: string;
+  /** Epoch-ms the claude process started (or resumed via `claude -c`), from the
+   *  session file's `startedAt`. A `claude -c` resume writes a *new* session
+   *  file with a fresh `startedAt`, so a transcript prompt whose timestamp
+   *  predates this value belongs to a previous, killed instance — the current
+   *  claude never processed it. Used to tell a resumed-idle phantom from a live
+   *  turn (see `decayTransientState`). Optional: absent on older session files. */
+  startedAt?: number;
 }
 
 /**
@@ -110,7 +118,13 @@ export function readSessionFile(
       log?.debug({ pid, parsed }, "claude session file shape unexpected");
       return null;
     }
-    return parsed as SessionFile;
+    return {
+      pid: parsed.pid,
+      sessionId: parsed.sessionId,
+      cwd: parsed.cwd,
+      startedAt:
+        typeof parsed.startedAt === "number" ? parsed.startedAt : undefined,
+    };
   } catch (err) {
     log?.debug({ err, pid }, "claude session file parse failed");
     return null;
@@ -315,11 +329,17 @@ export function deriveState(
   state: ClaudeCodeInfo["state"];
   model: string | null;
   contextTokens: number | null;
+  /** Epoch-ms timestamp of the entry the state was derived from (the newest
+   *  `user`/`assistant` entry), or null when it lacks a parseable `timestamp`.
+   *  Used to age a trailing `thinking` prompt against the session's `startedAt`
+   *  (the resumed-vs-live discriminator — see the #1017 module note). */
+  timestampMs: number | null;
 } | null {
   let stateAndModel: {
     state: ClaudeCodeInfo["state"];
     model: string | null;
   } | null = null;
+  let timestampMs: number | null = null;
   let contextTokens: number | null = null;
 
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -328,6 +348,7 @@ export function deriveState(
     try {
       const entry: {
         type?: string;
+        timestamp?: string;
         message?: {
           stop_reason?: string | null;
           model?: string | null;
@@ -369,6 +390,12 @@ export function deriveState(
             model: null,
           }))
           .otherwise(() => null);
+        // Capture the timestamp of the very entry the state derives from — the
+        // newest `user`/`assistant` — so the orphaned-prompt age check reads the
+        // same entry, not a parallel walk (null if absent/unparseable).
+        if (stateAndModel !== null) {
+          timestampMs = parseIsoTimestamp(entry.timestamp);
+        }
       }
 
       if (stateAndModel !== null && contextTokens !== null) break;
@@ -398,7 +425,7 @@ export function deriveState(
     if (bg.some((t) => t.runId !== null)) state = "running_background";
   }
 
-  return { state, model: stateAndModel.model, contextTokens };
+  return { state, model: stateAndModel.model, contextTokens, timestampMs };
 }
 
 // --- Background-task detection (dynamic workflows) ---
@@ -749,26 +776,33 @@ export function nextWorkflowStaleDeadline(
 
 // --- Phantom transient de-escalation (#1017) ---
 //
-// A dangling `tool_use` (an assistant tool call with no following
-// `tool_result`) keeps `deriveState` reporting a *working* state indefinitely.
-// That is correct while the tool is genuinely running, but wrong once the
-// session is abandoned (most reliably: claude killed mid-tool, then resumed
-// idle by session-restore) — the dock then spins a "running" pill forever. A
-// genuine in-flight tool and an abandoned one are transcript-indistinguishable
-// from a single snapshot, so two out-of-band signals settle it: the transcript
-// has gone quiet past a window, AND claude's process subtree is idle.
+// A trailing transient state keeps `deriveState` reporting a *working* state
+// indefinitely once the session is abandoned (most reliably: claude killed
+// mid-turn, then resumed idle by session-restore) — the dock then spins a
+// "running" pill forever. Two trailing shapes hit it, each disambiguated by a
+// different out-of-band signal once the transcript has gone quiet past a window:
 //
-// `thinking` is deliberately NOT decayed on this signal. A `thinking` turn that
-// is awaiting the model's first token (the newest transcript entry is the
-// `user` prompt) has spawned no tool child yet and writes nothing until the
-// reply streams back — so a slow or hung model request is indistinguishable
-// from abandonment by "quiet transcript + no descendants". Clearing it there
-// would publish `waiting` over a live turn. The no-descendants probe is only a
-// valid liveness signal for `tool_use`, where live tool work implies a child
-// process (a Bash child, or a sub-agent claude). Sibling of the
-// `running_background` decay (#1109), which handles the `end_turn`-promotion
-// half on its own workflow-journal signal; the states are disjoint, so the
-// paths never overlap.
+//   - dangling `tool_use` (an assistant tool call with no following
+//     `tool_result`): a *live* tool keeps a descendant process (a Bash child, a
+//     sub-agent claude), an abandoned one has none — so "subtree idle (no
+//     descendant)" tells them apart.
+//
+//   - `thinking` (the newest entry is a `user` prompt): childless and quiet
+//     whether the turn is live (awaiting the model's first token) or abandoned,
+//     so the subtree probe alone can't tell them apart. The discriminator is
+//     the prompt's age relative to the claude process: a `claude -c` resume
+//     writes a fresh `startedAt`, so a prompt that *predates* `startedAt`
+//     belongs to a killed instance the current (resumed-idle) claude never
+//     processed. A live turn's prompt always postdates `startedAt`, so it is
+//     never cleared. The subtree is NOT consulted for `thinking`: a
+//     resumed-idle claude often holds a long-lived helper child (a persistent
+//     MCP server such as `chrome-devtools-mcp`), so requiring an idle subtree
+//     would wrongly keep the phantom spinning forever — `orphaned` + stale is
+//     already definitive.
+//
+// Sibling of the `running_background` decay (#1109), which handles the
+// `end_turn`-promotion half on its own workflow-journal signal; the states are
+// disjoint, so the paths never overlap.
 
 /** How long the transcript may sit unwritten before a dangling `tool_use`
  *  becomes eligible to decay to `waiting`. A live tool writes the transcript as
@@ -839,35 +873,54 @@ export function isClaudeSubtreeIdle(pid: number): boolean {
   return hasNoDescendants(pid, procs);
 }
 
-/** Decide the state to publish for a dangling `tool_use`, and when (if ever) to
- *  re-probe. Pure policy: the caller supplies how long the transcript has been
- *  quiet and a subtree-idle probe, invoked only once the quiet window has
- *  elapsed so the real `ps` spawn stays off the common path.
+/** Decide the state to publish for a trailing transient (`tool_use` /
+ *  `thinking`), and when (if ever) to re-probe. Pure policy: the caller supplies
+ *  how long the transcript has been quiet, a subtree-idle probe (invoked only
+ *  once the quiet window has elapsed so the real `ps` spawn stays off the common
+ *  path), and — for `thinking` — whether the trailing prompt is orphaned (it
+ *  predates the current claude's `startedAt`, see the module note).
  *
- *   - not a dangling `tool_use` → unchanged, no recheck. In particular
- *     `thinking` is excluded: a turn awaiting the model's first token has no
- *     descendant and writes nothing, so "quiet + no descendants" cannot tell a
- *     slow/hung model request from abandonment (see the module note above).
+ *   - not a decayable transient → unchanged, no recheck.
+ *   - `thinking` whose prompt is NOT orphaned → unchanged, no recheck: this is a
+ *     live turn (the prompt postdates the running claude), never cleared.
  *   - not yet stale → unchanged; arm a recheck at the moment it would go stale
  *     (a quiet transcript fires no fs event, so the watcher needs a timer).
  *   - stale + subtree idle → decay to `waiting` (the phantom is settled).
- *   - stale + subtree busy → genuine long-running tool; keep it and re-probe
- *     after another window (the tool may yet end silently with no further write).
+ *   - stale + subtree busy → genuine work; keep it and re-probe after another
+ *     window (the work may yet end silently with no further write).
  */
 export function decayTransientState(
   state: ClaudeCodeInfo["state"],
   quietMs: number,
-  probeSubtreeIdle: () => boolean,
+  probes: { subtreeIdle: () => boolean; promptOrphaned: boolean },
   staleMs: number = TRANSIENT_STALE_MS,
   now: number = Date.now(),
 ): { state: ClaudeCodeInfo["state"]; recheckAt: number | null } {
-  if (state !== "tool_use") {
+  if (state !== "tool_use" && state !== "thinking") {
+    return { state, recheckAt: null };
+  }
+  // A `thinking` turn is childless and quiet whether live or abandoned; only an
+  // orphaned prompt (predating this resumed claude) proves abandonment.
+  if (state === "thinking" && !probes.promptOrphaned) {
     return { state, recheckAt: null };
   }
   if (quietMs < staleMs) {
     return { state, recheckAt: now + (staleMs - quietMs) };
   }
-  if (probeSubtreeIdle()) {
+  // Past the window, confirm abandonment with the signal appropriate to the
+  // state. For `thinking`, `promptOrphaned` is already definitive — the prompt
+  // predates this resumed claude, which `claude -c` never auto-continues — so
+  // it settles directly. The subtree is deliberately NOT consulted here: a
+  // resumed-idle claude often holds a long-lived helper child (e.g. a
+  // persistent MCP server like `chrome-devtools-mcp`), so requiring an idle
+  // subtree would wrongly keep the phantom spinning forever (observed on a live
+  // session). For `tool_use` the subtree IS the discriminator — a live tool
+  // keeps a child — so a busy subtree means real work; re-probe after another
+  // window in case it ends silently.
+  if (state === "thinking") {
+    return { state: "waiting", recheckAt: null };
+  }
+  if (probes.subtreeIdle()) {
     return { state: "waiting", recheckAt: null };
   }
   return { state, recheckAt: now + staleMs };
