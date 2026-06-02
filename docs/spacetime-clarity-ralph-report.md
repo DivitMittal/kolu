@@ -134,13 +134,47 @@ pivot.
 
 ## Optimization log
 
-| Pass | # | Passage | Failure mode | Action | Verdict | Result |
-| --- | --- | --- | --- | --- | --- | --- |
+Each row = one flagged passage. "Verified by" = the adversarial skeptic's
+verdict. Edits marked _skeptic-tweak_ were rewritten by the rewriter, rejected
+by the skeptic, and replaced with the skeptic's own endorsed fix.
+
+| Pass | # | Passage | Failure mode | Action | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| 1 | #1 | "both projections of **the invariant**" | undefined term on definite article | named it: "the code's analogue of that frame-invariant interval" | ✅ skeptic-tweak |
+| 1 | #3 | "implementation has **taste-decided its way through**…" | coined verb + personified subject | "after the implementer has made twenty design micro-choices by taste" | ✅ approved |
+| 1 | #4 | "**volatilities that got bound**…" | 3 undefined lede terms; "bound" misread as "limited" | "fast-moving and slow-moving parts coupled when they should have stayed apart" | ✅ skeptic-tweak |
+| 1 | #6 | "structural review **has.**" | elliptical gapping inverts meaning | "structural review **has become that.**" | ✅ approved |
+| 1 | #7 | "temporal in origin … **spatial in eventual manifestation**" | abstract pivot before its gloss | fronted the concrete sentence; "starts on the time axis … surfaces on the space axis, as tangle" | ✅ approved |
+| 1 | #8 | "satisfied with **the diff**" | definite article forward-ref | "signed off on code the other lens would have stopped" | ✅ approved |
+| 1 | #9 | "**merged on taste**" | stacked idiom + spatial metaphor | "past where my taste would have called it done and merged" | ✅ skeptic-tweak |
+| 1 | #10 | "**delta gate, fan-out republish**" | telegraphic undefined jargon | "pushes only the ids whose suffix actually changed, and the server republishes those" | ✅ approved |
+| 1 | #11 | "**occasionally**" + "rarely" stacked | two frequency qualifiers collide | "agree on a location only occasionally — and even when they do, they rarely prescribe…" | ✅ approved |
+| 1 | #12 | "**space-like observer**" | physics: observers aren't space-like | adjective moved onto the slice/reading: "a space-like slice" / "the time-like reading" | ✅ skeptic-tweak |
+| 1 | #14 | "the **third**, synthesizing read" | ordinal before reads were counted | "a third read … yours, after theirs, synthesizing the two" | ✅ approved |
 
 ## Dead ends
 
-_(rewrites that didn't clear the stumble or risked meaning/voice — documented
-so the knowledge isn't lost)_
+Rewrites the adversarial skeptic rejected with no safe alternative — kept as-is.
+The over-fixing the post itself warns against, caught in the act.
+
+- **#5 — "A defect can live in one projection…" (physics "contradiction").** A
+  physicist judge argued the relativistic-*mixing* setup contradicts the
+  one-axis claim. The proposed fix ("fix two observers and hold them there")
+  was rejected: two *different* observers give two *different* mixings, so "pin
+  two frames and the projections come apart cleanly" is itself bad physics, and
+  it pre-empts the next paragraph. The original already neutralises the worry —
+  "the interval between events is the same in every frame… prior to any
+  observer's view of it." **Deliberate keep.**
+- **#13 — "`maxHydrated` sequencing flag".** Glossing the flag inline "steals
+  the reveal": the very next paragraph deliberately unpacks it into three
+  braided concerns (what's maximized / when the client is caught up / how to
+  avoid a flash). Explaining early would make that paragraph read as redundant.
+  **Deliberate keep.**
+- **#2 — the near-circular binocular sentence (6/6 judges).** Real defect, but
+  the pass-1 rewrite was rejected: it introduced a "shallow slip = single-axis"
+  taxonomy that contradicts the post's own thesis (its two centerpieces are
+  *single-axis* defects, emphatically not shallow). **Deferred to pass 2** with
+  that contradiction ruled out.
 
 ## Key findings
 

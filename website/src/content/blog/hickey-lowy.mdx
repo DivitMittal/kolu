@@ -19,15 +19,15 @@ Code goes wrong along two axes, not one. The code as it stands
 right now can be _spatially_ wrong — concepts braided together,
 names that mean two things, seams that aren't really seams. The same code can
 be _temporally_ wrong — parts that will rev on different clocks,
-decisions that will be revisited, volatilities that got bound when
-they should have stayed apart. Two different defects. Two different
+decisions that will be revisited, fast-moving and slow-moving
+parts coupled when they should have stayed apart. Two different defects. Two different
 lenses. Most code review runs one.
 
 I run two. Rich Hickey's structural-simplicity lens catches defects
 on the spatial axis. Juval Löwy's volatility-decomposition lens
 catches defects on the temporal one. Each lens sees things the
-other is blind to. A review that only ran one of them would have
-been perfectly satisfied with the diff.
+other is blind to. A review that ran only one of them would have
+signed off on code the other lens would have stopped.
 
 That's the practice this post is arguing for. The framing I'll use
 to justify it is that code has a _spacetime_ — two orthogonal axes
@@ -46,7 +46,7 @@ longer typed by hand — [Claude Code](https://claude.com/claude-code)
 writes it from high-level intent, faster than line-by-line human
 review can keep up with. Diff-inspection has quietly stopped being
 the highest-leverage human activity during review; **structural
-review** has. And structural review is exactly what two orthogonal
+review** has become that. And structural review is exactly what two orthogonal
 agent reviewers, aimed at a finished diff and run in parallel, are
 good at. The human's remaining job is to pick the lenses, read the
 findings, and decide.
@@ -126,11 +126,11 @@ decisions will be revisited, how fast each part drifts) is
 another. A defect can live in one projection without registering
 in the other — and usually does.
 
-Hickey's lens is a space-like observer. It reads the code as a
-snapshot: what's tangled right now? Löwy's lens is a time-like
-observer. It reads the same code as a world-line: what will pull
-apart, and when? They are measuring different axes. Each is blind
-to what lives only in the other.
+Hickey's lens reads the code as a snapshot — a space-like
+slice: what's tangled right now? Löwy's lens reads the same
+code as a world-line — the time-like reading: what will pull
+apart, and when? They are measuring different axes. Each is
+blind to what lives only in the other.
 
 Löwy says as much himself, in an appendix on complexity:
 
@@ -141,10 +141,10 @@ Löwy says as much himself, in an appendix on complexity:
 >
 > — Juval Löwy, _Righting Software_ (Appendix B)
 
-The complexity Löwy warns about is temporal in origin — _diversity
-across customers and points in time_ — but spatial in eventual
-manifestation. Mis-scoped volatilities eventually become complected
-code. Still, the two usually arrive out of phase. The spatial
+Mis-scoped volatilities eventually become complected code. So the
+complexity Löwy warns about starts on the time axis — _diversity
+across customers and points in time_ — and surfaces on the space
+axis, as tangle. Still, the two usually arrive out of phase. The spatial
 defect shows up now; the temporal defect only reveals itself later,
 when the clock it rides changes. That's why a review that runs one
 lens is blind to roughly half of what's actually wrong.
@@ -285,8 +285,10 @@ export function recomputeDisplaySuffixes(): TerminalId[] {
 }
 ```
 
-O(N) sweep, delta gate, fan-out republish for the sibling whose
-collision status flipped. `TerminalMetadata` carries
+One O(N) sweep over the set; it pushes only the ids whose
+suffix actually changed, and the server republishes those —
+including the other terminal that just started or stopped
+colliding. `TerminalMetadata` carries
 `displaySuffix?: string` directly. Clients render `meta.displaySuffix`
 and delete the identity-tracking module entirely.
 
@@ -325,10 +327,12 @@ flag, and the oRPC mutation, and moved the signal to
 90 deletions.
 
 When both lenses fire at the same coordinate, it's because the
-defect registers in both projections of the invariant — the
-factoring is wrong at a level that shows up both spatially (right
-now, in the propagation chain) and temporally (in the mismatched
-clocks the fields were bound to). Call it **binocular agreement**.
+factoring itself is wrong — and the factoring is the real
+structure underneath both projections, the code's analogue of
+that frame-invariant interval. Get it wrong and the defect shows
+up in both at once: spatially (right now, in the propagation
+chain) and temporally (in the mismatched clocks the fields were
+bound to). Call it **binocular agreement**.
 It's a particularly sharp signal when it happens. It's also the
 minority. In PR #623, binocular findings were outnumbered several-
 to-one by single-axis ones across three review passes — and the
@@ -348,8 +352,8 @@ line of code.
 
 The post-implementation reviews ran against the committed diff,
 then again after revisions. They found a completely different set
-of issues — the ones that only emerge after implementation has
-taste-decided its way through twenty design micro-choices. Pre-implementation review is cheap; it
+of issues — the ones that only emerge after the implementer
+has made twenty design micro-choices by taste. Pre-implementation review is cheap; it
 catches categories. Post-implementation review is expensive; it
 catches what specific design iterations did to the architecture
 while nobody was looking. Both the `borderClass` braid and the
@@ -402,14 +406,14 @@ diff, writes findings. You read both. (Both agents ship in
 main Claude Code session can spawn in parallel.)
 
 Don't expect the reviewers to agree on _fixes_. They agree on
-_locations_, occasionally — and on those occasions, they're
-rarely prescribing the same edit. Hickey wants you to decouple
+a _location_ only occasionally — and even when they do, they
+rarely prescribe the same edit. Hickey wants you to decouple
 the concepts. Löwy wants you to encapsulate the volatilities.
 Sometimes those are the same edit. Sometimes Hickey says "split
 the function" and Löwy says "move the boundary," and both are
-right in a way that only the third, synthesizing read — yours —
-can land. The fix you ship is rarely either agent's literal
-proposal.
+right in a way only a third read can resolve — yours, after
+theirs, synthesizing the two. The fix you ship is rarely either
+agent's literal proposal.
 
 When the passes disagree, don't split the difference. Pick the
 one whose reasoning held under your own pushback, and drop the
@@ -432,8 +436,8 @@ every client forever. A team that had run only Löwy would have
 shipped with a `borderClass` pattern match that intruded on every
 future agent-state variant.
 
-PR #623 shipped seven refactor commits past the point I would have
-merged on taste. Every one of them made the diff smaller. That's
+PR #623 shipped seven refactor commits past where my taste
+would have called it done and merged. Every one of them made the diff smaller. That's
 the other thing this practice does — the fix removes code, it
 doesn't add it. If a "simplification" is making your diff bigger,
 one of your lenses is broken. Probably both.
