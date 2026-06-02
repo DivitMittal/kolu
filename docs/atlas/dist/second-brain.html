@@ -15,9 +15,20 @@ assign roles, not add machinery.</p>
 <p><em>Is this a <strong>substantial, structured artifact</strong> — or a <strong>lightweight,
 transient node</strong>?</em></p>
 </blockquote>
-<p>| Substantial → an <strong>Atlas note</strong> | Lightweight → a <strong>GitHub Issue</strong> |
-| --- | --- |
-| Plans, designs, research, reviews, retros, history | Bugs, tasks, roadmap items, quick questions |</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Substantial → an <strong>Atlas note</strong></th><th>Lightweight → a <strong>GitHub Issue</strong></th></tr></thead><tbody><tr><td>Plans, designs, research, reviews, retros, history</td><td>Bugs, tasks, roadmap items, quick questions</td></tr></tbody></table>
 <p><strong>Living-vs-frozen is <em>not</em> the divider</strong> — a plan tree like <code>remote-terminals</code>
 lives and evolves for months. Maturity is a per-note <strong>tag</strong>
 (<code>seedling</code> → <code>budding</code> → <code>evergreen</code>), never a routing axis and never a
@@ -25,10 +36,27 @@ location. The boundary blurs by design: a concept can have both an Atlas note
 and a tracking issue. When an issue thread becomes the source of truth,
 <strong>extract</strong> its summary into an Atlas note.</p>
 <h2 id="the-map--public--atlas">The map — public &amp; Atlas</h2>
-<p>| Surface | Where | Role |
-| --- | --- | --- |
-| <strong>Public</strong> | the blog (kolu.dev) + per-release changelog | outward-facing; one post per release |
-| <strong>Atlas</strong> | <code>docs/atlas/</code> → rendered to <code>docs/atlas/dist/</code> | the working brain; markdown/MDX notes, internal-only |</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Surface</th><th>Where</th><th>Role</th></tr></thead><tbody><tr><td><strong>Public</strong></td><td>the blog (kolu.dev) + per-release changelog</td><td>outward-facing; one post per release</td></tr><tr><td><strong>Atlas</strong></td><td><code>docs/atlas/</code> → rendered to <code>docs/atlas/dist/</code></td><td>the working brain; markdown/MDX notes, internal-only</td></tr></tbody></table>
 <p>History isn’t a third place — it’s the Atlas over time (a settled note is just
 <code>evergreen</code>; git is the history; the changelog is a release artifact).</p>
 <h2 id="where-the-atlas-lives-a-self-contained-astro-project-under-docs">Where the Atlas lives: a self-contained Astro project under <code>docs/</code></h2>
@@ -62,11 +90,28 @@ rebuilds it whenever an Atlas note changes.</p>
 it can import typed Astro/TypeScript components and use them inline. Markdown for
 the words, components for everything structured or visual — no raw HTML to
 hand-maintain, no per-note CSS.</p>
-<p>| Why markdown for prose | Evidence |
-| --- | --- |
-| Far fewer tokens — paid on every agent read | Cloudflare measured ~80% fewer tokens md vs html |
-| The CLIs kolu runs prefer it | Claude Code &amp; OpenCode send <code>Accept: text/markdown</code> |
-| Renders for free where it matters | github.com renders <code>.md</code>; the Code tab renders it (#1093) |</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Why markdown for prose</th><th>Evidence</th></tr></thead><tbody><tr><td>Far fewer tokens — paid on every agent read</td><td>Cloudflare measured ~80% fewer tokens md vs html</td></tr><tr><td>The CLIs kolu runs prefer it</td><td>Claude Code &amp; OpenCode send <code>Accept: text/markdown</code></td></tr><tr><td>Renders for free where it matters</td><td>github.com renders <code>.md</code>; the Code tab renders it (#1093)</td></tr></tbody></table>
 <blockquote>
 <p><strong>Honest caveat:</strong> in-app annotation of <em>rendered</em> markdown is source-view-only
 today (#1093 v1). Split by regime: markdown prose for agent-ingested text;
@@ -106,11 +151,28 @@ what <code>CONTRIBUTING.md</code> already requires. <code>proposed → accepted<
 <h2 id="capture--manual-atlas-retro-first">Capture — manual <code>/atlas retro</code> first</h2>
 <p>Three tiers, each in a different home so the always-loaded layer stays lean:</p>
 <p><code>/be session</code> → <strong><code>/atlas retro</code> (manual, fresh subagent)</strong> → draft → <em>accept?</em> → note → <em>recurs?</em> → rule/hook</p>
-<p>| Tier | What · where |
-| --- | --- |
-| ① Ephemeral | the raw transcript (<code>exportSessionAsHtml.ts</code>) |
-| ② Curated learning | a GitHub Issue, or a <code>&lt;slug&gt;</code> Atlas note when rich |
-| ③ Durable rule | <code>.apm/</code> sources — <strong>graduate must-hold rules to a justci recipe/hook</strong> (memory → rule → code) |</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Tier</th><th>What · where</th></tr></thead><tbody><tr><td>① Ephemeral</td><td>the raw transcript (<code>exportSessionAsHtml.ts</code>)</td></tr><tr><td>② Curated learning</td><td>a GitHub Issue, or a <code>&lt;slug&gt;</code> Atlas note when rich</td></tr><tr><td>③ Durable rule</td><td><code>.apm/</code> sources — <strong>graduate must-hold rules to a justci recipe/hook</strong> (memory → rule → code)</td></tr></tbody></table>
 <p><strong>Start manual, then automate.</strong> Ship a manual <code>/atlas retro</code> the maintainer
 invokes; it runs as a fresh subagent (same-context self-eval is overconfident),
 preserves verbatim vocabulary (error strings, <code>file:line</code>), and <strong>drafts</strong> a

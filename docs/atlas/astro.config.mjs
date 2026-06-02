@@ -2,6 +2,7 @@
 
 import mdx from "@astrojs/mdx";
 import { defineConfig } from "astro/config";
+import remarkGfm from "remark-gfm";
 
 // Self-contained, internal Atlas — NOT published anywhere. Deliberately
 // decoupled from the public website (../../website). Built locally via
@@ -19,6 +20,10 @@ export default defineConfig({
   server: { port: DEV_PORT, host: "127.0.0.1" },
   integrations: [mdx()],
   markdown: {
+    // GFM tables/strikethrough/autolinks. Astro applies GFM to `.md` by default
+    // but it does not reach the MDX pipeline, so add it explicitly here —
+    // @astrojs/mdx extends `markdown.remarkPlugins`, so this covers .md + .mdx.
+    remarkPlugins: [remarkGfm],
     shikiConfig: { theme: "github-light", wrap: false },
   },
 });

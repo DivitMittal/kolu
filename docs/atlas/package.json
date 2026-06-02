@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@astrojs/mdx": "^5.0.3",
-    "astro": "^6.1.10"
+    "astro": "^6.1.10",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.8",
