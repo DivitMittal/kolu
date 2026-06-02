@@ -8,7 +8,15 @@ updated: 2026-06-02
 ---
 
 import PrLink from "../../components/PrLink.astro";
+import Issue from "../../components/Issue.astro";
+import Commit from "../../components/Commit.astro";
+import Cite from "../../components/Cite.astro";
+import Kbd from "../../components/Kbd.astro";
+import Callout from "../../components/Callout.astro";
+import Terminal from "../../components/Terminal.astro";
 import AtlasMockup from "../../components/AtlasMockup.astro";
+import Roadmap from "../../components/Roadmap.astro";
+import Milestone from "../../components/Milestone.astro";
 
 > **This doc dogfoods itself** — authored as MDX, living *in* the Atlas it
 > describes (`docs/atlas/`), rendered to a self-contained
@@ -55,9 +63,11 @@ system.** kolu's existing stores:
 - **Self-contained committed output** — each `dist/<slug>.html` inlines its styles and cross-links with relative hrefs → previews in the Code tab, no server.
 - **`draft: true`** hides a half-baked note from the index but keeps it on disk for agents.
 
-> **Spiked 2026-06-02** — project + index + render route are live; this note
-> builds green; `dist/` is committed (generated via `.gitattributes`), and an
-> `.apm` rule + the `ci::atlas-sync` gate keep it in sync.
+<Callout kind="good" title="Spiked 2026-06-02">
+Project + index + render route are live; this note builds green; `dist/` is
+committed (generated via `.gitattributes`), and an `.apm` rule + the
+`ci::atlas-sync` gate keep it in sync.
+</Callout>
 
 ## Format — markdown prose + MDX components
 
@@ -70,26 +80,42 @@ system.** kolu's existing stores:
 | The CLIs kolu runs prefer it | Claude Code & OpenCode send `Accept: text/markdown` |
 | Renders where it matters | github.com renders `.md`; the Code tab renders it (#1093) |
 
-> **Caveat:** annotating *rendered* markdown is source-view-only today (#1093
-> v1). Regime split: markdown for agent-ingested prose, components for visual or
-> interactive bits.
+<Callout kind="warn" title="Caveat">
+Annotating *rendered* markdown is source-view-only today (<PrLink pr={1093} />).
+Regime split: markdown for agent-ingested prose, components for visual or
+interactive bits.
+</Callout>
 
 ## Extending markdown with components
 
-Because this note is `.mdx`, a component is one import away:
+Because this note is `.mdx`, a component is one import away. The Atlas ships a
+small kit in `docs/atlas/src/components/`, tuned to what `docs/plans` actually
+uses:
 
-- **`<PrLink>`** — a typed GitHub-PR chip with the repo baked in: first slice in <PrLink pr={1095} />, iterated in <PrLink pr={1131} label="this PR" />. Props are typechecked at build.
-- **`<AtlasMockup>`** — bundles HTML + inline SVG + styles into one reusable tag:
+- **GitHub refs** — <PrLink pr={1095} />, <Issue n={951} />, <Commit sha="7ec2566a" />.
+- **`<Cite>`** — a linked `file:line`: <Cite file="docs/atlas/astro.config.mjs" lines="14-19" />.
+- **`<Kbd>`** — a key chord, e.g. <Kbd keys="Ctrl+B" /> (reaches the terminal, not kolu).
+- **`<Callout>`** — typed boxes (used throughout this note).
+- **`<Terminal>`** — a transcript; **`<AtlasMockup>`** — a one-off visual prototype.
+
+<Terminal title="kolu — just atlas::build" lines={[
+  "$ just atlas::build",
+  "✓ Completed in 1.59s.",
+  "  ├─ /index.html",
+  "  └─ /second-brain.html",
+]} />
 
 <AtlasMockup />
 
-The raw `.md` preview can't render these; the Astro layer can. Define once, reuse across the Atlas.
+Props are typechecked at build; the raw `.md` preview can't render any of this —
+the Astro layer can.
 
 ## Navigation — generated, not hand-curated
 
 - **Index built from frontmatter** → a note can never be unfiled (retires the hand MOC + its `docs-moc` link-gate, kept only while legacy `docs/plans/*.html` exist).
 - **Flat, ancestry-free slugs** — the filename is a handle, not a path.
 - **Index groups by `kind`, shows `maturity`, hides drafts.**
+- **A ToC** (`<Toc>`) is generated from each note's headings — the box above.
 - **Dead-link checking stays a generic linter**, not a bespoke gate.
 
 ## Proposals & decisions — keep the numbered log
@@ -98,56 +124,18 @@ The raw `.md` preview can't render these; the Astro layer can. Define once, reus
 - Keep proposals as **numbered markdown** (`status: proposed → accepted`) — already required by `CONTRIBUTING.md`.
 - `proposed → accepted` is a *lifecycle* (a status field) — no separate `docs/decisions/` dir needed.
 
-## Capture — manual `/atlas retro` first
+## Roadmap
 
-`/be session` → **`/atlas retro` (manual, fresh subagent)** → draft → *accept?* → note → *recurs?* → rule/hook
-
-| Tier | What · where |
-| --- | --- |
-| ① Ephemeral | the raw transcript (`exportSessionAsHtml.ts`) |
-| ② Curated learning | a GitHub Issue, or an Atlas note when rich |
-| ③ Durable rule | `.apm/` sources — graduate must-hold rules to a justci recipe/hook |
-
-- **Start manual, then automate** — ship the manual `/atlas retro`; use it ~10× before a gated `/be` stage.
-- **Fresh subagent** — same-context self-eval is overconfident.
-- **Preserve verbatim vocabulary** — error strings, `file:line`.
-- **Persist only on accept**; promotion ②→③ is human judgment, never a counter.
-
-## How the brain feeds releases
-
-`/be session` → `/atlas retro → note` → conventional commit + PR `(#N)` → git-cliff CHANGELOG → `whatchanged → blog` → release
-
-> **Highest-ROI gate: a conventional-commit lint on PRs.** Hygiene is ~41/100
-> and the whole release pipeline depends on it. Start warn-only.
-
-## Links — one direction, and the `#N` reality
-
-- Links go **one way** (note → `#N`, note → note); **no two-way sync**.
-- GitHub does **not** autolink `#N` in committed files — the real reverse pointer is the **PR/commit that adds the note**.
-- There are no "free backlinks" from file content.
-
-## Deliberately not building (yet)
-
-- A separate `docs/decisions/` or `docs/devlog/`.
-- A seven-kind taxonomy · two-way Issue↔docs sync.
-- Auto rule-promotion by backlink count · auto-capture on every `/be` · a decay ritual.
-
-## Rollout
-
-- **Shipped** — original plans + MOC + house style + the `docs/**` rule (#1095); the `docs-moc` gate + `plans::check` (#1098).
-- **Now** — the Atlas as a self-contained `docs/atlas/` project: generated index, render route, committed HTML, `.apm` rule + `ci::atlas-sync` gate, MDX components. First migrated note; `release-workflow` removed.
-- **Next** — migrate remaining `docs/plans/*.html` on-touch; retire the hand-MOC + `docs-moc` as that completes; add the conventional-commit lint; ship the first release; then the `/atlas` skill.
-
-## Open
-
-- Conventional-commit lint: warn-only or hard-fail to start?
-- Transcript durability: commit exported transcripts, or host out-of-band?
+<Roadmap>
+  <Milestone status="done" label="Shipped">original plans + MOC + house style + the `docs/**` agent rule (<PrLink pr={1095} />); the `docs-moc` gate + `plans::check` module (<PrLink pr={1098} />).</Milestone>
+  <Milestone status="now" label="Now">the Atlas as a self-contained `docs/atlas/` project — generated index, render route, committed HTML, `.apm` rule + `ci::atlas-sync` gate, and the MDX component kit. First migrated note; `release-workflow` removed.</Milestone>
+  <Milestone status="next" label="Next">migrate the remaining `docs/plans/*.html` to Atlas notes on-touch; retire the hand-MOC + `docs-moc` gate as that completes; then ship the `/atlas` skill.</Milestone>
+</Roadmap>
 
 ---
 
-*Revised 2026-06-02: a 7-lane adversarial research pass (format, navigation,
-storage, capture, decision-records, comparables, system-shape) + Hickey/Lowy/
-completeness critics flipped HTML-all-the-way → markdown-first, kept the numbered
-proposal log, and dropped a planned rename; then Astro was chosen for rendering,
-the Atlas extracted into a self-contained `docs/atlas/` project, and notes moved
-to MDX with typed components.*
+*Revised 2026-06-02: a 7-lane adversarial research pass + Hickey/Lowy/
+completeness critics flipped HTML-all-the-way → markdown-first and kept the
+numbered proposal log; then Astro was chosen for rendering, the Atlas extracted
+into a self-contained `docs/atlas/` project, and notes moved to MDX with a typed
+component kit.*

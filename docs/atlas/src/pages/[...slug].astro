@@ -1,6 +1,7 @@
 ---
 import { getCollection, render } from "astro:content";
 import AtlasLayout from "../layouts/AtlasLayout.astro";
+import Toc from "../components/Toc.astro";
 
 export async function getStaticPaths() {
   const notes = await getCollection("atlas");
@@ -8,7 +9,7 @@ export async function getStaticPaths() {
 }
 
 const { note } = Astro.props;
-const { Content } = await render(note);
+const { Content, headings } = await render(note);
 const d = note.data;
 
 const fmtDate = (date: Date) =>
@@ -34,6 +35,8 @@ const fmtDate = (date: Date) =>
       </div>
 
       <p class="note-sub">{d.description}</p>
+
+      <Toc headings={headings} />
     </header>
 
     <div class="prose">
