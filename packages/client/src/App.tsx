@@ -630,7 +630,6 @@ const App: Component = () => {
                       tileIds={store.terminalIds()}
                       watermark={appTitle()}
                       getLayout={(id) => store.getMetadata(id)?.canvasLayout}
-                      placeNew={arrange.placeNew}
                       onLayoutChange={arrange.applyTileGeometry}
                       onAutoArrange={arrange.handleCanvasAutoArrange}
                       onSelect={store.setActiveSilently}
@@ -642,6 +641,7 @@ const App: Component = () => {
                       renderTileTitle={(id) => (
                         <TerminalMeta
                           info={store.getDisplayInfo(id)}
+                          unread={store.isUnread(id)}
                           onOpenIntent={() => intentEditor.openTerminal(id)}
                         />
                       )}

@@ -35,6 +35,46 @@ Feature: File-ref autolinking in terminal
     And xterm's helper textarea should not have been focused by tapping the link
     And there should be no page errors
 
+  @mobile
+  Scenario: Tapping a .html file-ref on touch brings up the code-browser preview
+    # Reported bug: on iPhone, tapping a terminal link to a `.html` file should
+    # open the code browser's file preview (the sandboxed iframe). Instead
+    # nothing visible comes up — the tree selection updates but the preview is
+    # never brought on screen. A `.html` ref takes the binary/iframe render
+    # path (BrowseFileDispatcher), unlike the text scenario above, so this
+    # asserts the preview iframe actually mounts after a touch tap.
+    When I run "git init /tmp/kolu-file-ref-html-mobile && cd /tmp/kolu-file-ref-html-mobile"
+    And I run "git commit --allow-empty -m init"
+    And I run "printf '<h1>preview me</h1>\n' > page.html"
+    And I run "echo 'open page.html in the browser'"
+    And I watch for the right-panel drawer to open
+    And I watch for the file preview iframe to appear
+    And I tap the terminal file-ref link "page.html"
+    Then the right-panel drawer should have opened
+    And the file preview iframe should have appeared
+    And there should be no page errors
+
+  @mobile
+  Scenario: Re-tapping a .html file-ref after dismissing the drawer re-opens the preview
+    # The user-reported iPhone bug: tap a terminal `.html` link, it opens the
+    # code-browser preview; dismiss the drawer; tap the same link again and
+    # "nothing happens" — the tree selection updates but the drawer is never
+    # brought back up. Mobile counterpart of the desktop "re-click after
+    # collapse" canary, which only reproduces under the bundled build.
+    When I run "git init /tmp/kolu-file-ref-html-retap && cd /tmp/kolu-file-ref-html-retap"
+    And I run "git commit --allow-empty -m init"
+    And I run "printf '<h1>preview me</h1>\n' > page.html"
+    And I run "echo 'open page.html in the browser'"
+    And I watch for the file preview iframe to appear
+    And I tap the terminal file-ref link "page.html"
+    Then the file preview iframe should have appeared
+    When I dismiss the right-panel drawer
+    Then the right panel should not be visible
+    When I watch for the file preview iframe to appear
+    And I tap the terminal file-ref link "page.html"
+    Then the file preview iframe should have appeared
+    And there should be no page errors
+
   Scenario: Clicking a line-range file-ref opens the file
     When I run "git init /tmp/kolu-file-ref-861-range && cd /tmp/kolu-file-ref-861-range"
     And I run "git commit --allow-empty -m init"
@@ -157,15 +197,12 @@ Feature: File-ref autolinking in terminal
     And the file preview iframe should be visible
     And the file preview iframe should contain "electricity"
 
-  # `@skip`: known regression noted in c89a85f3 — the second xterm `path:line`
-  # click after a manual collapse fails to re-open the panel under the bundled
-  # build (passes in dev). Suspected production-Solid reactive elision or
-  # xterm link-decoration cache invalidation after the layout reflow.
-  # `equals: false` on `pendingOpen` and imperative dispatch from
-  # `openInCodeTab` both fail to clear it; deeper diagnosis is tracked
-  # separately. Run with `CUCUMBER_TAGS='@skip' just test-quick
-  # features/file-ref-link.feature` to exercise this scenario locally.
-  @skip
+  # Guards the c89a85f3 regression: a second click on the same `path:line`
+  # after manually collapsing the panel must re-open it. The bug was
+  # production-only (passes in dev) — see right-panel/openInCodeTab.ts for
+  # the deferred-effect-elision mechanism and the imperative-reveal fix.
+  # This scenario is the canary for that fix, so it must run against the
+  # bundled build (`just test-quick`), not just dev.
   Scenario: Re-clicking the same file-ref after closing the panel re-selects the line
     When I run "git init /tmp/kolu-file-ref-861-reclick && cd /tmp/kolu-file-ref-861-reclick"
     And I run "git commit --allow-empty -m init"

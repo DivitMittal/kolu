@@ -285,6 +285,63 @@ function isInterruptMarker(content: unknown): boolean {
   return false;
 }
 
+/** Markers Claude Code writes into a `user` entry's `content` for slash-command
+ *  bookkeeping — the command invocation, its message/args, the captured stdout,
+ *  and the "messages generated while running local commands" caveat. These are
+ *  transcript-only artifacts, not a human prompt: a no-op local command
+ *  (`/compact`, `/config`, `/status`, …) leaves them as the *trailing* `user`
+ *  entries while the agent sits idle, and `/compact` in particular emits the
+ *  `<command-name>` + `<local-command-stdout>` pair *after* its summary, so one
+ *  of these — not the summary — is the newest entry. The generic `user` branch
+ *  would read that as `thinking` and pin the pill working forever (the
+ *  stuck-pill-after-`/compact` bug). A real prompt never begins with one of
+ *  these tags. */
+const LOCAL_COMMAND_MARKERS = [
+  "<command-name>",
+  "<command-message>",
+  "<command-args>",
+  "<local-command-stdout>",
+  "<local-command-caveat>",
+] as const;
+
+/** True when a `user` entry's `message.content` is slash-command bookkeeping
+ *  (see `LOCAL_COMMAND_MARKERS`) rather than a human prompt. `content` is a
+ *  plain string or an array of blocks; both flatten to text (via
+ *  `toolResultText`) and are prefix-matched. */
+function isLocalCommandArtifact(content: unknown): boolean {
+  const text = toolResultText(content).trimStart();
+  return LOCAL_COMMAND_MARKERS.some((m) => text.startsWith(m));
+}
+
+/** True when a trailing `user` entry is a transcript-only artifact that the
+ *  human did not type — the `/compact` summary (`isCompactSummary`) or
+ *  slash-command bookkeeping/output (`isLocalCommandArtifact`). `deriveState`
+ *  walks past these so state derives from the genuine prior turn (an idle
+ *  `end_turn` → `waiting`) instead of reading the artifact as a fresh prompt.
+ *  A turn that actually resumes work lands a newer `assistant` entry, which is
+ *  seen first.
+ *
+ *  Deliberately NOT keyed on `isMeta`: that flag marks *injected* model input,
+ *  which is overwhelmingly a live prompt the agent is about to act on — a
+ *  slash-command/skill expansion ("Base directory for this skill: …"), an
+ *  auto-continue ("Continue from where you left off."), hook feedback, a
+ *  pasted image. Skipping those would read the prior `end_turn` as `waiting`
+ *  while Claude is working (e.g. the brief window after `/do` or
+ *  `/whatchanged` invokes the model but before its first assistant entry
+ *  lands). The one `isMeta` artifact that genuinely trails — the `/compact`
+ *  `<local-command-caveat>` — is already caught by `isLocalCommandArtifact`. */
+function isNonPromptUserEntry(entry: {
+  type?: string;
+  isCompactSummary?: boolean;
+  message?: { content?: unknown };
+}): boolean {
+  if (entry.type !== "user") return false;
+  return (
+    entry.isCompactSummary === true ||
+    isLocalCommandArtifact(entry.message?.content)
+  );
+}
+
 function toolUseOrAwaitingUser(content: unknown): "tool_use" | "awaiting_user" {
   if (!Array.isArray(content)) return "tool_use";
   let total = 0;
@@ -349,6 +406,7 @@ export function deriveState(
       const entry: {
         type?: string;
         timestamp?: string;
+        isCompactSummary?: boolean;
         message?: {
           stop_reason?: string | null;
           model?: string | null;
@@ -364,6 +422,19 @@ export function deriveState(
         const tokens = sumUsageTokens(entry.message?.usage);
         if (tokens !== null) contextTokens = tokens;
       }
+
+      // Walk past transcript-only `user` entries the human never typed — the
+      // `/compact` summary and slash-command bookkeeping/output (the
+      // `<command-name>` + `<local-command-stdout>` pair a `/compact` appends
+      // *after* its summary, leaving one of them as the newest entry). A no-op
+      // local command (`/compact`, `/config`, …) leaves these at the tail while
+      // the agent is idle; reading them as a fresh prompt would pin the pill in
+      // `thinking` forever (the stuck-pill bug). Skipping derives state from the
+      // genuine prior turn (`end_turn` → `waiting`); a turn that resumes work
+      // lands a newer assistant entry, seen first. (An `isMeta` injection is
+      // left alone — it is usually a live model prompt; see
+      // `isNonPromptUserEntry`.)
+      if (isNonPromptUserEntry(entry)) continue;
 
       if (stateAndModel === null) {
         const model = entry.message?.model ?? null;
