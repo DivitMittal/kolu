@@ -60,4 +60,9 @@ build-garden: install
       mv "${d}index.html" "${d%/}.html"
       rm -rf "$d"
     done
-    echo "garden flattened to <slug>.html"
+    # Rewrite garden-internal links to relative flattened filenames so the committed
+    # pages navigate in kolu's Code tab. Astro emits absolute /garden/... paths, which
+    # the iframe resolves against the server root (not the sibling file); the live site
+    # keeps those absolute routes (it builds via nix, not this recipe).
+    sed -i -E 's#href="/garden/([^"/]+)"#href="./\1.html"#g; s#href="/garden"#href="./index.html"#g' *.html
+    echo "garden flattened + relinked to relative <slug>.html"
