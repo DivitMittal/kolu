@@ -76,6 +76,9 @@ importers:
       '@kolu/surface':
         specifier: workspace:*
         version: link:../surface
+      '@kolu/surface-app':
+        specifier: workspace:*
+        version: link:../surface-app
       '@orpc/client':
         specifier: ^1.13.13
         version: 1.13.13
@@ -206,6 +209,9 @@ importers:
       '@kolu/surface':
         specifier: workspace:*
         version: link:../surface
+      '@kolu/surface-app':
+        specifier: workspace:*
+        version: link:../surface-app
       '@orpc/contract':
         specifier: ^1.13.13
         version: 1.13.13
@@ -531,6 +537,9 @@ importers:
       '@kolu/surface':
         specifier: workspace:*
         version: link:../surface
+      '@kolu/surface-app':
+        specifier: workspace:*
+        version: link:../surface-app
       '@orpc/client':
         specifier: ^1.13.13
         version: 1.13.13

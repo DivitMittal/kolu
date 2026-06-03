@@ -21,6 +21,7 @@
     "@kolu/solid-markdown": "workspace:*",
     "@kolu/solid-pierre": "workspace:*",
     "@kolu/surface": "workspace:*",
+    "@kolu/surface-app": "workspace:*",
     "@orpc/client": "^1.13.13",
     "@pierre/diffs": "^1.2.1",
     "@pierre/trees": "^1.0.0-beta.4",

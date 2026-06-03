@@ -32,10 +32,12 @@ import {
   implementSurface,
   publisherChannel,
 } from "@kolu/surface/server";
+import { buildInfoServer, serverIdentity } from "@kolu/surface-app/server";
 import { implement } from "@orpc/server";
 import { contract } from "kolu-common/contract";
 import type {
   ActivityFeed,
+  KoluBuildInfo,
   Preferences,
   SavedSession,
   TerminalMetadata,
@@ -49,6 +51,7 @@ import {
   gitStatusOutputEqual,
 } from "kolu-git";
 import { isBinaryPreviewable } from "kolu-common/preview";
+import { serverCommit, serverProcessId } from "./hostname.ts";
 import { buildIframePreviewUrl } from "./iframePreviewRoute.ts";
 import { log } from "./log.ts";
 import { publisher } from "./publisher.ts";
@@ -61,6 +64,7 @@ import {
   terminalNotFound,
 } from "./terminal-registry.ts";
 import { getTerminalBackendFor } from "./terminalBackend/index.ts";
+import { ptyHostIdentity } from "./terminalBackend/local.ts";
 
 const localBackend = getTerminalBackendFor({ kind: "local" });
 
@@ -84,6 +88,20 @@ const savedSessionStore: CellStore<SavedSession | null> =
 
 // ── Surface implementation ─────────────────────────────────────────────
 
+// The build-identity cell's server fragment. `commit` is kolu's single source
+// (`serverCommit` ← `KOLU_COMMIT_HASH`); the pty-host axis is the boot-time-async
+// source — the in-process pty-host reports its identity async (via
+// `system.version`), so it lands as a `Partial<KoluBuildInfo>` patch after the
+// cell is already seeded with `{ commit }`. A failed probe leaves `ptyHost`
+// undefined (the fragment swallows it); the rail's column shows `—`.
+const build = buildInfoServer<KoluBuildInfo>({
+  buildInfo: async () => {
+    const identity = await ptyHostIdentity;
+    return identity ? { ptyHost: identity } : {};
+  },
+  commit: serverCommit,
+});
+
 const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
   implementSurface(surface, {
     channel: <T>(name: string) => publisherChannel<T>(publisher, name),
@@ -99,6 +117,18 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
       ),
 
     cells: {
+      // surface-app's build-identity cell (skew axis), extended with kolu's
+      // pty-host column. The commit is kolu's existing `serverCommit`
+      // (`KOLU_COMMIT_HASH`, the single source). The pty-host identity resolves
+      // async at boot (`ptyHostIdentity` over the in-process link), so it's the
+      // fragment's boot-time-async axis: the cell seeds synchronously with
+      // `{ commit }`, the async source folds in the `{ ptyHost }` patch once it
+      // settles, and `build.buildInfo.connect(ctx.cells.buildInfo)` (below)
+      // republishes it through the same fragment — server-pushed, so a client
+      // connected before the pty-host answered fills in its `srv · pty` rail
+      // without a reload. No hand-wired second `ctx.set`. `equals` defaults to
+      // JSON.stringify identity, matching kolu's confStore cells.
+      ...build,
       preferences: {
         store: preferencesStore,
         // Content-level dedup, mirroring the `session` cell below. Defence in
@@ -241,6 +271,14 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
       },
     },
 
+    procedures: {
+      // surface-app's identity probe (restart axis) — `surface.server.info`.
+      // Mints one `processId` per process; kolu pins it to the existing boot
+      // UUID (`serverProcessId`) so the value is stable within a process and
+      // changes on restart. Composed, not hand-written.
+      ...serverIdentity({ processId: serverProcessId }),
+    },
+
     events: {
       terminalExit: {
         // Single-yield-then-close: validate the terminal exists at subscribe
@@ -265,3 +303,11 @@ const { router: surfaceRouterFragment, ctx: surfaceCtxBuilt } =
 
 export const surfaceRouter = surfaceRouterFragment;
 setSurfaceCtx(surfaceCtxBuilt);
+
+// Republish the late pty-host axis through the *same* fragment once it settles:
+// the fragment owns the seed→resolve→set composition, so this drives the
+// resolved `{ commit, ptyHost }` through the cell's ctx setter (and its `equals`
+// dedup gate) with no hand-written second `ctx.set`. Server-driven, so a client
+// connected before the pty-host answered fills in its `srv · pty` rail without a
+// reload. No-op (deduped) if the probe failed — nothing late to push.
+void build.buildInfo.connect(surfaceCtxBuilt.cells.buildInfo);

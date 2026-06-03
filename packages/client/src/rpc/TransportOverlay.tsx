@@ -4,27 +4,29 @@
  * is the only interactive surface, so users can still scroll, read scrollback,
  * or open a different terminal underneath the dim.
  *
- * Two independent signals drive it:
- * - `lifecycle()` is `"disconnected"` — the WebSocket dropped; show
- *   "Reconnecting…".
- * - `updateReady()` — a fresh client build is ready; show the reload prompt.
- *   `pwa.ts` owns what "ready" means: with a service worker it is the accurate
- *   installed-and-waiting signal (race-free reload); without one (HTTP/LAN) it
- *   falls back to the server-restart signal. This overlay does not reason about
- *   service workers — it just renders the prompt when told to.
+ * Two independent signals drive it, both from surface-app's headless model:
+ * - `status()` is `"down"` — the WebSocket dropped; show "Reconnecting…".
+ * - update-ready — a fresh client build is ready; show the reload prompt.
+ *   "Ready" is `status() === "restarted"` (a deploy caught live, transient — a
+ *   backgrounded tab that missed the reconnect never sees it) OR `stale()` (the
+ *   durable backstop: this bundle's commit provably differs from the server's,
+ *   no matter when it connected). kolu has no service worker, so the reload is a
+ *   plain `location.reload()` (surface-app's `reload()`) landing on the
+ *   `no-store` shell → the current bundle.
  *
  * The Reload button lives inside the card so the action is where the user's
  * eye already is, not tucked into a corner toast.
  */
+import { useSurfaceApp } from "@kolu/surface-app/solid";
 import { type Component, Show } from "solid-js";
-import { reloadForUpdate, updateReady } from "../pwa";
 import { surface } from "../ui/Surface";
-import { lifecycle } from "./rpc";
 
 const chrome = surface();
 
 const TransportOverlay: Component = () => {
-  const disconnected = () => lifecycle().kind === "disconnected";
+  const pwa = useSurfaceApp();
+  const disconnected = () => pwa.status() === "down";
+  const updateReady = () => pwa.status() === "restarted" || pwa.stale();
 
   return (
     <Show when={disconnected() || updateReady()}>
@@ -44,7 +46,7 @@ const TransportOverlay: Component = () => {
                 <button
                   type="button"
                   class="bg-accent text-surface-1 font-semibold rounded px-3 py-1.5 hover:opacity-90"
-                  onClick={reloadForUpdate}
+                  onClick={() => pwa.reload()}
                 >
                   Reload
                 </button>

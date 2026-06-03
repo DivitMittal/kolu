@@ -409,3 +409,31 @@ web.dev, MDN, W3C secure-contexts, tailscale/mkcert/caddy docs):
   none) → `document.title` (universal) → canvas favicon (Safari blocks favicon
   scripting). No SW means badge updates only while a connected page is live — fine,
   since the live wire is the app.
+
+## Loop closed — kolu now CONSUMES `@kolu/surface-app`
+
+The saga is over in code, not just in design. kolu's duplicated implementations
+were deleted and replaced by the library it motivated:
+
+- `packages/server/src/cacheControl.ts` (+ its test) → **deleted**; the server
+  serves the shell via `installFreshStatic` / the manifest via `installPwaManifest`
+  from `@kolu/surface-app/server` (`packages/server/src/index.ts`).
+- `packages/client/public/sw.js` → **deleted**; the self-destructing retirement
+  worker is now `SW_SOURCE`, served at `/sw.js` by `installFreshStatic`.
+- `packages/client/src/pwa.ts` (+ test) and `ui/StaleBadge.tsx`'s derivation,
+  `ui/commitRef.ts` (+ test) → **deleted / repointed**; the freshness UX is the
+  library's headless model (`useSurfaceApp()`), and `isCleanRef` / `clientIsStale`
+  come from `@kolu/surface-app`. kolu keeps only its tailwind `≠ srv` chip.
+- `packages/client/src/rpc/rpc.ts`'s hand-rolled connection lifecycle →
+  `createServerLifecycle` (rpc.ts is now the thin signal layer over it).
+- The commit stamp is `surfaceApp({ commitEnvVar: "KOLU_COMMIT_HASH" })` (Vite
+  plugin) → `__SURFACE_APP_COMMIT__`; the server cell uses kolu's existing
+  `serverCommit`. One commit source, two faces — kolu keeps its `KOLU_COMMIT_HASH`
+  Nix convention (no `default.nix` change).
+- Build identity is **extended**, not replaced: `koluBuildInfo`
+  (`packages/common/src/surface.ts`) adds the in-process pty-host axis
+  (`{ staleKey, navigableCommit }`) to surface-app's `{ commit }` via the generic
+  `defineBuildInfo`; the server fills the pty-host column through the cell once the
+  in-process pty-host reports its identity at boot. The restart axis (`processId`)
+  is surface-app's `serverIdentity` probe at `surface.server.info`; kolu's raw
+  `server.info` now carries only per-host branding (title / watermark / theme).

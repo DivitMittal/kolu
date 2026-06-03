@@ -26,6 +26,11 @@
  */
 
 import { defineSurface, type SurfaceTypes } from "@kolu/surface/define";
+import {
+  type BuildInfo,
+  defineBuildInfo,
+  serverIdentity,
+} from "@kolu/surface-app/surface";
 import type { TaskProgressSchema } from "anyagent/schemas";
 import { ClaudeCodeInfoSchema } from "kolu-claude-code/schemas";
 import { CodexInfoSchema } from "kolu-codex/schemas";
@@ -493,10 +498,46 @@ export function applyPreferencesPatch(
   };
 }
 
+// ── Build identity (surface-app's skew axis, extended) ─────────────────
+//
+// surface-app's `buildInfo` cell carries "what build is the server?" as
+// reactive server state (server-pushed, read with `{ authority: "server" }`).
+// The library default is `{ commit }`; kolu EXTENDS it with the in-process
+// pty-host's identity (its own closure `staleKey` + git-navigable commit), the
+// `srv · pty` rail's second column. `defineBuildInfo` is generic over the
+// schema, so the extra axis is type-checked end to end.
+//
+// `ptyHost` is optional: a future surviving daemon (remote-terminals phase B)
+// may predate it. `isStale` stays the library default — the clean-ref-guarded
+// COMMIT comparison — because kolu's staleness signal (`≠ srv`) is purely the
+// client-vs-server commit divergence; the pty-host column is displayed, not a
+// staleness input (the pty-host is in-process in A2, so it can't diverge from
+// the server it lives in).
+export const PtyHostIdentitySchema = z.object({
+  staleKey: z.string(),
+  navigableCommit: z.string(),
+});
+
+export interface KoluBuildInfo extends BuildInfo {
+  ptyHost?: z.infer<typeof PtyHostIdentitySchema>;
+}
+
+export const koluBuildInfo = defineBuildInfo<KoluBuildInfo>({
+  schema: z.object({
+    commit: z.string(),
+    ptyHost: PtyHostIdentitySchema.optional(),
+  }),
+  default: { commit: "" },
+});
+
 // ── The surface ───────────────────────────────────────────────────────
 
 export const surface = defineSurface({
   cells: {
+    // surface-app's build-identity cell (skew axis), extended with kolu's
+    // pty-host column — composed, not hand-written. See `koluBuildInfo` above.
+    ...koluBuildInfo.cells,
+
     /** User preferences — local-authority on the client; server-canonical
      *  on disk. Storage is flat (no discriminated-union subtrees), so the
      *  spec's `patch` is the only merge path — both server and client run
@@ -581,6 +622,13 @@ export const surface = defineSurface({
       inputSchema: TerminalAttachInputSchema,
       outputSchema: TerminalOnExitOutputSchema,
     },
+  },
+  procedures: {
+    // surface-app's identity probe (restart axis) — `surface.server.info`,
+    // composed not hand-written. Reads the per-process `processId` so the
+    // client lifecycle can tell a transient drop from a server restart. The
+    // impl is `serverIdentity()` from `@kolu/surface-app/server`.
+    ...serverIdentity.procedures,
   },
 });
 
