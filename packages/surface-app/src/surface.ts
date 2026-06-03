@@ -9,7 +9,7 @@
  */
 
 import { z } from "zod";
-import { clientIsStale } from "./index.ts";
+import { clientIsStale } from "./index";
 
 /** The minimum build identity: the deployed commit. Extend it via `defineBuildInfo`. */
 export interface BuildInfo {

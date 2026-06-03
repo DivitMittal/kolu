@@ -19,16 +19,13 @@ import {
   type JSX,
   useContext,
 } from "solid-js";
-import {
-  buildInfo as defaultBuildInfo,
-  type BuildInfoDef,
-} from "../surface.ts";
+import { buildInfo as defaultBuildInfo, type BuildInfoDef } from "../surface";
 
 // The non-component lifecycle calls live in the framework-free `/lifecycle`
 // subpath; re-exported here so `<SurfaceAppProvider>` consumers reach them from
 // one import. Apps with no component in scope (root setup) import `/lifecycle`.
-export { reloadForUpdate, retireServiceWorker } from "../lifecycle.ts";
-import { reloadForUpdate } from "../lifecycle.ts";
+export { reloadForUpdate, retireServiceWorker } from "../lifecycle";
+import { reloadForUpdate } from "../lifecycle";
 
 /** The live relationship to the server this client is bound to. */
 export type ConnectionStatus = "live" | "reconnecting" | "restarted" | "down";

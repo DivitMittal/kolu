@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { Hono } from "hono";
-import { resolveCommit } from "./commit.ts";
+import { resolveCommit } from "./vite";
 import {
   ASSET_MISS_CACHE_CONTROL,
   cacheControlFor,
@@ -22,8 +22,8 @@ import {
   isImmutableAssetPath,
   SHELL_CACHE_CONTROL,
   SW_SOURCE,
-} from "./index.ts";
-import type { BuildInfo } from "./surface.ts";
+} from "./index";
+import type { BuildInfo } from "./surface";
 
 /** A web app manifest. `name` is required; everything else has a sensible
  *  default, and any extra fields (id, description, orientation, screenshots,

@@ -55,29 +55,23 @@ Workspace-private. Wire it into the server and client packages:
 { "dependencies": { "@kolu/surface-app": "workspace:*" } }
 ```
 
-### Consumer tsconfig: `allowImportingTsExtensions`
+### Consumer tsconfig: no special flags
 
-surface-app ships **raw TS with no build step** (`main: ./src/index.ts`), and its
-internal relative imports carry explicit `.ts` extensions (`./commit.ts`, …).
-That extension is **load-bearing at runtime**: the `/vite` and `/commit`
-entrypoints are loaded by Node's native ESM resolver (Vite loads `vite.config.ts`
-through it), which — unlike a bundler or `tsx` — will **not** probe for a `.ts`
-file behind an extensionless specifier. So the extensions can't simply be
-dropped (sibling `@kolu/surface` gets away with extensionless imports only
-because it's never Node-ESM-loaded as a config dependency).
+surface-app ships **raw TS with no build step** (`main: ./src/index.ts`), and —
+like sibling `@kolu/surface` — its internal relative imports are **extensionless**
+(`./commit`, not `./commit.ts`). A consumer drops it in and type-checks under
+`moduleResolution: "bundler"` with **no extra compiler flags** (no
+`allowImportingTsExtensions`).
 
-The consequence: a consumer that type-checks surface-app's sources under
-`moduleResolution: "bundler"` **must** enable the matching compiler flag, or
-`tsc` reports `TS5097` ("an import path can only end with a '.ts' extension when
-`allowImportingTsExtensions` is enabled") for each internal import:
-
-```jsonc
-// your tsconfig.json (or tsconfig.base.json)
-{ "compilerOptions": { "allowImportingTsExtensions": true, "noEmit": true } }
-```
-
-kolu's root `tsconfig.base.json` already sets it (so this package and the
-`example/` inherit it); a standalone consumer (drishti) must add it.
+This is a real constraint, not an accident. The `/vite` entry is the package's one
+**Node-loaded** module: a Vite config (and kolu's own `vite.config.ts`) imports it
+through Node's native ESM resolver, which — unlike a bundler or `tsx` — will **not**
+probe for a `.ts` file behind an extensionless specifier. So `src/vite.ts` is kept
+**self-contained** (it carries `resolveCommit` itself, with zero relative imports);
+every other module is extensionless and only ever reached by a bundler/`tsx`. That
+keeps the whole package extensionless without breaking Node-ESM config loading —
+and frees consumers from the `TS5097` / `allowImportingTsExtensions` tax that an
+extension-carrying package would impose.
 
 ## Entrypoints
 
