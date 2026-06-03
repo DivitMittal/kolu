@@ -227,14 +227,15 @@ export function buildInfoServer<T extends BuildInfo = BuildInfo>(
     if (out instanceof Promise) pending = out;
     else fold(out);
   }
-  const ready: Promise<void> = pending
-    ? pending
-        .then((r) => void fold(r))
-        .catch(() => {
-          // A failed boot-time axis leaves the `{ commit }` seed in place — the
-          // skew axis still works; the extra axis stays at its default.
-        })
-    : Promise.resolve();
+  const ready: Promise<void> =
+    pending !== undefined
+      ? pending
+          .then((r) => void fold(r))
+          .catch(() => {
+            // A failed boot-time axis leaves the `{ commit }` seed in place — the
+            // skew axis still works; the extra axis stays at its default.
+          })
+      : Promise.resolve();
   return {
     buildInfo: {
       store,
