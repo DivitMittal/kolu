@@ -117,7 +117,7 @@
   <li><strong>Connection &amp; update lifecycle</strong> — a headless <em>model</em>: <code>live / reconnecting / server-restarted / stale-build</code> + the reload action. <strong>The app renders the UI</strong> (overlay, rail, badge); surface owns the reconnect mechanism, surface-app the state.</li>
   <li><strong>Desktop install &amp; feel</strong> — the manifest as <em>app-window identity</em> (per-host name/theme/icons), a best-effort install-prompt affordance (manual install always works), and an attention model that fans out to App Badging (installed Chromium, Win/macOS) → document title → favicon. <span class="muted">Install + badging need a trusted secure context; the core works without — see below.</span></li>
   <li><strong>No-offline service-worker stance</strong> — retire legacy workers (<code>retireServiceWorker()</code> + self-destructing <code>sw.js</code>); never ship one.</li>
-  <li><strong>Commit propagation</strong> — the bundler-agnostic stamp that single-sources the commit into client + server.</li>
+  <li><strong>Commit propagation</strong> — one resolver (<code>SURFACE_APP_COMMIT</code> env → <code>git rev-parse --short HEAD</code> → <code>"dev"</code>) feeding a Vite plugin (client define + its type declaration) and the server cell. No app ever writes a sha literal.</li>
 </ol>
 
 <h2 id="https">The desktop layer needs a secure context (HTTPS)</h2>
@@ -143,11 +143,11 @@
 <table>
   <thead><tr><th>Piece</th><th>The question it answers</th><th>Entrypoint</th><th>Inv.</th></tr></thead>
   <tbody>
-    <tr><td class="rt">installFreshStatic(app, …) · installPwaManifest(app, …)</td><td class="q">"Serve the SPA fresh; serve the manifest + per-host identity + icons."</td><td><span class="tag srv">/server</span></td><td>#1,2</td></tr>
-    <tr><td class="rt">surfaceAppSurface · defineBuildInfo</td><td class="q">"The library's own surface (build identity), composed into yours; extensible."</td><td><span class="tag sf">/surface</span></td><td>#2,5</td></tr>
-    <tr><td class="rt">useSurfaceApp() → { status, stale, reload, server, install, … }</td><td class="q">"The headless model: relationship-to-server + reload + install. You render it."</td><td><span class="tag cli">/solid</span></td><td>#3,5</td></tr>
-    <tr><td class="rt">retireServiceWorker() + sw.js</td><td class="q">"Tear down any legacy worker."</td><td><span class="tag cli">/solid</span></td><td>#4</td></tr>
-    <tr><td class="rt">commit stamp — env (server) + bundler define (client)</td><td class="q">"Single-source the commit; <code>withCommitStamp</code> = Vite/Nix convenience."</td><td><span class="tag nix">nix · build</span></td><td>#2</td></tr>
+    <tr><td class="rt">installSurfaceApp · installFreshStatic · installPwaManifest</td><td class="q">"Serve the SPA fresh, the manifest, AND <code>/sw.js</code> (retirement) — one composed call."</td><td><span class="tag srv">/server</span></td><td>#1,2,4</td></tr>
+    <tr><td class="rt">buildInfoServer()</td><td class="q">"The buildInfo cell's server impl — spread into implementSurface; commit auto-resolved."</td><td><span class="tag srv">/server</span></td><td>#2,5</td></tr>
+    <tr><td class="rt">buildInfo · defineBuildInfo</td><td class="q">"The buildInfo cell definition — composed into your surface; extensible."</td><td><span class="tag sf">/surface</span></td><td>#2,5</td></tr>
+    <tr><td class="rt">useSurfaceApp() · SurfaceAppProvider · retireServiceWorker()</td><td class="q">"The headless model (status/stale/reload/install) + SW retirement. You render the UI."</td><td><span class="tag cli">/solid</span></td><td>#3,4,5</td></tr>
+    <tr><td class="rt">surfaceApp() vite plugin · resolveCommit()</td><td class="q">"Resolve the commit once (env→git→dev); inject <code>__SURFACE_APP_COMMIT__</code> + its type. (Nix <code>withCommitStamp</code> for nix builds.)"</td><td><span class="tag nix">/vite · build</span></td><td>#2</td></tr>
     <tr><td class="rt">cacheControlFor · clientIsStale · SW_SOURCE</td><td class="q">"The pure, framework-free kernels."</td><td><span class="tag core">utils/</span></td><td>#1,2</td></tr>
   </tbody>
 </table>
@@ -174,14 +174,30 @@ app.setAttention(n) <span class="c">// OS badge if installed, else document.titl
 <span class="c">// kolu extends — adds the pty-host axis without losing the commit one</span>
 defineBuildInfo({ schema: z.object({ commit: z.string(), ptyHost: PtyHostRefSchema }),
   isStale: (srv, cli) =&gt; clientIsStale(srv.commit, cli.commit) || ptyHostDiverged(srv.ptyHost, cli.ptyHost) });</pre>
+<p class="muted">The matching <em>server impl</em> is a fragment too: <code>buildInfoServer()</code> (commit auto-resolved) spreads into <code>implementSurface</code>; kolu passes its pty-host source. Definition ⊕ impl are <em>composed</em>, never hand-written in the app.</p>
+
+<h2>Compose, don't hand-wire</h2>
+<p>The spike's failing — fairly called out in review — was making the <em>example</em> re-implement what the <em>library</em> should own: a hand-written <code>buildInfo</code> store, a hand-rolled <code>/sw.js</code> route, a hardcoded commit string, a per-app <code>__SURFACE_APP_COMMIT__</code> define and its type. The fix is the principle surface itself follows: the library ships <strong>fragments</strong>, an app is their <strong>composition</strong>, and there is <strong>no bespoke glue</strong>. Build identity is one concept with composable faces the app stitches together — never re-derives:</p>
+<table>
+  <thead><tr><th>Face</th><th>Library fragment</th><th>App composes…</th></tr></thead>
+  <tbody>
+    <tr><td>definition</td><td><code>buildInfo</code> (cell schema)</td><td>into <code>defineSurface</code></td></tr>
+    <tr><td>server impl</td><td><code>buildInfoServer()</code></td><td>into <code>implementSurface</code></td></tr>
+    <tr><td>client model</td><td><code>useSurfaceApp()</code></td><td>under <code>&lt;SurfaceAppProvider&gt;</code></td></tr>
+    <tr><td>commit source</td><td><code>surfaceApp()</code> Vite plugin / <code>resolveCommit()</code></td><td>into vite.config &amp; server boot</td></tr>
+  </tbody>
+</table>
+<p>And the commit is <strong>resolved once</strong> — <code>SURFACE_APP_COMMIT</code> env, else <code>git rev-parse --short HEAD</code>, else <code>"dev"</code> (which <code>clientIsStale</code> already treats as never-stale) — then fed to both the client define and the server cell. No app writes a sha.</p>
 
 <h2>The API — entrypoints</h2>
 <p>One package, sub-path entrypoints mirroring @kolu/surface's <code>exports</code> map. Pure kernels under <code>utils/</code>.</p>
 
 <h3>/server <span class="tag srv">@kolu/surface-app/server</span></h3>
-<pre><span class="k">import</span> { installSurfaceApp } <span class="k">from</span> <span class="s">"@kolu/surface-app/server"</span>;
-installSurfaceApp(app, { clientDist, manifest: { name: <span class="s">`kolu@${host}`</span>, themeColor, icons, <span class="c">/* …passthrough */</span> } });
-<span class="c">// = installFreshStatic + installPwaManifest + the buildInfo server impl, wired. Granular pieces exported too.</span></pre>
+<pre><span class="k">import</span> { installSurfaceApp, buildInfoServer } <span class="k">from</span> <span class="s">"@kolu/surface-app/server"</span>;
+<span class="c">// compose the buildInfo impl into your surface router — commit auto-resolved, not hand-written:</span>
+implementSurface(surface, { channel, cells: { ...buildInfoServer() } });
+<span class="c">// one call serves the shell fresh + the manifest + /sw.js (retirement). Granular pieces exported too.</span>
+installSurfaceApp(app, { clientDist, manifest: { name: <span class="s">`kolu@${host}`</span>, themeColor, icons } });</pre>
 
 <h3>/surface — compose the library's surface <span class="tag sf">@kolu/surface-app/surface</span></h3>
 <pre><span class="k">import</span> { surfaceAppSurface } <span class="k">from</span> <span class="s">"@kolu/surface-app/surface"</span>;   <span class="c">// or defineBuildInfo(...) to extend</span>
@@ -195,18 +211,25 @@ retireServiceWorker();
 <span class="c">// then render your own chrome from useSurfaceApp() — README has the snippets.</span></pre>
 <p class="muted">No styled components ship: a tailwind app (kolu) and a different-CSS app (drishti) render their own from the same model. <code>controlPlane</code> takes one client; a many-client app passes its control-plane client, since the model is global.</p>
 
+<h3>/vite — the commit, resolved once <span class="tag nix">@kolu/surface-app/vite</span></h3>
+<pre><span class="k">import</span> { surfaceApp } <span class="k">from</span> <span class="s">"@kolu/surface-app/vite"</span>;
+plugins: [solid(), surfaceApp()]   <span class="c">// resolves git HEAD (or SURFACE_APP_COMMIT, or "dev"),</span>
+                                   <span class="c">// injects __SURFACE_APP_COMMIT__ + ships its type — no define, no env.d.ts, no sha literal.</span></pre>
+<p class="muted">A non-Vite build calls <code>resolveCommit()</code> and feeds its own bundler define (<code>Bun.build({ define })</code>); a nix-built client uses <code>withCommitStamp</code>. One resolver, one source of truth.</p>
+
 <h2>Using it — kolu &amp; drishti</h2>
 <p>Both are SolidJS + Hono on <code>@hono/node-server</code>, both vendor <code>@kolu/*</code> via npins (zero flake inputs), so adding surface-app is one overlay line each. <strong>Same model + same UX</strong>; kolu only differs by extending build identity for its pty-host axis.</p>
-<pre><span class="c">// drishti — server</span>
-installSurfaceApp(app, { clientDist, manifest: { name: <span class="s">"drishti"</span>, themeColor: <span class="s">"#0e7490"</span>, icons } });
-<span class="c">// drishti — surface (the model is global → control-plane / admin surface)</span>
+<pre><span class="c">// drishti — surface: compose the buildInfo definition (global → control-plane surface)</span>
 <span class="k">export const</span> adminSurface = composeSurfaces(surfaceAppSurface, defineSurface({ cells: { hosts, … } }));
-<span class="c">// drishti — client (renders its own chrome from the model)</span>
+<span class="c">// drishti — server: compose the impl + serve the shell (commit auto-resolved; /sw.js served by the lib)</span>
+implementSurface(adminSurface, { channel, cells: { ...buildInfoServer() } });
+installSurfaceApp(app, { clientDist, manifest: { name: <span class="s">"drishti"</span>, themeColor: <span class="s">"#0e7490"</span>, icons } });
+<span class="c">// drishti — vite: one plugin resolves + injects the commit</span>
+plugins: [solid(), surfaceApp()]
+<span class="c">// drishti — client: provider + your own chrome from useSurfaceApp()</span>
 retireServiceWorker();
-<span class="f">&lt;SurfaceAppProvider</span> controlPlane={adminClient}<span class="f">&gt;</span> <span class="f">&lt;Header&gt;</span>drishti <span class="f">&lt;DrishtiStatus/&gt;&lt;/Header&gt;</span> <span class="f">&lt;Routes/&gt;</span> <span class="f">&lt;/SurfaceAppProvider&gt;</span></pre>
-<pre><span class="c">// commit stamp — bundler-agnostic. server env (both): SURFACE_APP_COMMIT (via makeWrapper --set)</span>
-packages.default = surface-app.lib.withCommitStamp { inherit src; commit; };           <span class="c"># kolu (Vite + nix)</span>
-Bun.build({ define: { __SURFACE_APP_COMMIT__: JSON.stringify(commit) } });             <span class="c">// drishti (Bun, one line)</span></pre>
+<span class="f">&lt;SurfaceAppProvider</span> controlPlane={adminClient}<span class="f">&gt;</span> <span class="f">&lt;Header&gt;</span>drishti <span class="f">&lt;DrishtiStatus/&gt;&lt;/Header&gt;</span> <span class="f">&lt;/SurfaceAppProvider&gt;</span></pre>
+<p class="muted"><strong>Zero hardcoded commits, defines, stores, or <code>/sw.js</code> routes</strong> — every line composes a library fragment. kolu is identical but passes its pty-host source to <code>buildInfoServer</code> + the extended <code>defineBuildInfo</code>. To <em>see</em> skew in dev, boot the server with <code>SURFACE_APP_COMMIT=&lt;other&gt;</code> — a real deploy-simulating override, not a sha baked into the client.</p>
 <p class="muted"><strong>Prerequisite for drishti:</strong> its <code>Bun.build</code> emits unhashed filenames (<code>main.js</code>), which can't be cached <code>immutable</code> (#1). A small drishti PR to switch to content-hashed output lands first.</p>
 
 <h2>UI — example, not shipped</h2>
