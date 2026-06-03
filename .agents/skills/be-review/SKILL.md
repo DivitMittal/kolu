@@ -1,7 +1,7 @@
 ---
 name: be-review
 description: Run /be's review gauntlet in PARALLEL — codex⇄claude, lowy⇄hickey, and code-police each debate to consensus in their own git worktree at the same time, then consolidate the per-track commits onto the branch (the rare overlap is reconciled) and post a detailed PR comment per track. Use from /be §4, or when the user asks to "run the review gauntlet in parallel". Requires Claude Code's Workflow tool.
-argument-hint: "[--base <branch>] [--tracks codex,lens,police] [--no-commit] [--no-comment]"
+argument-hint: "[--base <branch>] [--tracks codex,lens,police] [--no-commit] [--no-comment] [--no-rich-comment]"
 ---
 
 # Parallel review gauntlet
@@ -92,9 +92,15 @@ to `cd`.
   discarding the uncommitted edits; inspect and tear them down yourself. Default is
   to commit, which is what actually ships fixes.
 - **`--no-comment`**: suppress the PR comments. By default the **Report** phase
-  posts a detailed PR comment per track (codex debate table, lens per-finding
-  ledger, police findings) plus the consolidation ledger — the review trail the
-  gauntlet exists to leave. This flag reports in chat only.
+  posts a detailed PR comment per track plus the consolidation ledger — the review
+  trail the gauntlet exists to leave. This flag reports in chat only.
+- **`--no-rich-comment`** (maps to `richComment: false`): force the cheap
+  deterministic string-builder comments. By **default** (`richComment: true`) each
+  comment is authored by a per-track **reporter agent** (narrative + tables +
+  reasoning, synthesized from the track's full structured result) rather than the
+  terse builders. The builders remain the **baseline** the agent improves and the
+  **fallback** on empty/invalid output; a trivial track (track-error / clean / no
+  findings) skips the agent. Use this flag when you want the fast, no-agent comments.
 
 ## Steps
 
@@ -129,7 +135,8 @@ Workflow({
     rationale: "<optional author note on deliberate decisions>",
     tracks: ["codex", "lens", "police"],   // also the consolidation order
     commit: <false only if --no-commit>,
-    comment: <false only if --no-comment>
+    comment: <false only if --no-comment>,
+    richComment: <false only if --no-rich-comment; default true (reporter agents)>
   }
 })
 ```
@@ -143,8 +150,10 @@ for concurrent ones.
 It runs five phases the user can watch via `/workflows`: **Setup** (fan out one
 detached worktree per track under `.worktrees/`), **Tracks** (the three gauntlets
 run concurrently to consensus), **Consolidate** (cherry-pick each track's commits
-onto the branch, reconciling overlap), **Report** (post a detailed PR comment per
-track + the consolidation ledger), **Cleanup** (tear down the worktrees). It
+onto the branch, reconciling overlap), **Report** (a per-track **reporter agent**
+authors a detailed PR comment from each track's structured result — narrative +
+tables + reasoning — plus the consolidation ledger; `richComment: false` falls back
+to the terse deterministic builders), **Cleanup** (tear down the worktrees). It
 returns:
 
 ```
