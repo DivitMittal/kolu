@@ -17,6 +17,11 @@ import Terminal from "../../components/Terminal.astro";
 import AtlasMockup from "../../components/AtlasMockup.astro";
 import Roadmap from "../../components/Roadmap.astro";
 import Milestone from "../../components/Milestone.astro";
+import Stamp from "../../components/second-brain/Stamp.astro";
+
+export const Spark = (props) => (
+  <span style={{ fontFamily: "var(--mono)", fontSize: "0.85em", color: "#5a3ff0", background: "#efebff", border: "1px solid #d4cbff", borderRadius: "5px", padding: "0.04em 0.4em" }}>{props.children}</span>
+);
 
 > **This doc dogfoods itself** — authored as MDX, living *in* the Atlas it
 > describes (`docs/atlas/`), rendered to a self-contained
@@ -138,6 +143,23 @@ section), so notes never import it.
 next ○) with rich children. Usage:
 `<Milestone status="done" label="Shipped">…</Milestone>`; see [Roadmap](#roadmap)
 below for the live one.
+
+### Bring your own component
+
+The shared kit isn't a cage — a session can define or import its own, in order
+of friction (all three are live in *this* note):
+
+1. **Inline in this file** — an `export const` at the top of the `.mdx` (JSX
+   rules: `style={{…}}`, `className`). Defined here as `Spark`, used live:
+   <Spark>inline</Spark>.
+2. **Co-located `.astro` file** — a real component (scoped `<style>`, typed
+   props, plain HTML — no JSX gotcha) imported just for this note from
+   `src/components/second-brain/Stamp.astro`: <Stamp label="note-local" />.
+3. **Raw inline markup** — for a true one-off, drop JSX inline, no named
+   component: <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8em", border: "1px dashed var(--rule)", borderRadius: "5px", padding: "0.05em 0.4em", color: "var(--ink-dim)" }}>raw inline JSX</span>.
+
+Each rebuilds with `just atlas::build` and passes `ci::atlas-sync` like the kit.
+**Promotion path:** inline → co-located → shared kit, once it proves reused.
 
 ## Navigation — generated, not hand-curated
 
