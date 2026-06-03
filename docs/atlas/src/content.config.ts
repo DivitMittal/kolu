@@ -19,6 +19,10 @@ const atlas = defineCollection({
     status: z
       .enum(["proposed", "accepted", "implemented", "superseded"])
       .optional(),
+    // Optional MOC edge: the id (flat slug) of the note this one nests under in
+    // the generated index tree. A note with no parent (or a missing/draft
+    // parent) is a root — membership stays automatic, only the edge is authored.
+    parent: z.string().optional(),
     updated: z.coerce.date().optional(),
     draft: z.boolean().default(false),
   }),

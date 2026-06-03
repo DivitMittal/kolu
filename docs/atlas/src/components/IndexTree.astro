@@ -1,0 +1,30 @@
+---
+// Recursive index tree. Renders a note card per node and recurses into children
+// via Astro.self, so the Atlas index nests notes under their `parent`. Visual
+// classes (.tree, .note-link, .badge, …) live in AtlasLayout's global CSS.
+import type { TreeNode } from "../lib/indexTree";
+
+interface Props {
+  nodes: TreeNode[];
+}
+const { nodes } = Astro.props as Props;
+---
+<ul class="tree">
+  {
+    nodes.map((node) => (
+      <li class="tree-item">
+        <a class="note-link" href={`./${node.note.id}.html`}>
+          <div class="note-row">
+            <h3 class="note-name">{node.note.data.title}</h3>
+            <span class={`badge m-${node.note.data.maturity}`}>{node.note.data.maturity}</span>
+            <span class="badge badge-kind">{node.note.data.kind}</span>
+            {node.note.data.status && <span class="badge badge-muted">{node.note.data.status}</span>}
+            {node.note.data.draft && <span class="badge badge-draft">draft</span>}
+          </div>
+          <p class="note-desc">{node.note.data.description}</p>
+        </a>
+        {node.children.length > 0 && <Astro.self nodes={node.children} />}
+      </li>
+    ))
+  }
+</ul>

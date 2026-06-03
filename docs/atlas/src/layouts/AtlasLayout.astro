@@ -83,20 +83,17 @@ const fullTitle = title === "Atlas" ? "the kolu Atlas" : `${title} · the kolu A
   }
   .atlas-title .accent { color: var(--amber); }
   .lede { color: var(--ink-dim); max-width: 34rem; margin: 1.2rem 0 0; }
-  .kind-group { margin-top: 2.6rem; }
-  .kind-head {
-    font-family: var(--mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--ink-muted);
-    border-bottom: 1px solid var(--rule);
-    padding-bottom: 0.5rem;
-    margin: 0 0 0.25rem;
+  /* index MOC tree (see IndexTree.astro) */
+  .tree { list-style: none; margin: 2.2rem 0 0; padding: 0; }
+  .tree-item { border-bottom: 1px solid var(--rule); }
+  /* nested children: indent + a guide rule, no doubled bottom border */
+  .tree-item .tree {
+    margin: 0 0 0.4rem 1.1rem;
+    padding-left: 1.1rem;
+    border-left: 1px solid var(--rule);
   }
-  .note-list { list-style: none; margin: 0; padding: 0; }
-  .note-item { border-bottom: 1px solid var(--rule); }
-  .note-link { display: block; padding: 1.3rem 0; }
+  .tree-item .tree .tree-item:last-child { border-bottom: 0; }
+  .note-link { display: block; padding: 1.2rem 0; }
   .note-link:hover { text-decoration: none; }
   .note-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.7rem; }
   .note-name { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; color: var(--ink); margin: 0; }
@@ -112,6 +109,7 @@ const fullTitle = title === "Atlas" ? "the kolu Atlas" : `${title} · the kolu A
   .m-seedling { color: var(--gold); }
   .m-budding { color: var(--teal); }
   .m-evergreen { color: var(--green); }
+  .badge-kind { color: var(--ink-muted); }
   .badge-muted { color: var(--ink-muted); }
   .badge-draft { color: var(--alert); }
 

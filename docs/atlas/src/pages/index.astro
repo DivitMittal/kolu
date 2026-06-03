@@ -1,17 +1,17 @@
 ---
 import { getCollection } from "astro:content";
+import IndexTree from "../components/IndexTree.astro";
 import AtlasLayout from "../layouts/AtlasLayout.astro";
+import { buildNoteTree } from "../lib/indexTree";
 
-// Generated index: derived from each note's frontmatter. Drafts are hidden from
-// the built index but stay reachable in `astro dev`. A note can never be
-// "unfiled" — so this replaces a hand-curated MOC and its CI gate. Links are
+// Generated MOC tree: notes nest under their `parent` (a flat slug). Drafts are
+// hidden from the build but reachable in `astro dev`. A note with no parent is a
+// root, so membership stays automatic — nothing falls through unfiled. Links are
 // relative (`./<slug>.html`) so the committed pages navigate in the Code tab.
 const notes = (await getCollection("atlas"))
   .filter((n) => import.meta.env.DEV || !n.data.draft)
   .sort((a, b) => a.data.title.localeCompare(b.data.title));
-
-const KINDS = ["plan", "design", "review", "retro", "research", "decision"] as const;
-const byKind = (k: string) => notes.filter((n) => n.data.kind === k);
+const roots = buildNoteTree(notes);
 ---
 
 <AtlasLayout
@@ -24,37 +24,17 @@ const byKind = (k: string) => notes.filter((n) => n.data.kind === k);
     <p class="lede">
       kolu's in-repo knowledge base — authored in markdown/MDX, rendered to
       self-contained HTML you can read right here in the Code tab. This index is
-      generated from each note's frontmatter, so there is no hand-curated map to
-      drift and nothing falls through unfiled.
+      a tree generated from frontmatter: a note nests under its <code>parent</code>,
+      and anything without one is a root — so nothing falls through unfiled.
     </p>
 
     {
-      KINDS.map((k) =>
-        byKind(k).length > 0 ? (
-          <section class="kind-group">
-            <h2 class="kind-head">{k}</h2>
-            <ul class="note-list">
-              {byKind(k).map((n) => (
-                <li class="note-item">
-                  <a class="note-link" href={`./${n.id}.html`}>
-                    <div class="note-row">
-                      <h3 class="note-name">{n.data.title}</h3>
-                      <span class={`badge m-${n.data.maturity}`}>{n.data.maturity}</span>
-                      {n.data.status && <span class="badge badge-muted">{n.data.status}</span>}
-                      {n.data.draft && <span class="badge badge-draft">draft</span>}
-                    </div>
-                    <p class="note-desc">{n.data.description}</p>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null,
-      )
-    }
-    {
-      notes.length === 0 && (
-        <p class="mono" style="color:var(--ink-muted);padding:3rem 0;text-align:center">// the Atlas is empty</p>
+      roots.length > 0 ? (
+        <IndexTree nodes={roots} />
+      ) : (
+        <p class="mono" style="color:var(--ink-muted);padding:3rem 0;text-align:center">
+          // the Atlas is empty
+        </p>
       )
     }
   </div>
