@@ -217,16 +217,16 @@ Bun.build({ define: { __SURFACE_APP_COMMIT__: JSON.stringify(commit) } });      
   <div class="rrow">
     <span class="dot warn"></span><span>SRV <span class="srv">d5aed3c</span></span><span>·</span><span>CLIENT <span class="cli">617b80d</span></span>
     <span class="chip">≠ srv</span>
-    <button class="minibtn">⟳ Reload</button>
+    <button type="button" class="minibtn">⟳ Reload</button>
   </div>
 </div>
 
 <p class="lbl">A prominent one-tap recovery prompt (durable, not a transient toast)</p>
 <div class="stage">
   <div class="reload">
-    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>reload</title><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
     <div class="msg"><b>A new version is available</b><span>This tab is running an older build (617b80d → d5aed3c).</span></div>
-    <button>Reload</button>
+    <button type="button">Reload</button>
   </div>
 </div>
 <p class="muted">On mobile the rail collapses to the chip + reload; the prompt becomes a bottom banner. Both are built from the same <code>useSurfaceApp()</code> model, so kolu's reflect pty divergence and drishti's reflect commit skew with no change to the library.</p>
