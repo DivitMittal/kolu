@@ -6,9 +6,25 @@
  * the example exists to show.
  */
 
+import { clientIsStale } from "@kolu/surface-app";
 import { defineSurface } from "@kolu/surface/define";
-import { buildInfo } from "@kolu/surface-app/surface";
+import { defineBuildInfo, serverIdentity } from "@kolu/surface-app/surface";
 import { z } from "zod";
+
+/** The example EXTENDS the default `{ commit }` build identity with a `bootId`
+ *  axis that the server only learns *asynchronously at boot* — standing in for
+ *  kolu's pty-host `system.version`, which settles over an in-process link after
+ *  the cell is already seeded. This is the interface in action: drishti takes
+ *  the default `{ commit }`, the example (like kolu) adds an axis, both ride the
+ *  same fragment. `isStale` still defaults to the commit comparison; the bootId
+ *  is informational here (rendered in the rail), so we keep the default
+ *  predicate. */
+export const buildInfo = defineBuildInfo({
+  schema: z.object({ commit: z.string(), bootId: z.string() }),
+  default: { commit: "", bootId: "" },
+  isStale: (server, clientCommit) => clientIsStale(server.commit, clientCommit),
+});
+export type ExampleBuildInfo = z.infer<typeof buildInfo.cells.buildInfo.schema>;
 
 /** App-specific live server state — pushed by the server every second (the
  *  clock) and on every connect/disconnect (the client count). See server/main.ts. */
@@ -35,13 +51,9 @@ export const surface = defineSurface({
     },
   },
   procedures: {
-    // app-specific probe — surface-app reads `processId` on each (re)connect to
-    // tell a transient drop from a server restart (drives the connection status).
-    server: {
-      info: {
-        input: z.object({}),
-        output: z.object({ processId: z.string() }),
-      },
-    },
+    // surface-app-specific — the `server.info` identity probe, composed (not
+    // hand-written): surface-app reads `processId` on each (re)connect to tell a
+    // transient drop from a server restart (drives the connection status).
+    ...serverIdentity.procedures,
   },
 });

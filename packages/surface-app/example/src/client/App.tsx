@@ -8,6 +8,7 @@
 
 import { createSignal, Show } from "solid-js";
 import { SurfaceAppProvider, useSurfaceApp } from "@kolu/surface-app/solid";
+import { buildInfo, type ExampleBuildInfo } from "../common/surface";
 import { app, ws } from "./wire";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -18,7 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 function Shell() {
-  const pwa = useSurfaceApp();
+  const pwa = useSurfaceApp<ExampleBuildInfo>();
   // app-specific cell — composed alongside surface-app's buildInfo, same wire,
   // same client. The server pushes it live; Solid re-renders on each delta.
   const stats = app.cells.serverStats.use({ authority: "server" });
@@ -45,6 +46,12 @@ function Shell() {
         <span class="sep">·</span>
         <span>
           SRV <b class="srv">{pwa.server()?.commit || "…"}</b>
+        </span>
+        <span class="sep">·</span>
+        <span>
+          {/* the async boot-time axis — empty until the fragment's async source
+              settles and `connect` republishes it over the wire */}
+          BOOT <b class="srv">{pwa.server()?.bootId || "…"}</b>
         </span>
         <span class="sep">·</span>
         <span>
@@ -120,9 +127,10 @@ function Shell() {
 
 export default function App() {
   return (
-    <SurfaceAppProvider
+    <SurfaceAppProvider<ExampleBuildInfo>
       controlPlane={app}
       clientCommit={__SURFACE_APP_COMMIT__}
+      buildInfo={buildInfo}
       ws={ws}
       probe={() => app.rpc.surface.server.info({})}
     >

@@ -35,8 +35,16 @@ The library ships **fragments**; an app is their **composition**, with no bespok
 | server impl | `buildInfoServer()` | into `implementSurface` |
 | client model | `useSurfaceApp()` | under `<SurfaceAppProvider>` |
 | commit source | `surfaceApp()` Vite plugin / `resolveCommit()` | into vite.config & server boot |
+| restart axis | `serverIdentity` (procedure) + `serverIdentity()` (impl) | into `defineSurface` & `implementSurface` |
 
-The commit is **resolved once** — `SURFACE_APP_COMMIT` env → `git rev-parse --short HEAD` → `"dev"` (which `clientIsStale` treats as never-stale) — and fed to both the client define and the server cell. **No app writes a sha.**
+The **restart axis** is the counterpart to the skew axis: the `server.info`
+probe that reads a per-process `processId`. It used to be re-derived per app
+(kolu's `rpc.ts`, the example, drishti); now it's a fragment — `serverIdentity`
+(the procedure shape, spread into `defineSurface`) plus `serverIdentity()` (the
+impl, spread into `implementSurface`) — so the restart axis is as turnkey as the
+commit axis. No app hand-writes the `processId` procedure.
+
+The commit is **resolved once** — `SURFACE_APP_COMMIT` env → `git rev-parse --short HEAD` → `"dev"` (which `clientIsStale` treats as never-stale) — and fed to both the client define and the server cell. **No app writes a sha.** If your build system names the env var otherwise (kolu's `KOLU_COMMIT_HASH`), pass it: `resolveCommit("KOLU_COMMIT_HASH")` / `surfaceApp({ commitEnvVar: "KOLU_COMMIT_HASH" })` — or just export `SURFACE_APP_COMMIT` in your build (simpler).
 
 ## Install
 
@@ -47,14 +55,39 @@ Workspace-private. Wire it into the server and client packages:
 { "dependencies": { "@kolu/surface-app": "workspace:*" } }
 ```
 
+### Consumer tsconfig: `allowImportingTsExtensions`
+
+surface-app ships **raw TS with no build step** (`main: ./src/index.ts`), and its
+internal relative imports carry explicit `.ts` extensions (`./commit.ts`, …).
+That extension is **load-bearing at runtime**: the `/vite` and `/commit`
+entrypoints are loaded by Node's native ESM resolver (Vite loads `vite.config.ts`
+through it), which — unlike a bundler or `tsx` — will **not** probe for a `.ts`
+file behind an extensionless specifier. So the extensions can't simply be
+dropped (sibling `@kolu/surface` gets away with extensionless imports only
+because it's never Node-ESM-loaded as a config dependency).
+
+The consequence: a consumer that type-checks surface-app's sources under
+`moduleResolution: "bundler"` **must** enable the matching compiler flag, or
+`tsc` reports `TS5097` ("an import path can only end with a '.ts' extension when
+`allowImportingTsExtensions` is enabled") for each internal import:
+
+```jsonc
+// your tsconfig.json (or tsconfig.base.json)
+{ "compilerOptions": { "allowImportingTsExtensions": true, "noEmit": true } }
+```
+
+kolu's root `tsconfig.base.json` already sets it (so this package and the
+`example/` inherit it); a standalone consumer (drishti) must add it.
+
 ## Entrypoints
 
 | Entry | Exports | Side |
 |---|---|---|
 | `@kolu/surface-app` | `cacheControlFor`, `isImmutableAssetPath`, `clientIsStale`, `isCleanRef`, `SW_SOURCE` — the pure, framework-free kernels | core |
-| `@kolu/surface-app/server` | `installSurfaceApp`, `installFreshStatic`, `installPwaManifest`, `buildInfoServer` (Hono) | server |
-| `@kolu/surface-app/surface` | `buildInfo`, `defineBuildInfo` — the build-identity fragment | common |
+| `@kolu/surface-app/server` | `installSurfaceApp`, `installFreshStatic`, `installPwaManifest`, `buildInfoServer`, `serverIdentity` (Hono) | server |
+| `@kolu/surface-app/surface` | `buildInfo`, `defineBuildInfo`, `serverIdentity`, `ServerProbeSchema` — the composable fragments | common |
 | `@kolu/surface-app/solid` | `retireServiceWorker`, `reloadForUpdate`, `SurfaceAppProvider`, `useSurfaceApp`, `createServerLifecycle` | client |
+| `@kolu/surface-app/lifecycle` | `retireServiceWorker`, `reloadForUpdate` — framework-free, for root setup before any component | client |
 | `@kolu/surface-app/vite` | `surfaceApp()` plugin, `resolveCommit()` | build |
 | `@kolu/surface-app/client` | the `__SURFACE_APP_COMMIT__` type, via `/// <reference>` | client types |
 
@@ -65,12 +98,16 @@ Workspace-private. Wire it into the server and client packages:
 ```ts
 // common/surface.ts
 import { defineSurface } from "@kolu/surface/define";
-import { buildInfo } from "@kolu/surface-app/surface";
+import { buildInfo, serverIdentity } from "@kolu/surface-app/surface";
 
 export const surface = defineSurface({
   cells: {
-    ...buildInfo.cells,   // surface-app: build identity
+    ...buildInfo.cells,            // surface-app: build identity (skew axis)
     // ...your own cells / collections / streams / events
+  },
+  procedures: {
+    ...serverIdentity.procedures,  // surface-app: the `server.info` probe (restart axis)
+    // ...your own procedures
   },
 });
 ```
@@ -80,11 +117,12 @@ export const surface = defineSurface({
 ```ts
 // server/main.ts
 import { implementSurface, publisherChannel } from "@kolu/surface/server";
-import { buildInfoServer, installSurfaceApp } from "@kolu/surface-app/server";
+import { buildInfoServer, installSurfaceApp, serverIdentity } from "@kolu/surface-app/server";
 
 const { router, ctx } = implementSurface(surface, {
   channel: <T>(name: string) => publisherChannel<T>(publisher, name),
-  cells: { ...buildInfoServer() },   // commit auto-resolved — no hand-written store, no sha
+  cells: { ...buildInfoServer() },        // commit auto-resolved — no hand-written store, no sha
+  procedures: { ...serverIdentity() },    // one processId per process — no hand-written probe
 });
 
 // ...mount the oRPC router over HTTP + WS, registering /rpc BEFORE the static installers...
@@ -105,6 +143,7 @@ installSurfaceApp(app, {
 // vite.config.ts
 import { surfaceApp } from "@kolu/surface-app/vite";
 export default defineConfig({ plugins: [solid(), surfaceApp()] });
+// surfaceApp({ commitEnvVar: "KOLU_COMMIT_HASH" }) to read a differently-named env var.
 ```
 
 ```ts
@@ -114,20 +153,45 @@ export default defineConfig({ plugins: [solid(), surfaceApp()] });
 
 A non-Vite build (e.g. `Bun.build`) calls `resolveCommit()` and feeds its own `define`; a nix-built client stamps the same value. One resolver, one source of truth.
 
+#### Bun.build consumers
+
+The freshness contract's load-bearing property is **content-hashed asset filenames** — `immutable` is only correct because a changed bundle gets a new URL. Vite hashes by default; with `Bun.build` you opt in via `naming`, then point the shell at the hashed URLs:
+
+```ts
+// build.ts
+const result = await Bun.build({
+  entrypoints: ["src/client/main.tsx"],
+  outdir: "dist/assets",                       // emit under the default /assets/ prefix
+  naming: "[dir]/[name]-[hash].[ext]",         // <-- the hashing that makes `immutable` correct
+  define: { __SURFACE_APP_COMMIT__: JSON.stringify(resolveCommit()) },
+});
+
+// Rewrite the hand-templated index.html to the emitted hashed URLs (don't hard-code
+// `/assets/main.js`): take each output's path and point the <script>/<link> at it.
+const entry = result.outputs.find((o) => o.kind === "entry-point");
+// → write dist/index.html with <script src="/assets/main-<hash>.js"> (and the css link)
+```
+
+Two checks: the emitted files must fall **under the asset prefix** `installFreshStatic` pins as `immutable` (default `/assets/`; override via `assetPrefix` to match your `outdir`), and the shell's references must be the **hashed** URLs — an unhashed reference would be served `no-cache` (correct, but defeats long-term caching). The shell itself (`index.html`) stays `no-store` and is never hashed.
+
 ### client — the headless model; you render the chrome
 
 ```ts
 // client/App.tsx
-import { retireServiceWorker, SurfaceAppProvider, useSurfaceApp } from "@kolu/surface-app/solid";
+import { SurfaceAppProvider, useSurfaceApp } from "@kolu/surface-app/solid";
 
+// retireServiceWorker() runs at root setup, before any component — import it from
+// the framework-free /lifecycle subpath (re-exported from /solid for convenience):
+import { retireServiceWorker } from "@kolu/surface-app/lifecycle";
 retireServiceWorker();   // unregister any worker an earlier build left + drop its caches
 
 // at the root — surface-app derives the connection lifecycle from the transport:
 <SurfaceAppProvider
-  controlPlane={app}
+  controlPlane={app}                               // typed: must carry the buildInfo cell
   clientCommit={__SURFACE_APP_COMMIT__}
   ws={ws}                                          // open/close → connecting/live/down
   probe={() => app.rpc.surface.server.info({})}    // { processId } → reconnected vs restarted
+  // isStale={(srv, cli) => …}                      // optional: override the predicate per section
 >
   …your app…
 </SurfaceAppProvider>
@@ -146,24 +210,70 @@ const pwa = useSurfaceApp();
 
 ## Build identity is an interface
 
-What "the build" means is the one thing apps vary. The default is the commit; extend it via `defineBuildInfo`:
+What "the build" means is the one thing apps vary. The default is the commit; extend it via `defineBuildInfo`. The `isStale` predicate takes the **server's** build identity and the **client's baked commit string** — `(server: T, clientCommit: string | undefined) => boolean` — and defaults to the clean-ref-guarded commit comparison:
 
 ```ts
-// default — exposes { commit }
+// default — exposes { commit }; drishti uses exactly this.
 export const buildInfo = defineBuildInfo({
   schema: z.object({ commit: z.string() }),
-  isStale: (srv, cli) => clientIsStale(srv.commit, cli.commit),
+  default: { commit: "" },
+  // isStale defaults to (server, clientCommit) => clientIsStale(server.commit, clientCommit)
 });
 
 // an app that adds an axis (e.g. kolu's pty-host divergence):
-const buildInfo = defineBuildInfo({
-  schema: z.object({ commit: z.string(), ptyHost: PtyHostRefSchema }),
-  isStale: (srv, cli) =>
-    clientIsStale(srv.commit, cli.commit) || ptyHostDiverged(srv.ptyHost, cli.ptyHost),
+const koluBuildInfo = defineBuildInfo({
+  schema: z.object({
+    commit: z.string(),
+    ptyHost: z.object({ staleKey: z.string(), navigableCommit: z.string() }).optional(),
+  }),
+  default: { commit: "", ptyHost: { staleKey: "", navigableCommit: "" } },
+  isStale: (server, clientCommit) =>
+    clientIsStale(server.commit, clientCommit) || server.ptyHost?.staleKey !== localStaleKey,
 });
 ```
 
-`buildInfoServer({ commit? })` is the matching server impl; spread it into `implementSurface`. An app that extends the schema writes its own impl alongside.
+`buildInfoServer({ buildInfo? })` is the matching server impl and is **generic over `T`** — pass the full extended value and the cell store's type narrows to it, so even an extended schema needs no hand-written store:
+
+```ts
+// default: { commit } — commit auto-resolved
+cells: { ...buildInfoServer() }
+
+// extended (sync value): the store returns KoluBuildIdentity, type-checked end to end
+cells: { ...buildInfoServer({ buildInfo: { commit, ptyHost: { staleKey, navigableCommit } } }) }
+```
+
+If you pass `buildInfo` without a `commit` (or an empty one), the resolved commit fills it in — the single-source-of-truth resolver still owns the sha. `SurfaceAppProvider` is likewise generic over `T` (pass your `buildInfo` fragment) and over the probe response `P` (a superset of `{ processId }`), so an extended schema flows through `useSurfaceApp<T>()` untyped-`any`-free.
+
+#### A boot-time-async axis flows through the same fragment
+
+When part of the build identity resolves **asynchronously at boot** — kolu's
+pty-host axis settling over the in-process link *after* the cell is seeded —
+`buildInfo` may be an **async thunk** (or a sync thunk, or a plain value). The
+fragment seeds `{ commit }` synchronously, folds the resolved value in when the
+promise settles, and `connect(ctx.cells.buildInfo)` republishes it over the
+cell's channel. The app **never** seeds-then-`ctx.set`s by hand:
+
+```ts
+const build = buildInfoServer<KoluBuildIdentity>({
+  // resolves over the link a moment after boot — return the FULL T or a Partial<T> patch
+  buildInfo: async () => ({ ptyHost: await system.version() }),
+  // optional: dedup re-publishes the way confStore cells do (default: JSON.stringify)
+  equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+});
+
+const { ctx } = implementSurface(surface, {
+  cells: { ...build },          // seeds { commit, … } synchronously
+  // …
+});
+
+// flow the late half through the SAME fragment — no hand-written second ctx.set:
+await build.buildInfo.connect(ctx.cells.buildInfo);   // republishes once settled
+```
+
+- **`buildInfo` source** — `T | (() => T) | (() => Promise<T | Partial<T>>)`. An async source returning a `Partial<T>` patches the `{ commit }` seed; a full `T` replaces it. A failed boot-time axis leaves the seed in place (the skew axis keeps working).
+- **`connect(cell)`** — drives the resolved value through the cell's ctx setter (which routes to the bus + the dedup gate), awaiting the async source first. A no-op for a sync source (re-asserting the seed is deduped). Returns a promise so a boot can `await` it.
+- **`equals`** — emitted on the cell entry, so the surface runtime suppresses a no-op re-publish on **every** write path (`connect`, a later `ctx.set`, a wire `set`), the same way kolu's confStore-backed cells declare `equals: JSON.stringify`. Defaults to `JSON.stringify` identity.
+- **`build.buildInfo.current()`** / **`build.buildInfo.ready`** — the fragment's own read of the resolved value and a promise that settles once the async source lands (handy for boot logging / tests).
 
 ## Why no service worker
 
@@ -201,7 +311,7 @@ When auditing an app's delivery (this is the judgment, in lieu of a separate ski
 
 ## Example
 
-`example/` is a runnable hello-world (Hono server + SolidJS client). It shows the composition end-to-end: surface-app's `buildInfo` and an app-specific live `serverStats` cell (uptime · clients · server clock, server-pushed) rendered side by side, plus the `≠ srv` skew rail and reload.
+`example/` is a runnable hello-world (Hono server + SolidJS client). It shows the composition end-to-end: an **extended** `buildInfo` (the default `commit` plus a `bootId` axis the server learns **asynchronously at boot** — standing in for kolu's pty-host `system.version`, flowed through the fragment's async source + `connect(...)`) and an app-specific live `serverStats` cell (uptime · clients · server clock, server-pushed) rendered side by side, plus the `≠ srv` skew rail and reload. The `BOOT` field in the rail starts at `…` and fills in once the async axis settles — the boot-time-async path, composed not hand-wired.
 
 ```sh
 cd packages/surface-app/example
@@ -215,6 +325,6 @@ To see the skew rail, give the server a different commit: `SURFACE_APP_COMMIT=de
 
 - **A read-only server cell is read with `app.cells.X.use({ authority: "server" })`** — `{ initial }` is the *local-authority* shape and won't typecheck for it. (`buildInfo` is a server cell.)
 - **The connection lifecycle is derived in-library.** `createServerLifecycle({ ws, probe })` (used by the provider) turns transport open/close + a `processId` probe into `connecting → connected → disconnected → reconnected / restarted` — kolu's `rpc.ts`, encapsulated, so the WS indicator drops into drishti unchanged. `useSurfaceApp().status()` maps it to `live / reconnecting / restarted / down`. Commit (skew) and processId (restart) stay distinct axes.
-- **`SurfaceAppProvider`'s `controlPlane` is typed `any` today.** Typing it against surface's exported `SurfaceClient` — and switching the internal `buildInfo` read to `{ authority: "server" }` — is the planned ship-time hardening.
+- **`SurfaceAppProvider`'s `controlPlane` is structurally typed.** It's constrained to `ControlPlane<T>` — a client whose `cells.buildInfo.use({ authority: "server" })` yields the build identity — so passing a client whose surface lacks `buildInfo` (drishti's admin client vs. its per-host clients) is a compile error, not a silent runtime read. A real `SurfaceClient<S>` whose surface composes `...buildInfo.cells` satisfies it. The internal read is `{ authority: "server" }` (buildInfo is a server cell).
 - **Composition is by cell-spread** (`...buildInfo.cells`) for now. If `@kolu/surface` grows a `composeSurfaces` primitive, the seam becomes "compose whole surfaces" instead of merging cell maps.
 - **No second-consumer speculation.** The boundary is shaped by kolu's and drishti's actual edges; it graduates to drishti as the app-agnosticism test.

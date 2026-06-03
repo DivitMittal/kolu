@@ -10,6 +10,7 @@
  * installers — the static catch-all is last.
  */
 
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { Hono } from "hono";
@@ -121,18 +122,147 @@ export function installSurfaceApp(
   });
 }
 
+/** A build-identity source. A plain value or a sync thunk is read at
+ *  construction (the cell is seeded with it); an async thunk is the boot-time
+ *  axis (kolu's `system.version` over the in-process link), resolving *after*
+ *  the cell is seeded with `{ commit }`. An async source may resolve a full `T`
+ *  or a `Partial<T>` patch (merged onto the seed) — so an app only computes the
+ *  axis it actually learns late, not the whole value again. */
+export type BuildInfoSource<T extends BuildInfo> =
+  | T
+  | (() => T)
+  | (() => Promise<T | Partial<T>>);
+
+/** The composable cell entry `buildInfoServer` emits — spread it straight into
+ *  `implementSurface`'s `cells` (`{ ...buildInfoServer() }`). It carries the
+ *  surface runtime's standard cell deps (`store`, `equals`) PLUS the fragment's
+ *  own async handle (`current`, `ready`, `connect`); the runtime reads only the
+ *  deps it knows and ignores the rest, so the spread stays a single clean cell
+ *  entry rather than leaking sibling keys into the cells map.
+ *
+ *  `equals` (on the entry) makes the runtime dedup every write — including
+ *  kolu's post-boot `ctx.cells.buildInfo.set` — the way confStore cells do. */
+export interface BuildInfoCellEntry<T extends BuildInfo> {
+  store: { get: () => T; set: (value: T) => void };
+  equals: (a: T, b: T) => boolean;
+  /** The value the store currently holds (after any sync source resolved). */
+  current: () => T;
+  /** Settles once an async `buildInfo` source (if any) has been applied. When
+   *  there is no async source, resolves immediately. */
+  ready: Promise<void>;
+  /** Drive a late-arriving (async) axis through the cell's publish path so it
+   *  reaches subscribers — `await frag.buildInfo.connect(ctx.cells.buildInfo)`
+   *  once at boot. The fragment owns the seed→resolve→set composition; the app
+   *  never hand-writes the `{ commit }` seed and a second `ctx.set`. A no-op
+   *  (deduped) when the source was sync — nothing late to push. */
+  connect: (cell: { set: (value: T) => void }) => Promise<void>;
+}
+
+/** What `buildInfoServer` returns: a one-cell map, spreadable into `cells`. */
+export interface BuildInfoServerFragment<T extends BuildInfo> {
+  buildInfo: BuildInfoCellEntry<T>;
+}
+
 /** The `buildInfo` cell's server implementation, as a composable fragment:
  *  `implementSurface(surface, { …, cells: { ...buildInfoServer() } })`. The
  *  commit is resolved once (env → git → `"dev"`) unless you pass one — the app
- *  never hand-writes the store or a sha. An app that extends build identity
- *  (e.g. kolu's pty-host axis) writes its own impl alongside this. */
-export function buildInfoServer(opts: { commit?: string } = {}): {
-  buildInfo: {
-    store: { get: () => BuildInfo; set: (value: BuildInfo) => void };
+ *  never hand-writes the store or a sha.
+ *
+ *  An app that EXTENDS build identity (e.g. kolu's pty-host axis) passes the
+ *  full value via `buildInfo` and the return type narrows to its schema `T`, so
+ *  the same fragment serves both the default `{ commit }` and an extended store
+ *  — no app hand-writes the cell store. When the resolved value carries a
+ *  `commit`, it's used as-is (falling back to the resolved commit only if
+ *  absent/empty), so the single-source-of-truth resolver still owns the sha.
+ *
+ *  `buildInfo` may be a plain value, a sync thunk, OR an async thunk. An async
+ *  thunk is the boot-time axis: the cell is seeded synchronously with `{ commit }`
+ *  (plus any other sync fields the app passes), the resolved value (full `T` or
+ *  a `Partial<T>` patch) is folded into the store as soon as the promise
+ *  settles, and `connect(ctx.cells.buildInfo)` (called once at boot) republishes
+ *  it to subscribers — so the late half flows through the *same* fragment
+ *  instead of a hand-written second `ctx.cells.buildInfo.set`.
+ *
+ *  `equals` (default `JSON.stringify` identity) is emitted on the cell entry, so
+ *  the surface runtime suppresses a no-op re-publish on every write path
+ *  (`connect`, a later `ctx.set`, a wire `set`) — matching kolu's
+ *  confStore-backed cells. */
+export function buildInfoServer<T extends BuildInfo = BuildInfo>(
+  opts: {
+    commit?: string;
+    buildInfo?: BuildInfoSource<T>;
+    equals?: (a: T, b: T) => boolean;
+  } = {},
+): BuildInfoServerFragment<T> {
+  const equals =
+    opts.equals ?? ((a, b) => JSON.stringify(a) === JSON.stringify(b));
+  // The seed is whatever the source gives synchronously: a plain value, a sync
+  // thunk's result, or — for an async source — nothing (just `{ commit }`) until
+  // it lands.
+  const seed =
+    typeof opts.buildInfo === "function" ? undefined : opts.buildInfo;
+  const stamp = (partial: Partial<T> | undefined): T => {
+    const commit = opts.commit ?? (partial?.commit || resolveCommit());
+    return { ...(partial ?? ({} as Partial<T>)), commit } as T;
   };
-} {
-  const commit = opts.commit ?? resolveCommit();
+  let value = stamp(seed);
+  const store = {
+    get: () => value,
+    set: (next: T) => {
+      value = next;
+    },
+  };
+  // Fold a resolved value/patch into the in-memory store (the fragment's own
+  // copy). Republishing to subscribers is `connect`'s job (it has the ctx
+  // setter); pre-`connect` writes just update the seed the next snapshot reads.
+  const fold = (resolved: T | Partial<T>): T => {
+    value = stamp({ ...value, ...resolved } as Partial<T>);
+    return value;
+  };
+  // Resolve a sync thunk eagerly; defer an async one to a single shared promise
+  // so `ready` and `connect` observe the same settled value.
+  let pending: Promise<T | Partial<T>> | undefined;
+  if (typeof opts.buildInfo === "function") {
+    const out = (opts.buildInfo as () => T | Promise<T | Partial<T>>)();
+    if (out instanceof Promise) pending = out;
+    else fold(out);
+  }
+  const ready: Promise<void> = pending
+    ? pending
+        .then((r) => void fold(r))
+        .catch(() => {
+          // A failed boot-time axis leaves the `{ commit }` seed in place — the
+          // skew axis still works; the extra axis stays at its default.
+        })
+    : Promise.resolve();
   return {
-    buildInfo: { store: { get: () => ({ commit }), set: () => {} } },
+    buildInfo: {
+      store,
+      equals,
+      current: () => value,
+      ready,
+      connect: async (cell) => {
+        await ready;
+        // Republish through the cell's ctx setter (which the runtime routes to
+        // the bus + the `equals` dedup gate). A sync-sourced fragment has
+        // nothing late to push, but re-asserting the seeded value is harmless
+        // (deduped).
+        cell.set(value);
+      },
+    },
   };
+}
+
+/** The `server.info` identity procedure's server implementation, as a
+ *  composable fragment: `implementSurface(surface, { …, procedures: { ...serverIdentity() } })`.
+ *  Mints one `processId` per process (so a reconnect to a *different* process
+ *  reads as a restart) — the restart axis's turnkey counterpart to
+ *  `buildInfoServer()`. Pass `processId` to override (e.g. a stable id in
+ *  tests). Pair with `serverIdentity.procedures` on the surface and with the
+ *  provider's `probe={() => app.rpc.surface.server.info({})}`. */
+export function serverIdentity(opts: { processId?: string } = {}): {
+  server: { info: () => Promise<{ processId: string }> };
+} {
+  const processId = opts.processId ?? randomUUID();
+  return { server: { info: async () => ({ processId }) } };
 }

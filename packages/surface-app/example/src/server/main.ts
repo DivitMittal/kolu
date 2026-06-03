@@ -8,12 +8,15 @@
  * `SURFACE_APP_COMMIT=<other>` — a real deploy-simulating override.
  */
 
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { implementSurface, publisherChannel } from "@kolu/surface/server";
-import { buildInfoServer, installSurfaceApp } from "@kolu/surface-app/server";
+import {
+  buildInfoServer,
+  installSurfaceApp,
+  serverIdentity,
+} from "@kolu/surface-app/server";
 import { resolveCommit } from "@kolu/surface-app/vite";
 import { MemoryPublisher } from "@orpc/experimental-publisher/memory";
 import { implement } from "@orpc/server";
@@ -21,7 +24,13 @@ import { RPCHandler } from "@orpc/server/fetch";
 import { RPCHandler as WsRPCHandler } from "@orpc/server/ws";
 import { Hono } from "hono";
 import { WebSocketServer } from "ws";
-import { EMPTY_STATS, type ServerStats, surface } from "../common/surface.ts";
+import { randomUUID } from "node:crypto";
+import {
+  EMPTY_STATS,
+  type ExampleBuildInfo,
+  type ServerStats,
+  surface,
+} from "../common/surface.ts";
 
 const PORT = Number(process.env.PORT ?? 7710);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -31,11 +40,6 @@ const DIST_DIR =
 
 // biome-ignore lint/suspicious/noExplicitAny: MemoryPublisher's generic is too strict for our payloads; type safety lives on the typed channels.
 const publisher = new MemoryPublisher<Record<string, any>>();
-
-// A fresh id per process — surface-app's probe compares it across reconnects to
-// tell a transient drop from a server restart. Restart the server → new id → the
-// client's status() flips to "restarted".
-const PROCESS_ID = randomUUID();
 
 // App-specific live state — the example's OWN cell, composed alongside
 // surface-app's buildInfo. The server pushes updates via ctx.cells.serverStats.set.
@@ -51,16 +55,37 @@ const statsStore = {
   },
 };
 
+// The extended build-identity fragment. The `commit` is auto-resolved (env →
+// git → "dev"); the `bootId` axis arrives ASYNCHRONOUSLY — standing in for
+// kolu's pty-host `system.version`, learned over an in-process link a moment
+// after boot. The fragment seeds `{ commit, bootId: "" }` synchronously, folds
+// the resolved patch in when the promise settles, and `connect(...)` (below)
+// republishes it to subscribers — no hand-written second `ctx.cells.buildInfo.set`.
+const build = buildInfoServer<ExampleBuildInfo>({
+  buildInfo: async () => {
+    await new Promise((r) => setTimeout(r, 50)); // the link round-trip
+    return { bootId: randomUUID().slice(0, 8) }; // a Partial<T> patch
+  },
+});
+
 const { router: surfaceRouter, ctx } = implementSurface(surface, {
   channel: <T>(name: string) => publisherChannel<T>(publisher, name),
   cells: {
-    ...buildInfoServer(), // surface-app-specific: build identity (commit auto-resolved)
+    ...build, // surface-app-specific: build identity (commit auto-resolved + async bootId)
     serverStats: { store: statsStore }, // app-specific: live server stats
   },
   procedures: {
-    server: { info: async () => ({ processId: PROCESS_ID }) },
+    // surface-app-specific: the identity probe impl (one processId per process,
+    // minted by the library). Restart the server → new id → status() flips to
+    // "restarted". Composed, not hand-written.
+    ...serverIdentity(),
   },
 });
+
+// Flow the late-arriving bootId axis through the SAME fragment: once the async
+// source settles, `connect` republishes the full value over the cell's channel
+// (deduped by the fragment's `equals`). The app never seeds-then-sets by hand.
+void build.buildInfo.connect(ctx.cells.buildInfo);
 
 /** Broadcast a stats patch to every subscriber (snapshot + delta in one call). */
 function pushStats(patch: Partial<ServerStats>): void {

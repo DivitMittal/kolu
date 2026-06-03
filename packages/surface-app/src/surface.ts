@@ -45,3 +45,22 @@ export const buildInfo: BuildInfoDef = defineBuildInfo({
   schema: z.object({ commit: z.string() }),
   default: { commit: "" },
 });
+
+/** What an identity probe reports: the server's `processId` — a value that
+ *  changes when the server restarts, so a reconnect to a *different* process is
+ *  a restart, not a transient drop. The single source of truth for the probe's
+ *  wire shape; `/solid`'s `ServerProbe` is `z.infer` of this. */
+export const ServerProbeSchema = z.object({ processId: z.string() });
+
+/** The `server.info` identity procedure as a composable fragment — the restart
+ *  axis's counterpart to `buildInfo`'s skew axis. Spread `...serverIdentity.procedures`
+ *  into your `defineSurface({ procedures })` so the probe procedure isn't
+ *  hand-written per app (kolu's rpc.ts, the example, drishti all re-derived it).
+ *  The server impl is `serverIdentity()` from `@kolu/surface-app/server`. */
+export const serverIdentity = {
+  procedures: {
+    server: {
+      info: { input: z.object({}), output: ServerProbeSchema },
+    },
+  },
+} as const;

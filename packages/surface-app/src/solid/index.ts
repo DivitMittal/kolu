@@ -24,33 +24,11 @@ import {
   type BuildInfoDef,
 } from "../surface.ts";
 
-/** Whether the SW API is exposed (any secure context — incl. localhost + the
- *  Chrome insecure-origin flag). The right gate for retirement: a worker on such
- *  an origin is removable here, where a `protocol === "https:"` check would
- *  wrongly skip it (the bug that orphaned kolu's worker). */
-const swApiAvailable =
-  typeof navigator !== "undefined" && "serviceWorker" in navigator;
-
-/** Unregister every service worker on this origin and delete its caches. Run on
- *  load so a browser left with a legacy worker self-heals; pairs with the
- *  package's self-destructing `SW_SOURCE`. No-op where the SW API isn't exposed. */
-export function retireServiceWorker(): void {
-  if (!swApiAvailable) return;
-  void navigator.serviceWorker.getRegistrations().then((regs) => {
-    for (const r of regs) void r.unregister();
-  });
-  if (typeof caches !== "undefined") {
-    void caches.keys().then((keys) => {
-      for (const key of keys) void caches.delete(key);
-    });
-  }
-}
-
-/** Apply the latest build: a plain reload. With no SW and a `no-store` shell,
- *  this always fetches the current `index.html` — and thus the current bundle. */
-export function reloadForUpdate(): void {
-  location.reload();
-}
+// The non-component lifecycle calls live in the framework-free `/lifecycle`
+// subpath; re-exported here so `<SurfaceAppProvider>` consumers reach them from
+// one import. Apps with no component in scope (root setup) import `/lifecycle`.
+export { reloadForUpdate, retireServiceWorker } from "../lifecycle.ts";
+import { reloadForUpdate } from "../lifecycle.ts";
 
 /** The live relationship to the server this client is bound to. */
 export type ConnectionStatus = "live" | "reconnecting" | "restarted" | "down";
@@ -68,7 +46,9 @@ export type ServerLifecycleEvent =
 
 /** What an identity probe reports: the server process id — a value that changes
  *  when the server restarts (so a reconnect to a *different* process is a restart,
- *  not a transient drop). Kept distinct from build identity (`commit`). */
+ *  not a transient drop). Kept distinct from build identity (`commit`). Matches
+ *  `ServerProbeSchema` from `@kolu/surface-app/surface`; an app may send a
+ *  superset (the provider is generic over the probe response — see `P`). */
 export interface ServerProbe {
   processId: string;
 }
@@ -96,9 +76,11 @@ function statusOf(kind: ServerLifecycleEvent["kind"]): ConnectionStatus {
  *  `processId`: the first connect is `connected`; a later one is `reconnected`
  *  (same id) or `restarted` (changed). A `close` after the first connect is
  *  `disconnected`. Run inside a reactive owner (e.g. `<SurfaceAppProvider>`). */
-export function createServerLifecycle(opts: {
+export function createServerLifecycle<
+  P extends ServerProbe = ServerProbe,
+>(opts: {
   ws: WsLike;
-  probe: () => Promise<ServerProbe>;
+  probe: () => Promise<P>;
 }): {
   lifecycle: Accessor<ServerLifecycleEvent>;
   status: Accessor<ConnectionStatus>;
@@ -164,28 +146,56 @@ export interface SurfaceAppModel<
   setAttention: (count: number) => void;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: surface's bound cell `.use()` is an authority-discriminated overload union that a minimal structural shape can't satisfy; the runtime path (cells.buildInfo.use().value()) is stable. Typing this against surface's exported SurfaceClient is a ship-time hardening.
-type ControlPlane = any;
+/** The structural slice of a surface client the provider needs: a `buildInfo`
+ *  server cell whose `.use({ authority: "server" })` yields the build identity.
+ *  Typing `controlPlane` against this (rather than `any`) makes passing a client
+ *  whose surface lacks `buildInfo` a compile error — the "wrong control plane"
+ *  mistake (drishti's admin client vs. its per-host clients). A real
+ *  `SurfaceClient<S>` from `@kolu/surface` whose surface composes
+ *  `...buildInfo.cells` satisfies this. The read is `{ authority: "server" }`:
+ *  `buildInfo` is a server cell, so `{ initial }` (the local-authority shape) is
+ *  wrong for it. */
+export interface ControlPlane<
+  T extends { commit: string } = { commit: string },
+> {
+  cells: {
+    buildInfo: {
+      use(opts?: { authority?: "server"; onError?: (err: Error) => void }): {
+        value: Accessor<T | undefined>;
+      };
+    };
+  };
+}
 
 const SurfaceAppContext = createContext<SurfaceAppModel>();
 
-export interface SurfaceAppProviderProps<T extends { commit: string }> {
+export interface SurfaceAppProviderProps<
+  T extends { commit: string } = { commit: string },
+  P extends ServerProbe = ServerProbe,
+> {
   /** Your control-plane surface client (the one carrying the global buildInfo
-   *  cell — for a many-client app, not a per-entity client). */
-  controlPlane: ControlPlane;
+   *  cell — for a many-client app, not a per-entity client). Constrained to a
+   *  client whose surface carries `buildInfo`, so the wrong client is a compile
+   *  error rather than a silent runtime read. */
+  controlPlane: ControlPlane<T>;
   /** This client's baked-in commit (your bundler define — e.g. injected by the
    *  surface-app commit stamp as `__SURFACE_APP_COMMIT__`). */
   clientCommit: string;
   /** The build-identity fragment — defaults to `{ commit }`. Pass your extended
    *  one (e.g. kolu's pty-host axis) to drive `stale` off it. */
   buildInfo?: BuildInfoDef<T>;
+  /** Override the stale predicate at render time. Defaults to the fragment's
+   *  `isStale` (`buildInfo.isStale`); pass this to vary staleness per UI section
+   *  (e.g. a stricter rail vs. a lenient badge) without redefining the fragment. */
+  isStale?: (server: T | undefined, clientCommit: string) => boolean;
   /** The WebSocket transport. surface-app derives the connection lifecycle from
    *  its open/close; pair with `probe` to tell a transient drop from a restart.
    *  Omit both and `status()` stays `"live"`. */
   ws?: WsLike;
   /** Reads the server's `processId` on each (re)connect — distinguishes
-   *  `reconnected` from `restarted`. Pair with `ws`. */
-  probe?: () => Promise<ServerProbe>;
+   *  `reconnected` from `restarted`. Pair with `ws`. Generic over the probe
+   *  response `P` (a superset of `{ processId }`) for forward compatibility. */
+  probe?: () => Promise<P>;
   children: JSX.Element;
 }
 
@@ -208,24 +218,30 @@ function setAttention(count: number): void {
 
 /** Provide the headless app-shell model to the tree. Render your chrome from
  *  `useSurfaceApp()` underneath it. */
-export function SurfaceAppProvider<T extends { commit: string }>(
-  props: SurfaceAppProviderProps<T>,
-): JSX.Element {
+export function SurfaceAppProvider<
+  T extends { commit: string } = { commit: string },
+  P extends ServerProbe = ServerProbe,
+>(props: SurfaceAppProviderProps<T, P>): JSX.Element {
   const def = (props.buildInfo ?? defaultBuildInfo) as BuildInfoDef<T>;
-  const cell = props.controlPlane.cells.buildInfo.use({
-    initial: def.cells.buildInfo.default,
-  });
-  const server = () => cell.value() as T | undefined;
+  // `buildInfo` is a server cell — read it with `{ authority: "server" }`, not
+  // the `{ initial }` (local-authority) shape.
+  const cell = props.controlPlane.cells.buildInfo.use({ authority: "server" });
+  const server = () => cell.value();
   // Derive the connection lifecycle in-library (kolu's rpc.ts, encapsulated):
   // open/close from the transport + a processId probe for reconnected-vs-restarted.
+  const ws = props.ws;
+  const probe = props.probe;
   const status: Accessor<ConnectionStatus> =
-    props.ws && props.probe
-      ? createServerLifecycle({ ws: props.ws, probe: props.probe }).status
-      : () => "live";
+    ws && probe ? createServerLifecycle({ ws, probe }).status : () => "live";
+  // Render-time override beats the fragment's predicate; the fragment's
+  // `isStale` wants a concrete value, so fall back to the schema default.
+  const isStale = (srv: T | undefined): boolean =>
+    props.isStale
+      ? props.isStale(srv, props.clientCommit)
+      : def.isStale(srv ?? def.cells.buildInfo.default, props.clientCommit);
   const model: SurfaceAppModel<T> = {
     status,
-    stale: () =>
-      def.isStale(server() ?? def.cells.buildInfo.default, props.clientCommit),
+    stale: () => isStale(server()),
     server,
     clientCommit: props.clientCommit,
     reload: reloadForUpdate,

@@ -12,6 +12,7 @@
     "./server": "./src/server.ts",
     "./surface": "./src/surface.ts",
     "./solid": "./src/solid/index.ts",
+    "./lifecycle": "./src/lifecycle.ts",
     "./vite": "./src/vite.ts",
     "./client": "./src/client.d.ts"
   },

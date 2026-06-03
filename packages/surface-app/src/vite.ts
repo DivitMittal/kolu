@@ -13,6 +13,10 @@ import { resolveCommit } from "./commit.ts";
 export interface SurfaceAppPluginOptions {
   /** Override the resolved commit (rarely needed; defaults to `resolveCommit()`). */
   commit?: string;
+  /** The env var the commit is read from (default `SURFACE_APP_COMMIT`). Set it
+   *  when your build system names the var otherwise (e.g. kolu's
+   *  `KOLU_COMMIT_HASH`). Ignored if `commit` is given. */
+  commitEnvVar?: string;
 }
 
 /** A minimal Vite plugin shape — structurally a `Plugin`, without taking a
@@ -25,7 +29,7 @@ interface VitePluginLike {
 export function surfaceApp(
   options: SurfaceAppPluginOptions = {},
 ): VitePluginLike {
-  const commit = options.commit ?? resolveCommit();
+  const commit = options.commit ?? resolveCommit(options.commitEnvVar);
   return {
     name: "surface-app",
     config() {
