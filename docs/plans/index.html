@@ -79,23 +79,7 @@
   <span class="f">remote-terminals.html · 208 KB</span>
   <span class="d">The implementation plan. Anchors worth knowing: <code>#lessons</code>, <code>#r4-lessons</code>, <code>#r4ui-postmortem</code> — learnings captured inline (the proto-<code>/retro</code>). <span class="muted">Candidate for the §"split monoliths" treatment.</span></span>
 </a>
-<div class="nest">
-  <a class="entry" href="./remote-terminals.pty-daemon.html">
-    <span class="t">R-4 — Local PTY daemon (@kolu/pty-host)</span> <span class="tag budding">budding</span>
-    <span class="f">remote-terminals.pty-daemon.html → pty-daemon.html</span>
-    <span class="d">Design + phases for extracting the PTY host into its own process.</span>
-  </a>
-  <a class="entry" href="./remote-terminals.pty-daemon.chrome-bar.html">
-    <span class="t">R-4 A2 — ChromeBar identity rail (srv · pty)</span> <span class="tag budding">budding</span>
-    <span class="f">remote-terminals.pty-daemon.chrome-bar.html → chrome-bar.html</span>
-    <span class="d">UI prototype for the build/commit identity rail — the surface the release version stamp lands on.</span>
-  </a>
-  <a class="entry" href="./remote-terminals.pty-daemon.tui.html">
-    <span class="t">R-4 — kolu-tui: a CLI client for kolu-server</span> <span class="tag seedling">seedling</span>
-    <span class="f">remote-terminals.pty-daemon.tui.html → pty-daemon-tui.html</span>
-    <span class="d">An in-process terminal client. <span class="muted">Relates to both <em>pty-daemon</em> and <em>chrome-bar</em> — the "one true parent" conflict the flat-slug rename resolves.</span></span>
-  </a>
-</div>
+<p class="muted" style="margin:.3rem 0 0 1.4rem">Its sub-plans — <strong>pty-daemon</strong>, <strong>chrome-bar</strong>, <strong>pty-daemon-tui</strong> — have moved to the Atlas (authored at <code>docs/atlas/src/content/atlas/</code>, rendered under <code>docs/atlas/dist/</code>). This 208&nbsp;KB monolith is deferred for a dedicated split.</p>
 <a class="entry" href="./web-delivery.html">
   <span class="t">Web delivery — the freshness contract</span> <span class="tag seedling">seedling</span> <span class="tag accent">#1149</span>
   <span class="f">web-delivery.html</span>
