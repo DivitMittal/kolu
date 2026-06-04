@@ -23,9 +23,12 @@ install:
 dev: install
     cd {{ here }} && {{ nix_shell }} pnpm dev
 
-# Type-check .astro/.mdx + TypeScript
+# Full check — astro type-check AND a real build. `astro check` alone does NOT
+# catch MDX/JSX compile errors (malformed inline components, block-body arrow
+# exports, `//` comments glued above an `export const`, …); only the build does.
+# Run both so `just atlas::check` is a true "all errors" gate.
 check: install
-    cd {{ here }} && {{ nix_shell }} pnpm check
+    cd {{ here }} && {{ nix_shell }} sh -c 'pnpm check && pnpm build'
 
 # Build the self-contained Atlas → ./dist (committed for Code-tab preview).
 # `build.format: "file"` already emits flat <slug>.html with relative links, so
@@ -33,11 +36,13 @@ check: install
 build: install
     cd {{ here }} && {{ nix_shell }} pnpm build
 
-# CI gate (wired in as ci::atlas-sync): rebuild and fail if the committed dist/
-# is stale — i.e. a note changed but the generated HTML wasn't regenerated and
-# committed. The build is deterministic, so a clean working tree means dist/
-# matches source. This is the enforcement behind the .apm Atlas rule.
-check-sync: build
+# CI gate (wired in as ci::atlas-sync): full check (types + build) + fail if the
+# committed dist/ is stale — i.e. a note changed but the generated HTML wasn't
+# regenerated and committed. Depends on `check` so the gate catches type AND
+# MDX/build errors, not just staleness. The build is deterministic, so a clean
+# working tree means dist/ matches source. This is the enforcement behind the
+# .apm Atlas rule.
+check-sync: check
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{ root }}"
