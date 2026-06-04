@@ -39,11 +39,60 @@ kolu: *two outlets, one good extension cord, and a lot of bare wire.*
 
 One source, two voltages, two clean outlets — then exposed mains:
 
-- **The source** — `useMobile.ts` ships two circuits: `isMobile` (max-width 639px) and `isTouch` (pointer: coarse).
-- **Outlet ✓** — `App.tsx:546` `match(isMobile())` → `MobileTileView | TerminalCanvas`; leaves plug in blind, no per-leaf `if`.
-- **Outlet ✓** — `withKeyboardDismiss` — the `isTouch` guard lives inside; 4 drawers inject only their setter.
-- **⚠ Bare mains** — raw `isMobile()`/`isTouch()` exported with no posture/capability interface, consumed by ~18 voltmeter-carrying sites (`useTips.ts:65,73`, `commands.tsx:318`, `openInCodeTab.ts:76`, `CodeTab.tsx:103/548`, `App.tsx:194/225`, `Terminal.tsx:538`).
-- **⚡ Voltage mismatch** — JS receptacle rated 639px, CSS (Tailwind `sm:`) rated 640px. In the 639–640 band JS says mobile, CSS says desktop — and the comment misclaims they "match".
+<div role="img" aria-label="Circuit diagram of kolu mobile wiring — one source, two receptacles, and the bare-mains consumers" style={{ background: "#0e121a", border: "1px solid var(--rule)", borderRadius: "10px", padding: "1rem", margin: "1.2rem 0", overflowX: "auto" }}>
+  <svg viewBox="0 0 980 430" xmlns="http://www.w3.org/2000/svg" fontFamily="ui-monospace, monospace" style={{ width: "100%", height: "auto", minWidth: "640px" }}>
+    <title>kolu mobile wiring — one source, two receptacles, and the bare-mains consumers</title>
+    <defs>
+      <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#7c8aa3" /></marker>
+      <marker id="arrowL" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#e8a44c" /></marker>
+    </defs>
+    <rect x="24" y="170" width="180" height="92" rx="10" fill="#141a26" stroke="#2f3b51" />
+    <text x="114" y="196" fill="#e7ecf3" fontSize="13" fontWeight="700" textAnchor="middle">useMobile.ts</text>
+    <text x="114" y="220" fill="#4cc4a3" fontSize="11.5" textAnchor="middle">isMobile · 639px</text>
+    <text x="114" y="238" fill="#6aa8ff" fontSize="11.5" textAnchor="middle">isTouch · coarse</text>
+    <text x="114" y="158" fill="#7c8aa3" fontSize="10.5" textAnchor="middle">⚡ THE SOURCE (two circuits)</text>
+    <line x1="204" y1="200" x2="330" y2="120" stroke="#4cc4a3" strokeWidth="2.5" markerEnd="url(#arrow)" />
+    <rect x="332" y="78" width="220" height="86" rx="10" fill="#141a26" stroke="#4cc4a3" />
+    <text x="442" y="104" fill="#8fe3cd" fontSize="12.5" fontWeight="700" textAnchor="middle">OUTLET ✓ App.tsx:546</text>
+    <text x="442" y="124" fill="#b4c0d4" fontSize="11" textAnchor="middle">match(isMobile())</text>
+    <text x="442" y="142" fill="#7c8aa3" fontSize="10.5" textAnchor="middle">→ MobileTileView | TerminalCanvas</text>
+    <text x="442" y="158" fill="#7c8aa3" fontSize="10" textAnchor="middle">leaves plug in blind · no per-leaf if</text>
+    <line x1="204" y1="216" x2="330" y2="216" stroke="#4cc4a3" strokeWidth="2.5" markerEnd="url(#arrow)" />
+    <rect x="332" y="182" width="220" height="70" rx="10" fill="#141a26" stroke="#4cc4a3" />
+    <text x="442" y="206" fill="#8fe3cd" fontSize="12.5" fontWeight="700" textAnchor="middle">OUTLET ✓ withKeyboardDismiss</text>
+    <text x="442" y="226" fill="#7c8aa3" fontSize="10.5" textAnchor="middle">isTouch guard lives inside</text>
+    <text x="442" y="242" fill="#7c8aa3" fontSize="10.5" textAnchor="middle">4 drawers inject only their setter</text>
+    <line x1="204" y1="240" x2="330" y2="320" stroke="#e8a44c" strokeWidth="2.5" markerEnd="url(#arrowL)" />
+    <line x1="552" y1="320" x2="610" y2="320" stroke="#e8a44c" strokeWidth="2.5" />
+    <rect x="332" y="286" width="220" height="68" rx="10" fill="#1a1206" stroke="#e8a44c" strokeDasharray="5 4" />
+    <text x="442" y="312" fill="#f0c48b" fontSize="12.5" fontWeight="700" textAnchor="middle">⚠ BARE MAINS</text>
+    <text x="442" y="332" fill="#b4c0d4" fontSize="10.5" textAnchor="middle">raw isMobile() / isTouch() exported</text>
+    <text x="442" y="348" fill="#7c8aa3" fontSize="10" textAnchor="middle">no posture / capability interface</text>
+    <g fontSize="10.5">
+      <rect x="628" y="270" width="330" height="146" rx="10" fill="#141a26" stroke="#2f3b51" />
+      <text x="644" y="290" fill="#7c8aa3" fontSize="10">~18 consumers each measure the voltage:</text>
+      <text x="644" y="312" fill="#f0c48b">🔌 useTips.ts:65,73 — suppress tips ×2</text>
+      <text x="644" y="330" fill="#f0c48b">🔌 commands.tsx:318 — erase canvas section</text>
+      <text x="644" y="348" fill="#f0c48b">🔌 openInCodeTab.ts:76 — fork the intent</text>
+      <text x="644" y="366" fill="#f0c48b">🔌 CodeTab.tsx:103/548 — density + scroll</text>
+      <text x="644" y="384" fill="#f0c48b">🔌 App.tsx:194/225 — center / switcher</text>
+      <text x="644" y="402" fill="#ef6f6f">🔌 Terminal.tsx:538 — contenteditable surgery</text>
+    </g>
+    <line x1="552" y1="320" x2="628" y2="330" stroke="#e8a44c" strokeWidth="1.5" markerEnd="url(#arrowL)" />
+    <rect x="628" y="78" width="330" height="120" rx="10" fill="#1a0e0e" stroke="#ef6f6f" strokeDasharray="5 4" />
+    <text x="793" y="102" fill="#ef9a6f" fontSize="12" fontWeight="700" textAnchor="middle">⚡ VOLTAGE MISMATCH</text>
+    <text x="793" y="128" fill="#b4c0d4" fontSize="11" textAnchor="middle">JS receptacle rated 639px</text>
+    <text x="793" y="146" fill="#b4c0d4" fontSize="11" textAnchor="middle">CSS receptacle (Tailwind sm:) 640px</text>
+    <text x="793" y="172" fill="#7c8aa3" fontSize="10" textAnchor="middle">639–640 band: JS says mobile,</text>
+    <text x="793" y="187" fill="#7c8aa3" fontSize="10" textAnchor="middle">CSS says desktop. Comment misclaims "match".</text>
+  </svg>
+</div>
+
+<div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem 1.4rem", fontFamily: "var(--mono)", fontSize: "0.72rem", color: "var(--ink-muted)", margin: "0 0 0.4rem" }}>
+  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45em" }}><i style={{ width: "0.8em", height: "0.8em", border: "2px solid #4cc4a3", borderRadius: "2px", display: "inline-block" }} />Encapsulated — appliance plugs in blind</span>
+  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45em" }}><i style={{ width: "0.8em", height: "0.8em", border: "2px solid #e8a44c", borderRadius: "2px", display: "inline-block" }} />Bare mains — consumer measures the voltage</span>
+  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45em" }}><i style={{ width: "0.8em", height: "0.8em", border: "2px dashed #ef6f6f", borderRadius: "2px", display: "inline-block" }} />Two voltages for one threshold</span>
+</div>
 
 ## ③ Scorecard
 
@@ -202,5 +251,4 @@ receptacles, and the one threshold is rated at two voltages.
 *Method · 24 subagents over a 4-phase workflow: 5 parallel mappers (66 findings)
 → independent Hickey + Lowy lenses → 16 structural claims adversarially re-read
 against source → reconciled synthesis. Source: `kolu/packages/client/src`, branch
-`brave-second`, 2026-06-01. (The original's inline SVG circuit diagram is rendered
-here as the §② text summary.)*
+`brave-second`, 2026-06-01.*
