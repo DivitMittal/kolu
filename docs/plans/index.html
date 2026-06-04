@@ -101,16 +101,6 @@
   <span class="f">code-browser-preview.solid-fileview.html → solid-fileview.html</span>
   <span class="d">"Invent the grid, slim the house" — a Source ⇄ Rendered file-view toggle built on reusable leaf packages. Phases 1–3 shipped (#1079 solid-markdown, #1082 solid-fileview, #1093 the Markdown toggle); rendered-comments (3a), HTML/SVG source, and code-fence highlighting next.</span>
 </a>
-<a class="entry" href="./code-tab-filter-empty-dirs.html">
-  <span class="t">Code-tab filter strands empty directories</span> <span class="tag budding">budding</span> <span class="tag accent">#1096</span>
-  <span class="f">code-tab-filter-empty-dirs.html</span>
-  <span class="d">Why filtering the Code-tab tree left hollow, result-less folders — Pierre's <code>remove</code> promotes an emptied dir to an explicit empty folder — and the <code>directoryRemovalOps</code> fix, with the <code>/hickey</code> + <code>/lowy</code> verdict on the fix directions.</span>
-</a>
-<a class="entry" href="./dynamic-workflow-viewer.html">
-  <span class="t">Workflow viewer</span> <span class="tag budding">budding</span>
-  <span class="f">dynamic-workflow-viewer.html</span>
-  <span class="d">Integrating Claude Code dynamic-workflow JSONL into kolu — surfacing fan-out runs on the tile chrome.</span>
-</a>
 <a class="entry" href="./phantom-running-background.html">
   <span class="t">Phantom <code>running_background</code> — Claude shows “running” forever</span> <span class="tag budding">budding</span> <span class="tag accent">#1109</span> <span class="tag accent">#1017</span>
   <span class="f">phantom-running-background.html</span>
@@ -119,19 +109,14 @@
 <a class="entry" href="./web-delivery.html">
   <span class="t">Web delivery — the freshness contract</span> <span class="tag seedling">seedling</span> <span class="tag accent">#1149</span>
   <span class="f">web-delivery.html</span>
-  <span class="d">A skill + <code>@kolu/web-delivery</code> library so every kolu-shaped web/PWA app ships the <em>deployed</em> client to returning users by construction — one never-cached shell, everything else immutable, version-skew made visible &amp; one-tap recoverable. The next <em>electricity</em> (graduates to <a href="https://github.com/srid/drishti">drishti</a>); generalizes the four-times-relitigated stale-client bug (#696/#1125/#1135/#1149). <span class="muted">Sibling: <a href="./electricity.html">electricity.html</a>.</span></span>
+  <span class="d">A skill + <code>@kolu/web-delivery</code> library so every kolu-shaped web/PWA app ships the <em>deployed</em> client to returning users by construction — one never-cached shell, everything else immutable, version-skew made visible &amp; one-tap recoverable. The next <em>electricity</em> (graduates to <a href="https://github.com/srid/drishti">drishti</a>); generalizes the four-times-relitigated stale-client bug (#696/#1125/#1135/#1149). <span class="muted">Sibling: the Atlas <code>electricity</code> note.</span></span>
 </a>
 
 <h2>Reviews <span class="muted" style="font-size:.8rem; font-weight:400">— Hickey / Lowy structural audits</span></h2>
-<a class="entry" href="./electricity.html">
-  <span class="t">Electricity — identified, and their progress</span> <span class="tag evergreen">evergreen</span> <span class="tag accent">#1089</span>
-  <span class="f">electricity.html</span>
-  <span class="d">A concise tracker of kolu's <em>electricities</em> — infrastructure pulled out from beneath the app into its own thing — and where each stands. The bar: domain-agnostic · hides a hard volatility · <strong>graduates so another app can plug in</strong> (proven: <code>@kolu/surface</code> is the reactive transport of <a href="https://github.com/srid/drishti">srid/drishti</a>). Lists what's <em>done</em> (surface + nix-host → drishti, artifact-sdk, transcript, solid-pierre), what <em>shipped</em> in <a href="https://github.com/juspay/kolu/pull/1089">#1089</a> (<code>persistedPref</code>, <code>@kolu/log</code>, <code>@kolu/html-escape</code>, the <code>dom/</code>/keybind relocations), the one still <em>to build</em> (<code>@kolu/solid-xterm</code> — the SolidJS xterm-lifecycle adapter the sweep first mis-filed as "terminal domain"), and a "considered — not electricity" table (<code>defineMutation</code>, fs-watch, geometry, server-publish, commands). <span class="muted">Merges the 41-agent whole-app audit + the framework-scale re-test + the xterm correction.</span></span>
-</a>
 <a class="entry" href="./mobile-architecture-review.html">
   <span class="t">Is Mobile Electricity?</span> <span class="tag evergreen">evergreen</span>
   <span class="f">mobile-architecture-review.html</span>
-  <span class="d">A Hickey/Lowy review of kolu's mobile support. <span class="muted">Sibling: <a href="./electricity.html">electricity.html</a> (the electricity tracker).</span></span>
+  <span class="d">A Hickey/Lowy review of kolu's mobile support. <span class="muted">Sibling: the Atlas <code>electricity</code> note (the electricity tracker).</span></span>
 </a>
 <a class="entry" href="./correctness-review.html">
   <span class="t">Whole-codebase correctness review</span> <span class="tag seedling">seedling</span>
@@ -156,12 +141,6 @@
   <span class="d">What their PTY-persistence decision teaches us. <span class="muted">Links into the remote-terminals plan above.</span></span>
 </a>
 
-<h2>Demos &amp; process</h2>
-<a class="entry" href="./video-evidence.html">
-  <span class="t">Video evidence for PRs</span> <span class="tag evergreen">evergreen</span>
-  <span class="f">video-evidence.html</span>
-  <span class="d">Screencast capture + shared Pages player — the substrate the <code>evidence</code> skill and per-release demos build on.</span>
-</a>
 
 <hr>
 <p class="muted">This index is <strong>hand-written prose</strong>, deliberately — no generator. It's updated when a doc is added or renamed, the same moment you'd touch the file anyway. Dotted-name files keep their names until next edited (incremental migration); the "→" shows the flat slug each will take. Also under <code>docs/</code>: <a href="../proposals/">proposals</a> (frozen RFCs), <code>*.md</code> ralph/perf reports, <a href="../perf-investigations/">perf-investigations</a>.</p>
