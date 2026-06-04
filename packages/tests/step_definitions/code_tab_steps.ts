@@ -1,4 +1,5 @@
 import { Given, Then, When } from "@cucumber/cucumber";
+import { waitForBufferContains } from "../support/buffer.ts";
 import { pollFor } from "../support/poll.ts";
 import {
   HYDRATION_TIMEOUT,
@@ -728,6 +729,82 @@ Then(
   },
 );
 
+// Structural assertions for the rebuilt marked → DOMPurify pipeline
+// (@kolu/solid-markdown). The rendered preview must emit real GFM / inline-HTML
+// elements — tables, task checkboxes, <kbd>, alignment wrappers — and must NOT
+// emit script-capable markup. `selector` is a semantic element/attribute query
+// scoped under the preview testid (e.g. "table", "input[type=checkbox]"),
+// never a styling class.
+Then(
+  "the markdown preview should render a {string} element",
+  async function (this: KoluWorld, selector: string) {
+    await this.page.waitForFunction(
+      (sel) =>
+        !!document.querySelector(
+          `[data-testid="browse-preview-markdown"] ${sel}`,
+        ),
+      selector,
+      { timeout: POLL_TIMEOUT },
+    );
+  },
+);
+
+// Negative form, for sanitization. Scenarios assert a positive text match
+// first so the preview has demonstrably rendered before we check that a
+// dangerous element is absent (rather than merely not yet painted).
+Then(
+  "the markdown preview should not render a {string} element",
+  async function (this: KoluWorld, selector: string) {
+    await this.page.waitForFunction(
+      (sel) =>
+        document.querySelectorAll(
+          `[data-testid="browse-preview-markdown"] ${sel}`,
+        ).length === 0,
+      selector,
+      { timeout: POLL_TIMEOUT },
+    );
+  },
+);
+
+// Tailwind v4's preflight resets `list-style: none` app-wide, so the rendered
+// preview must re-declare list markers or every list renders unmarked. Assert
+// the computed marker is actually disc/decimal, not the reset `none` — a plain
+// "renders a ul" check would pass even with the bug.
+Then(
+  "the markdown preview list markers should be visible",
+  async function (this: KoluWorld) {
+    await this.page.waitForFunction(
+      () => {
+        const root = '[data-testid="browse-preview-markdown"]';
+        const ul = document.querySelector(`${root} ul:not(:has(input))`);
+        const ol = document.querySelector(`${root} ol`);
+        if (!ul || !ol) return false;
+        return (
+          getComputedStyle(ul).listStyleType === "disc" &&
+          getComputedStyle(ol).listStyleType === "decimal"
+        );
+      },
+      undefined,
+      { timeout: POLL_TIMEOUT },
+    );
+  },
+);
+
+Then(
+  "the markdown preview should not contain {string}",
+  async function (this: KoluWorld, unexpected: string) {
+    const md = this.page.locator('[data-testid="browse-preview-markdown"]');
+    // The preview is already visible at this point (asserted earlier in the
+    // scenario), so a single read is enough to confirm the text is absent.
+    const text = (await md.textContent({ timeout: POLL_TIMEOUT })) ?? "";
+    if (text.includes(unexpected)) {
+      throw new Error(
+        `markdown preview unexpectedly contained "${unexpected}"`,
+      );
+    }
+  },
+);
+
 // ── Right-panel tab switching + filter input ──
 
 When(
@@ -837,6 +914,21 @@ async function setupCodeTabFixture(
     await runShell(world, `git checkout -b feature`);
     await runShell(world, writeFiles);
     await runShell(world, `git add .`);
+    // Branch mode's gitStatus stream resolves `origin/<default>` on its FIRST
+    // read. If `git push -u origin HEAD` above is still in flight when the
+    // stream subscribes (it forks git + writes the bare repo — slow under
+    // darwin CI load), that read throws BASE_BRANCH_NOT_FOUND, which
+    // PERMANENTLY errors the subscription (no watcher, no recovery); every
+    // file-row wait then burns its full POLL_TIMEOUT and the scenario
+    // hard-fails on BOTH cucumber attempts (the same race loses twice). Block
+    // on an explicit shell-completion barrier so the whole setup — crucially
+    // the push — is done before `activateCodeTabMode` subscribes. The marker
+    // is split across a shell string-concat (`SET""TLED`) so the search text
+    // matches only the command's OUTPUT, never the typed-command echo — a real
+    // ordering barrier, not a sleep.
+    const token = work.replace(/[^a-zA-Z0-9]/g, "");
+    await runShell(world, `echo "KOLU_SET""TLED_${token}"`);
+    await waitForBufferContains(world.page, `KOLU_SETTLED_${token}`);
   } else if (mode === "browse") {
     await runShell(world, `git init ${work} && cd ${work}`);
     await runShell(world, writeFiles);

@@ -1,151 +1,103 @@
 import type { ServerLifecycleEvent } from "./rpc/rpc";
-import type { RegisterSWOptions } from "virtual:pwa-register";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-/** `virtual:pwa-register` is a Vite-plugin virtual module — unresolvable under
- *  Vitest (the PWA plugin isn't in the test config). Mock it: capture the
- *  options `initPwa` hands `registerSW`, and hand back a spy standing in for
- *  the `updateServiceWorker` function it returns. Note `registerSW` returns
- *  this spy unconditionally — even on plain HTTP where no SW registers — which
- *  is exactly why `reloadForUpdate` must not treat "function defined" as "SW
- *  present" (see the no-SW reload test below). */
+/** pwa.ts reads `lifecycle()` and `serverInfo()` from `./rpc/rpc`, which opens a
+ *  live PartySocket at module-eval and isn't importable under Vitest. Mock it to
+ *  those two accessors, driven by `h` so a test can simulate a server restart or
+ *  a client/server commit mismatch. */
 const h = vi.hoisted(() => ({
-  options: undefined as RegisterSWOptions | undefined,
-  updateSW: undefined as ReturnType<typeof vi.fn> | undefined,
   lifecycleKind: "connected" as ServerLifecycleEvent["kind"],
+  serverInfo: undefined as { commit?: string } | undefined,
 }));
-vi.mock("virtual:pwa-register", () => ({
-  registerSW: (opts: RegisterSWOptions) => {
-    h.options = opts;
-    h.updateSW = vi.fn().mockResolvedValue(undefined);
-    return h.updateSW;
-  },
-}));
-
-/** `./rpc/rpc` opens a live PartySocket at module-eval and isn't importable
- *  under Vitest. Mock it down to the one accessor pwa.ts reads — `lifecycle()`
- *  — driven by `h.lifecycleKind` so tests can simulate a server restart. */
 vi.mock("./rpc/rpc", () => ({
   lifecycle: () => ({ kind: h.lifecycleKind }),
+  serverInfo: () => h.serverInfo,
 }));
 
-/** pwa.ts holds module-level signal + registration state, and reads
- *  `navigator` at import time for `serviceWorkerSupported`; re-import per test
- *  (after any `navigator` stub) so each case starts clean. */
+/** pwa.ts reads `navigator`/`caches` (at module-eval and retirement time) and
+ *  `__KOLU_COMMIT__` (a build-time define); re-import per test, after any global
+ *  stub, so each case starts clean. */
 function loadPwa() {
   return import("./pwa");
 }
 
-const fakeReg = () =>
-  ({ update: vi.fn().mockResolvedValue(undefined) }) as unknown as {
-    update: ReturnType<typeof vi.fn>;
-  } & ServiceWorkerRegistration;
-
-/** Make `serviceWorkerSupported` evaluate `true` on the next `loadPwa()`. The
- *  node test env has a `navigator` with no `serviceWorker`, matching HTTP/LAN
- *  by default; stub one in to simulate a secure context. */
-function withServiceWorker() {
-  vi.stubGlobal("navigator", { serviceWorker: {}, onLine: true });
-}
+/** Flush the unawaited `.then()` chains `retireServiceWorker` fires. */
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   vi.resetModules();
-  vi.useFakeTimers();
-  h.options = undefined;
-  h.updateSW = undefined;
   h.lifecycleKind = "connected";
+  h.serverInfo = undefined;
+  // The node test env has a `navigator` without `serviceWorker` (matches plain
+  // HTTP/LAN); individual tests stub one in to simulate a secure context.
+  vi.stubGlobal("__KOLU_COMMIT__", "clientsha");
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
-describe("pwa service-worker update wiring", () => {
-  it("registers immediately and starts with no update pending", async () => {
-    withServiceWorker();
-    const { initPwa, updateReady } = await loadPwa();
-    initPwa();
-    expect(h.options?.immediate).toBe(true);
+describe("updateReady — when to offer a reload (no service worker)", () => {
+  it("is false when connected and the client matches the server", async () => {
+    h.serverInfo = { commit: "clientsha" };
+    const { updateReady } = await loadPwa();
     expect(updateReady()).toBe(false);
   });
 
-  it("flips updateReady once a fresh build is installed and waiting", async () => {
-    withServiceWorker();
-    const { initPwa, updateReady } = await loadPwa();
-    initPwa();
-    expect(updateReady()).toBe(false);
-    h.options?.onNeedRefresh?.();
+  it("is true on a server restart — the transient deploy signal", async () => {
+    h.lifecycleKind = "restarted";
+    const { updateReady } = await loadPwa();
     expect(updateReady()).toBe(true);
   });
 
-  it("checkForUpdate nudges the registration to look for a new build", async () => {
-    withServiceWorker();
-    const { initPwa, checkForUpdate } = await loadPwa();
-    initPwa();
-    const reg = fakeReg();
-    h.options?.onRegisteredSW?.("/sw.js", reg);
-    checkForUpdate();
-    expect(reg.update).toHaveBeenCalledOnce();
+  it("is true when the client commit provably differs from the server's — the durable signal", async () => {
+    vi.stubGlobal("__KOLU_COMMIT__", "617b80d");
+    h.serverInfo = { commit: "d5aed3c" };
+    const { updateReady } = await loadPwa();
+    expect(updateReady()).toBe(true);
   });
 
-  it("checkForUpdate is a no-op before registration resolves (e.g. HTTP/LAN)", async () => {
-    const { initPwa, checkForUpdate } = await loadPwa();
-    initPwa();
-    expect(() => checkForUpdate()).not.toThrow();
+  it("is false on a dev/dirty build even when the commit strings differ", async () => {
+    vi.stubGlobal("__KOLU_COMMIT__", "dev");
+    h.serverInfo = { commit: "d5aed3c" };
+    const { updateReady } = await loadPwa();
+    expect(updateReady()).toBe(false);
   });
+});
 
-  it("polls the registration for a new build on an interval", async () => {
-    withServiceWorker();
-    const { initPwa } = await loadPwa();
-    initPwa();
-    const reg = fakeReg();
-    h.options?.onRegisteredSW?.("/sw.js", reg);
-    expect(reg.update).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-    expect(reg.update).toHaveBeenCalled();
-  });
-
-  it("reloadForUpdate applies the waiting build via the service worker", async () => {
-    withServiceWorker();
-    const { initPwa, reloadForUpdate } = await loadPwa();
-    initPwa();
+describe("reloadForUpdate", () => {
+  it("does a plain reload (no SW to activate; the no-store shell makes it fresh)", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { reload });
+    const { reloadForUpdate } = await loadPwa();
     reloadForUpdate();
-    expect(h.updateSW).toHaveBeenCalledWith(true);
+    expect(reload).toHaveBeenCalledOnce();
+  });
+});
+
+describe("retireServiceWorker", () => {
+  it("unregisters every worker and deletes every cache when the SW API is present", async () => {
+    const unregister = vi.fn().mockResolvedValue(true);
+    const getRegistrations = vi
+      .fn()
+      .mockResolvedValue([{ unregister }, { unregister }]);
+    const cacheDelete = vi.fn().mockResolvedValue(true);
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistrations } });
+    vi.stubGlobal("caches", {
+      keys: vi.fn().mockResolvedValue(["v1", "v2"]),
+      delete: cacheDelete,
+    });
+    const { retireServiceWorker } = await loadPwa();
+    retireServiceWorker();
+    await flush();
+    expect(getRegistrations).toHaveBeenCalledOnce();
+    expect(unregister).toHaveBeenCalledTimes(2);
+    expect(cacheDelete).toHaveBeenCalledTimes(2);
   });
 
-  describe("no service worker (plain HTTP / LAN)", () => {
-    it("production initPwa() with no SW still gives a working reload", async () => {
-      // The node env's navigator has no `serviceWorker`, matching HTTP/LAN —
-      // do NOT stub one in. `registerSW` still returns its `updateSW` spy, but
-      // that spy is an inert no-op there: reloadForUpdate must NOT call it (it
-      // would silently fail to reload). It must hit `location.reload()`.
-      const reload = vi.fn();
-      vi.stubGlobal("location", { reload });
-      const { initPwa, reloadForUpdate } = await loadPwa();
-      initPwa(); // assigns updateServiceWorker (defined-but-inert)
-      reloadForUpdate();
-      expect(h.updateSW).not.toHaveBeenCalled();
-      expect(reload).toHaveBeenCalledOnce();
-    });
-
-    it("falls back to a plain reload even when initPwa was never called", async () => {
-      const reload = vi.fn();
-      vi.stubGlobal("location", { reload });
-      const { reloadForUpdate } = await loadPwa();
-      reloadForUpdate();
-      expect(reload).toHaveBeenCalledOnce();
-    });
-
-    it("surfaces the reload prompt on a server restart (no onNeedRefresh fires)", async () => {
-      // With no SW, `onNeedRefresh` can never fire, so updateReady falls back
-      // to the lifecycle signal: a server restart means a deploy likely shipped
-      // new assets, so offer a reload.
-      const { initPwa, updateReady } = await loadPwa();
-      initPwa();
-      expect(updateReady()).toBe(false);
-      h.lifecycleKind = "restarted";
-      expect(updateReady()).toBe(true);
-    });
+  it("is a no-op on an origin without the SW API (plain HTTP/LAN)", async () => {
+    vi.stubGlobal("navigator", { onLine: true });
+    const { retireServiceWorker } = await loadPwa();
+    expect(() => retireServiceWorker()).not.toThrow();
   });
 });

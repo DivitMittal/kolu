@@ -47,7 +47,9 @@ Parse `[<pr-number>] [--base <branch>] [--no-commit] [--no-comment]`:
   the repo default branch as `git symbolic-ref --short refs/remotes/origin/HEAD`
   (e.g. `origin/master`) — used **as-is**, NOT stripped to local `master` (which
   can lag the remote). Fallback `origin/master`. Step 1 runs `git fetch origin`
-  first so the ref is current.
+  first so the ref is current. The workflow then resolves this to the **merge-base**
+  of `base` and HEAD and diffs against that, so commits `base` gained since the
+  branch forked aren't reviewed as part of this change.
 - **`--no-commit`**: don't commit per round — leave all agreed changes
   uncommitted in the working tree for you to commit yourself. Default is to
   **commit each round** (see below).
@@ -104,16 +106,22 @@ collide** and the scratch never shows up in the diff codex reviews. It returns:
 
 (each `transcript[]` round also carries a `commit` SHA when that round committed.)
 
-- **consensus** — codex approved with no blocking/major findings open. This is
-  the *only* way the debate ends *normally*: it keeps running rounds until codex
-  and Claude agree, with no round cap and no deadlock exit. (The harness's own
+- **consensus** — every finding codex raised is resolved (any severity — Claude
+  fixed it or codex conceded the dispute). This is the *only* way the debate ends
+  *normally*: it keeps running rounds until codex and Claude agree on every point,
+  with no round cap and no deadlock exit. (The harness's own
   per-workflow agent backstop is the sole hard ceiling; if you ever need to stop
   a debate by hand, interrupt it via `/workflows` or `TaskStop`.)
 - **reviewer-error** — the one *abnormal* terminus: codex itself failed to
   produce a verdict (broken/unavailable CLI), so the workflow synthesized an
   error verdict and aborted rather than spin forever on a dead reviewer. This is
   **infrastructure failure, not a debate outcome** — `finalVerdict.summary`
-  carries the failure detail. Do **not** treat it as consensus (see step 3).
+  carries the failure detail (including how many attempts were made). Do **not**
+  treat it as consensus (see step 3). **Transient failures are retried first:**
+  `codex-review.sh` retries the `codex exec` invocation with linear backoff
+  (default 3 attempts; tune via `CODEX_REVIEW_RETRIES` / `CODEX_REVIEW_BACKOFF`)
+  and only synthesizes the reviewer-error verdict once every attempt comes back
+  empty — so a single codex hiccup no longer sinks the round.
 
 ### 3. Present the result
 
@@ -136,7 +144,7 @@ the per-round commits sit on the local branch for the human to review):
 - `git log --oneline <base>..HEAD` (the per-round debate commits) and
   `git diff --stat <base>` so the user sees what the debate changed.
 - A compact per-round table from `transcript` — each round's codex verdict
-  (approved? open blocking/major count), Claude's dispositions, and the
+  (approved? open-findings count), Claude's dispositions, and the
   round's `commit` SHA — so the convergence reads round by round.
 - The agreed changes are committed per round on the local branch (or, under
   `--no-commit`, uncommitted in the working tree). The user reviews, then pushes
@@ -145,7 +153,7 @@ the per-round commits sit on the local branch for the human to review):
   `--no-comment` was NOT passed, post a `## Codex ⇄ Claude debate` comment via
   `gh pr comment`. Include: the **consensus** outcome badge and the round count;
   a note that **codex reviewed at `xhigh` reasoning effort**; and a per-round
-  table (codex approved? open blocking/major findings; Claude's dispositions; the
+  table (codex approved? open-findings count; Claude's dispositions; the
   round's commit SHA) showing how the two sides converged. Use a
   single-quoted heredoc so backticks/`$` survive. This is an
   outward-facing write — it's on by default because the whole point is to leave

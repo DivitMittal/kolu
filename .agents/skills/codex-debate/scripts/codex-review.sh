@@ -65,12 +65,15 @@ fi
 rebuttal_block=""
 if [ -n "$rebuttal" ]; then
   rebuttal_block="
-CLAUDE responded to your PREVIOUS review as follows. Take it seriously: where a
-fix landed in the working tree, verify it and mark that finding resolved; where
-CLAUDE disputes a finding, either concede (mark it resolved) or hold firm with
-specific reasoning in responseToRebuttal.
+This is a FOLLOW-UP round — you already gave your full review. Your job now is to
+CLOSE OUT the findings already on the table, not re-scan the whole diff for more.
+For each existing finding: verify CLAUDE's fix and mark it resolved, or address
+CLAUDE's dispute (concede and mark resolved, or hold firm with specific reasoning
+in responseToRebuttal). Raise a NEW finding ONLY if CLAUDE's changes this round
+introduced it (a regression). Do NOT keep surfacing pre-existing issues you didn't
+raise in round 1 — that prevents the debate from ever converging.
 
-CLAUDE's response (JSON):
+CLAUDE responded to your PREVIOUS review as follows:
 $rebuttal
 "
 fi
@@ -78,51 +81,94 @@ fi
 # Unquoted heredoc: only $base and $rebuttal_block expand. No backticks and no
 # other $/$(...) appear in the body, so there is nothing else to interpret.
 prompt="$(cat <<EOF
-You are CODEX, a rigorous, fair senior code reviewer in an automated review
-debate with another AI engineer ("CLAUDE") who authored the changes.
+You are CODEX, a rigorous senior code reviewer. Review the changes in this branch
+and give your honest, thorough feedback — exactly as you would on a serious PR.
+You're in a debate with the author ("CLAUDE"), who will fix what they agree with
+and push back, with reasons, on what they don't.
 
-REVIEW SCOPE — the full current state of the working tree against the base
-branch '$base', which includes committed AND uncommitted changes. Run these
-yourself:
+Inspect the change yourself (READ-ONLY — do not modify, create, or delete anything,
+and run no git write command: add/commit/push/stash/checkout):
 
-    git diff $base       (committed + tracked-but-unstaged changes)
-    git status --short   (find untracked/new files)
+    git diff $base       (committed + unstaged changes on this branch)
+    git status --short   (untracked/new files — read those too; they aren't in the diff)
 
-Then read every new/changed file plus surrounding context and review the change
-as a whole. Untracked new files do NOT appear in 'git diff', so you MUST inspect
-'git status --short' and read those files explicitly.
+Read every changed file plus enough surrounding code to judge it in context.
+Ignore the debate's own scratch dir '.codex-debate/' if it appears.
 
-IGNORE the debate's own scratch dir '.codex-debate/' if it shows up — it holds
-this process's verdict/rebuttal files, not part of the change under review.
-
-THIS IS READ-ONLY. Do NOT modify, create, or delete any files. Do NOT run any
-git write command (add/commit/push/stash/checkout) or any other state-mutating
-command. You are only inspecting.
-
-Review for correctness bugs, logic errors, silent error-swallowing, unjustified
-fallbacks, security issues, and clear simplicity/efficiency problems. Be
-specific and concrete; cite file:line. Do NOT invent issues to look busy — if
-the change is sound, approve it.
+Give ALL your feedback in this pass — every issue worth raising, at EVERY severity
+(blocking, major, minor, nit): correctness bugs, logic errors, silently swallowed
+errors, unjustified fallbacks, security problems, and clear simplicity/efficiency
+issues. Don't hold issues back for a later round, and don't limit yourself to
+blockers — surface everything you see now. Cite file:line. (If the change is
+genuinely clean, approving with no findings is fine — just never stay quiet about
+a real issue to seem agreeable.)
 $rebuttal_block
-Return a verdict matching the provided JSON schema:
-  - approved: true ONLY when no blocking or major issues remain (minor/nits may remain).
-  - findings: reuse stable ids (F1, F2, ...) across rounds for the same issue; set
-    status=resolved once adequately addressed, else open.
-  - responseToRebuttal: address CLAUDE's disputes directly (empty on round 1).
+Return your review in the JSON schema:
+  - findings: one entry per issue, each with a severity and a stable id (F1, F2, …)
+    reused across rounds for the same issue. Set status=resolved once it is
+    adequately addressed (CLAUDE fixed it, OR you accept CLAUDE's reasoning); else open.
+  - approved: true ONLY when EVERY finding is resolved — all your feedback addressed
+    at every severity, not just blockers. The review is not done while any issue you
+    raised still stands open.
+  - responseToRebuttal: when CLAUDE disputes a finding, address each dispute
+    individually — concede (mark that finding resolved) or hold firm with specific,
+    technical reasoning. Leave no dispute unanswered. Empty on round 1.
 EOF
 )"
 
 # model_reasoning_effort=xhigh is scoped to the debate here (via -c) rather than
 # relying on the user's global ~/.codex/config.toml — review is the one place we
 # always want codex thinking at full depth, regardless of their default.
-if ! codex exec \
-      --sandbox read-only \
-      -c model_reasoning_effort="xhigh" \
-      --output-schema "$schema" \
-      -o "$out" \
-      "$prompt"</dev/null >"$log" 2>&1; then
-  echo "codex exec exited non-zero (see $log)" >&2
+#
+# RETRY/BACKOFF. codex's CLI fails transiently often enough to matter (API
+# hiccups, a spurious internal error) and writes no verdict — which would
+# otherwise degrade the whole track to reviewer-error on a single bad roll.
+# Retry the invocation with linear backoff, accepting the first attempt that
+# writes a non-empty verdict to "$out". Tunable via env: CODEX_REVIEW_RETRIES
+# (total attempts, default 3), CODEX_REVIEW_BACKOFF (base seconds, default 5 —
+# attempt n waits n*base). Only after every attempt fails empty do we synthesize
+# the reviewerError verdict below.
+attempts="${CODEX_REVIEW_RETRIES:-3}"
+backoff="${CODEX_REVIEW_BACKOFF:-5}"
+# Validate both as positive integers. Left unchecked, a non-numeric value makes
+# the arithmetic `[ "$n" -ge "$attempts" ]` test error every iteration, so the
+# loop would spin forever instead of giving up and synthesizing the reviewerError
+# verdict. Fall back to the documented defaults (and clamp attempts to >=1) loudly
+# rather than wedge the headless debate on a typo'd override.
+if ! [[ "$attempts" =~ ^[0-9]+$ ]] || [ "$attempts" -lt 1 ]; then
+  echo "WARNING: CODEX_REVIEW_RETRIES='$attempts' is not a positive integer; using 3." >&2
+  attempts=3
 fi
+if ! [[ "$backoff" =~ ^[0-9]+$ ]]; then
+  echo "WARNING: CODEX_REVIEW_BACKOFF='$backoff' is not a non-negative integer; using 5." >&2
+  backoff=5
+fi
+n=1
+: >"$log"  # start each round fresh; attempts below APPEND so no failure's diagnostics are lost
+while :; do
+  rm -f "$out"
+  # Append (not truncate): when every attempt fails, the synthesized reviewerError
+  # verdict's tail_log must reflect ALL attempts' diagnostics — surfacing the exact
+  # transient failures this retry loop exists to weather — not just the final one.
+  echo "=== attempt $n/$attempts ===" >>"$log"
+  if ! codex exec \
+        --sandbox read-only \
+        -c model_reasoning_effort="xhigh" \
+        --output-schema "$schema" \
+        -o "$out" \
+        "$prompt"</dev/null >>"$log" 2>&1; then
+    echo "codex exec exited non-zero (attempt $n/$attempts; see $log)" >&2
+  fi
+  # Success the moment codex writes a verdict: the kernel sandbox + --output-schema
+  # make a non-empty "$out" a real, schema-valid verdict, not a partial.
+  [ -s "$out" ] && break
+  # Out of attempts — fall through to the synthesized reviewerError verdict.
+  [ "$n" -ge "$attempts" ] && break
+  wait_s=$(( backoff * n ))
+  echo "codex produced no verdict (attempt $n/$attempts); retrying in ${wait_s}s..." >&2
+  n=$(( n + 1 ))
+  sleep "$wait_s"
+done
 
 if [ ! -s "$out" ]; then
   # codex produced no verdict — synthesize a schema-valid error verdict so the
@@ -132,9 +178,9 @@ if [ ! -s "$out" ]; then
   # substantive disagreement, so it must NOT be routed to Claude (there are no
   # findings to act on) and must NOT spin the loop forever.
   tail_log="$(tail -c 2000 "$log" 2>/dev/null || true)"
-  jq -n --arg log "$tail_log" '{
+  jq -n --arg log "$tail_log" --arg attempts "$attempts" '{
     approved: false,
-    summary: ("codex produced no verdict this round. Tail of log: " + $log),
+    summary: ("codex produced no verdict this round after " + $attempts + " attempt(s). Tail of log: " + $log),
     findings: [],
     responseToRebuttal: "",
     reviewerError: true

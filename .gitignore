@@ -23,3 +23,5 @@ packages/client/public/fonts
 .codex-debate/
 # /lens-debate skill: per-worktree scratch (commit-message files)
 .lens-debate/
+# /be-review orchestrator: per-track scratch (commit-message + PR-comment files; worktrees live under .worktrees/ above)
+.be-review/

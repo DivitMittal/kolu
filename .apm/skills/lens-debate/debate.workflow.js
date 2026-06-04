@@ -1,7 +1,8 @@
 // The Workflow runtime requires `export const meta` to be the FIRST statement
-// and a PURE LITERAL (no variable interpolation), so the model is inlined as
-// 'opus' in each phase below. The single `const MODEL` socket lives just after
-// meta — every other model reference in this script reads it lazily at
+// and a PURE LITERAL (no variable interpolation), so the primary model is
+// inlined as 'opus' in the phase entries below; commit agents within Apply run
+// on mechModel (haiku). The single `const MODEL` socket lives just after meta —
+// every other model reference in this script reads it lazily at
 // input-resolution time, well after meta is evaluated.
 export const meta = {
   name: 'lens-debate',
@@ -26,7 +27,13 @@ const MODEL = 'opus'
 // ---------------------------------------------------------------------------
 const a = args || {}
 const repoPath = a.repoPath || '.'
-const base = a.base || 'origin/master'
+// The diff base. Resolved to the MERGE-BASE of (rawBase, HEAD) just below, before
+// DIFF is built, so the lenses review only what THIS branch changed — not commits
+// the base branch gained since the branch forked (those would otherwise appear in
+// `git diff base` as the base branch's drift, reviewed as ours). `let` because the
+// resolution reassigns it. Idempotent when the caller already passed a merge-base
+// SHA (e.g. /be-review).
+let base = a.base || 'origin/master'
 // Safety backstop only — NOT a deadlock cap. The debate runs until consensus;
 // this just keeps a pathologically oscillating debate from running unbounded.
 // Hitting it is reported as `unresolved` (needs human), never `deadlock`, and
@@ -44,6 +51,11 @@ const rationale = (a.rationale || '').trim()
 // Model every lens/agent runs on; defaults to MODEL (see top of file). Overridable
 // via args to mirror the file's input pattern and to make a model bump a one-liner.
 const model = a.model || MODEL
+// Mechanical tier (Haiku). The lenses' reviews + the per-finding debate + applying
+// an agreed fix all do real reasoning → `model` (Opus, load-bearing for the
+// lenses). The merge-base resolver and the per-fix committer are pure git → run
+// them on `mechModel`. Defaults match a direct invocation; /be-review passes it.
+const mechModel = a.mechModel || 'haiku'
 // Per-worktree scratch for commit-message files; gitignored so it never shows up
 // in the diff the lenses review, and parallel debates in different worktrees
 // never collide. Only the commit-message files land here.
@@ -66,10 +78,41 @@ const REVIEWERS = [
 ]
 if (withPolice) REVIEWERS.push({ lens: 'code-police', framework: 'code quality, correctness, and common-mistake review' })
 
+// Resolve the diff base to the merge-base of (base, HEAD) BEFORE building DIFF
+// (which interpolates `base` eagerly), so the lenses review only what this branch
+// changed, not the base branch's drift since the fork. A thin mechanical git
+// agent (the workflow can't run git itself); grouped under the Review phase.
+// Idempotent when `base` is already a merge-base SHA (caller resolved it).
+const rawBase = base
+const baseRes = await agent(
+  `You are a MECHANICAL RUNNER. Run \`git -C ${repoPath} merge-base ${base} HEAD\` and return ONLY the resulting commit SHA (hex) in \`sha\`. If the command FAILS (missing/typoed base, stale ref, unrelated history), return \`sha\`: "" and put the verbatim git error in \`error\` — do NOT fall back to the raw base ref. Do nothing else.`,
+  { label: 'resolve:merge-base', phase: 'Review', model: mechModel, schema: { type: 'object', additionalProperties: false, required: ['sha'], properties: { sha: { type: 'string', description: 'the merge-base SHA, or "" on failure' }, error: { type: 'string', description: 'the git error when sha is empty' } } } },
+)
+// Fail loud on a bad base. Falling back to the raw `${base}` tip would make the
+// lenses review the base branch's drift since the fork as if this change made it —
+// the exact noise the merge-base removes — so a missing/typoed/stale base aborts.
+if (!baseRes?.sha?.trim()) {
+  const err = (baseRes?.error || '').trim()
+  log(`Aborting: \`git merge-base ${rawBase} HEAD\` failed; the diff scope can't be trusted. Not falling back to the raw ${rawBase} tip.`)
+  return {
+    status: 'merge-base-error',
+    base: rawBase,
+    rounds: 0,
+    withPolice,
+    settled: [],
+    unresolved: [],
+    applied: [],
+    reviews: {},
+    history: [],
+    note: `merge-base of \`${rawBase}\` and HEAD could not be resolved (missing/typoed base, stale ref, or unrelated history), so the review scope is untrustworthy. Fix the base ref (e.g. \`git fetch\`) and re-run.${err ? `\ngit error:\n${err}` : ''}`,
+  }
+}
+base = baseRes.sha.trim()
+
 // How every agent is told to inspect the change. The lenses do NOT trust a
 // curated finding list — they read the source themselves (the load-bearing
 // lesson from #1109: curation biases the verdict).
-const DIFF = `Inspect the FULL change in the repo at \`${repoPath}\`: run \`git diff ${base}\` (committed + unstaged) and \`git status --short\` (untracked/new files do NOT appear in the diff), then Read every new/changed file plus enough surrounding code to judge it in context. Ignore the debate's own scratch dir \`.lens-debate/\` if it appears.`
+const DIFF = `Inspect the FULL change in the repo at \`${repoPath}\` — your shell cwd may be a DIFFERENT worktree, so use \`git -C ${repoPath}\` and ABSOLUTE paths under \`${repoPath}\`: run \`git -C ${repoPath} diff ${base}\` (committed + unstaged) and \`git -C ${repoPath} status --short\` (untracked/new files do NOT appear in the diff), then Read every new/changed file plus enough surrounding code to judge it in context. Ignore the debate's own scratch dir \`.lens-debate/\` if it appears.`
 
 const rationaleBlock = rationale ? `\nAuthor's note on deliberate decisions (do not flag these as defects unless the reasoning is itself wrong):\n${rationale}\n` : ''
 
@@ -83,7 +126,7 @@ const FINDINGS_SCHEMA = {
   properties: {
     findings: {
       type: 'array',
-      description: 'your INDEPENDENT findings (≤4, high-confidence; an empty list is a fine verdict for a clean diff)',
+      description: 'ALL your independent structural findings — every issue worth raising through your lens, no cap. An empty list is fine only for a genuinely clean diff.',
       items: {
         type: 'object',
         additionalProperties: false,
@@ -147,7 +190,7 @@ function reviewBrief(lens, framework, probe) {
 
 Review the change through the **${framework}** lens, INDEPENDENTLY — you are NOT seeing any other reviewer's findings. That independence is the whole point: being handed someone else's curated finding biases the verdict.
 ${rationaleBlock}${probeBlock}
-Emit your own findings (≤4, high-confidence). Each: a title, a file:line location, the problem in your lens's terms, a concrete suggestion, and a disposition — \`fix\` (worth changing in THIS PR) or \`drop\` (observation only). Do not invent issues to look thorough: an empty list, or all-drop, is a fine verdict for a clean diff.`
+Give ALL your findings — every structural issue you see through your lens, no cap, at every level (boundary, complecting, naming, duplication, …). Each: a title, a file:line location, the problem in your lens's terms, a concrete suggestion, and a disposition — \`fix\` (worth changing in THIS PR) or \`drop\` (observation only). Don't fabricate issues, but don't hold any back either; an empty list is fine only for a genuinely clean diff.`
 }
 
 function findingLine(f) {
@@ -172,7 +215,7 @@ Round ${roundNum}. For EVERY contested finding id above, output a disposition (\
 }
 
 function implementBrief(fix) {
-  return `You are implementing ONE change that two structural-review lenses (lowy and hickey) independently agreed should be fixed in THIS PR. Work in the repo at \`${repoPath}\`.
+  return `You are implementing ONE change that two structural-review lenses (lowy and hickey) independently agreed should be fixed in THIS PR. Work in the repo at \`${repoPath}\` — your shell cwd may be a DIFFERENT worktree, so every file you Read/Edit MUST be an ABSOLUTE path under \`${repoPath}\`.
 
 Finding ${fix.id} (raised by ${fix.origin}) — ${fix.title}
   at ${fix.location}
@@ -205,11 +248,11 @@ Agreed by the lowy ⇄ hickey lens debate (finding ${fix.id}, raised by ${fix.or
 
 ${message}
 
-3. Run, from the repo root \`${repoPath}\`:
-   \`git add -- ${fileArgs} && git commit -F ${msgPath}\`
+3. Run (every git command uses \`git -C ${repoPath}\`, so it targets THIS worktree regardless of your shell cwd):
+   \`git -C ${repoPath} add -- ${fileArgs} && git -C ${repoPath} commit -F ${msgPath}\`
    Stage ONLY those files. Do NOT use \`git add -A\` or \`git add .\`.
-4. Return the new commit SHA from \`git rev-parse HEAD\`. Do NOT push.`
-  return agent(prompt, { label: `commit:${fix.id}`, phase: 'Apply' })
+4. Return the new commit SHA from \`git -C ${repoPath} rev-parse HEAD\`. Do NOT push.`
+  return agent(prompt, { label: `commit:${fix.id}`, phase: 'Apply', model: mechModel })
 }
 
 // ---------------------------------------------------------------------------

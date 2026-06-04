@@ -11,7 +11,12 @@ export const meta = {
 // ---------------------------------------------------------------------------
 const a = args || {}
 const repoPath = a.repoPath || '.'
-const base = a.base || 'origin/master'
+// The diff base. Resolved to the MERGE-BASE of (rawBase, HEAD) just before the
+// debate (see phase 'Debate') so commits rawBase gained since the branch forked
+// aren't reviewed as if this change made them. `let` because that resolution
+// reassigns it; every prompt reads the resolved value. (Idempotent when the
+// caller already passed a merge-base SHA, e.g. /be-review.)
+let base = a.base || 'origin/master'
 // Where the generated skill lives, so the codex runner can find codex-review.sh.
 const skillDir = a.skillDir || '.claude/skills/codex-debate'
 // Per-worktree scratch dir for rebuttal/verdict files. Derived from repoPath
@@ -23,6 +28,13 @@ const workDir = `${repoPath}/.codex-debate`
 // carries the debate context (codex's findings + claude's dispositions). Never
 // pushes or merges — that stays the human's call.
 const commit = a.commit !== false
+// Model tiers. The claude-author round does real reasoning (fixing/disputing
+// codex's findings) → `model` (Opus). Everything else here is mechanical — the
+// codex runner just shells out to codex-review.sh and copies the verdict, the
+// committer stages files, the merge-base resolver runs one git command → `mechModel`
+// (Haiku). Defaults match a direct invocation; /be-review passes both explicitly.
+const model = a.model || 'opus'
+const mechModel = a.mechModel || 'haiku'
 
 // ---------------------------------------------------------------------------
 // Schemas — the codex verdict schema mirrors scripts/codex-verdict.schema.json
@@ -82,19 +94,10 @@ const CLAUDE_RESPONSE_SCHEMA = {
   required: ['summary', 'actions', 'filesChanged', 'done'],
 }
 
-// ---------------------------------------------------------------------------
-// Consensus helper
-// ---------------------------------------------------------------------------
-// A finding still "counts against" consensus only if it is open AND
-// blocking/major. Minor issues and nits never block agreement. Consensus is the
-// ONLY terminal state — there is no round cap and no deadlock exit, so the loop
-// runs until codex approves with nothing blocking/major open. The debate is
-// pointless if it bails to "deadlock"; the two sides must argue it out until
-// one concedes.
-function blockingOpen(verdict) {
-  return (verdict.findings || []).filter(
-    (f) => f.status !== 'resolved' && (f.severity === 'blocking' || f.severity === 'major'),
-  )
+// Consensus = no finding left open, any severity. The loop runs until codex
+// resolves every one (CLAUDE fixed it, or codex conceded a dispute). No cap.
+function openFindings(verdict) {
+  return (verdict.findings || []).filter((f) => f.status !== 'resolved')
 }
 
 // ---------------------------------------------------------------------------
@@ -108,12 +111,12 @@ async function codexReviews(round, rebuttalJson) {
 
 ${rebuttalJson}
 
-2. Run, from the repo root \`${repoPath}\`:
-   \`bash ${skillDir}/scripts/codex-review.sh ${base} ${rebuttalPath} ${verdictPath}\``
+2. Run (cd into the repo root so the script's internal \`git diff\`/\`git status\` target THIS worktree — your shell cwd may be a different worktree):
+   \`cd ${repoPath} && bash ${skillDir}/scripts/codex-review.sh ${base} ${rebuttalPath} ${verdictPath}\``
     : `1. (No prior rebuttal this round.)
 
-2. Run, from the repo root \`${repoPath}\`:
-   \`bash ${skillDir}/scripts/codex-review.sh ${base} - ${verdictPath}\``
+2. Run (cd into the repo root so the script's internal \`git diff\`/\`git status\` target THIS worktree — your shell cwd may be a different worktree):
+   \`cd ${repoPath} && bash ${skillDir}/scripts/codex-review.sh ${base} - ${verdictPath}\``
 
   const prompt = `You are a MECHANICAL RUNNER for one round of an automated code-review debate. Do exactly the steps below and nothing else. Do NOT review the code yourself, do NOT edit any repository files, do NOT add commentary.
 
@@ -128,34 +131,32 @@ ${rebuttalStep}
   return agent(prompt, {
     label: `codex:round${round}`,
     phase: 'Debate',
+    model: mechModel, // mechanical: runs codex-review.sh + copies the verdict
     schema: CODEX_VERDICT_SCHEMA,
   })
 }
 
 async function claudeResponds(round, verdict) {
-  const prompt = `You are CLAUDE, the engineer who authored the changes now under review, in an automated review debate with CODEX (a rigorous senior reviewer). Work in the repository at \`${repoPath}\`. The change under review is the working-tree diff against \`${base}\` — inspect it with \`git diff ${base}\` and read surrounding code as needed.
+  const prompt = `You authored the changes on this branch. CODEX reviewed them and returned the verdict below — what do you think? Fix what you agree with, push back (with reasons) on what you don't.
 
-CODEX's latest verdict (JSON):
+Work in the repo at \`${repoPath}\` — your shell cwd may be a different worktree, so use ABSOLUTE paths under it and \`git -C ${repoPath}\`. See the change with \`git -C ${repoPath} diff ${base}\`.
+
+CODEX's verdict (JSON):
 ${JSON.stringify(verdict, null, 2)}
 
-For EACH finding:
-  - If you AGREE: fix it now by editing the code in the working tree (use your editing tools). Record disposition "fixed".
-  - If you DISAGREE: do NOT change the code. Record disposition "disputed" with a specific, technical reason citing file:line or the actual behavior. Concede when codex is right — do not dispute merely to win.
-  - If PARTIALLY right: fix the valid part, explain the rest. Record "partial".
+Address EVERY finding, any severity (don't skip minors/nits):
+  - agree → fix it in the working tree; disposition "fixed".
+  - disagree → leave the code, dispute it with a specific technical reason (cite file:line); disposition "disputed". Concede when codex is right.
+  - partly → fix the valid part, explain the rest; disposition "partial".
 
-Constraints:
-  - Edit the WORKING TREE only. Do NOT git add / commit / push, and do NOT create or modify a PR.
-  - You may run a trivial formatter on files you changed if the project has one.
-  - Keep fixes tightly scoped to the findings.
+Edit the working tree only — do NOT git add/commit/push. You may run the formatter on files you touched.
 
-Then return your structured response:
-  - actions: one per finding you addressed (findingId, disposition, detail).
-  - filesChanged: every working-tree file you edited this round.
-  - done: true ONLY if nothing further should change — i.e. everything valid is fixed and you stand by any remaining disputes. If you fixed things and want codex to re-check, that is still done=true (codex re-reviews next round regardless).`
+Return: actions (one per finding — findingId, disposition, detail), filesChanged, and done (true once you've addressed every finding this round).`
 
   return agent(prompt, {
     label: `claude:round${round}`,
     phase: 'Debate',
+    model, // deep reasoning: the author fixing/disputing real findings
     schema: CLAUDE_RESPONSE_SCHEMA,
   })
 }
@@ -194,11 +195,11 @@ async function commitRound(round, files, message) {
 
 ${message}
 
-3. Run, from the repo root \`${repoPath}\`:
-   \`git add -- ${fileArgs} && git commit -F ${msgPath}\`
+3. Run (every git command uses \`git -C ${repoPath}\`, so it targets THIS worktree regardless of your shell cwd):
+   \`git -C ${repoPath} add -- ${fileArgs} && git -C ${repoPath} commit -F ${msgPath}\`
    Stage ONLY those files. Do NOT use \`git add -A\` or \`git add .\`.
-4. Return the new commit SHA from \`git rev-parse HEAD\`. Do NOT push.`
-  return agent(prompt, { label: `commit:round${round}`, phase: 'Debate' })
+4. Return the new commit SHA from \`git -C ${repoPath} rev-parse HEAD\`. Do NOT push.`
+  return agent(prompt, { label: `commit:round${round}`, phase: 'Debate', model: mechModel })
 }
 
 const transcript = []
@@ -213,13 +214,39 @@ let lastClaude = null
 // ---------------------------------------------------------------------------
 // The loop — runs until consensus. No round cap, no deadlock exit.
 // ---------------------------------------------------------------------------
-// The debate continues, round after round, until codex approves with nothing
-// blocking/major open. There is deliberately no upper bound and no early
-// "deadlock" surrender: a debate that quits without agreement defeats the
-// purpose, so the two sides keep arguing until one concedes. (The harness's own
-// per-workflow agent backstop is the only hard ceiling; interrupt via
-// /workflows or TaskStop if you ever need to stop one by hand.)
+// The debate continues, round after round, until codex resolves every finding
+// (any severity). No upper bound, no "deadlock" surrender: the two sides argue
+// every point until one concedes. (The harness's per-workflow agent backstop is
+// the only hard ceiling; interrupt via /workflows or TaskStop by hand.)
 phase('Debate')
+
+// Resolve the diff base to the merge-base of (base, HEAD) so codex reviews only
+// what THIS branch changed, not commits the base branch gained since the branch
+// forked (those would otherwise show up in `git diff base` — master's drift
+// reviewed as ours). A thin mechanical git agent; the workflow can't run git
+// itself. Idempotent when `base` is already a merge-base SHA (caller resolved it).
+const rawBase = base
+const baseRes = await agent(
+  `You are a MECHANICAL RUNNER. Run \`git -C ${repoPath} merge-base ${base} HEAD\` and return ONLY the resulting commit SHA (hex) in \`sha\`. If the command FAILS (missing/typoed base, stale ref, unrelated history), return \`sha\`: "" and put the verbatim git error in \`error\` — do NOT fall back to the raw base ref. Do nothing else.`,
+  { label: 'resolve:merge-base', phase: 'Debate', model: mechModel, schema: { type: 'object', additionalProperties: false, required: ['sha'], properties: { sha: { type: 'string', description: 'the merge-base SHA, or "" on failure' }, error: { type: 'string', description: 'the git error when sha is empty' } } } },
+)
+// Fail loud on a bad base. Falling back to the raw `${base}` tip would review the
+// base branch's drift since the fork as if this change made it — the exact noise
+// the merge-base removes — so a missing/typoed/stale base must abort, not degrade.
+if (!baseRes?.sha?.trim()) {
+  const err = (baseRes?.error || '').trim()
+  log(`Aborting: \`git merge-base ${rawBase} HEAD\` failed; the diff scope can't be trusted. Not falling back to the raw ${rawBase} tip.`)
+  return {
+    status: 'merge-base-error',
+    base: rawBase,
+    rounds: 0,
+    transcript: [],
+    finalVerdict: null,
+    note: `merge-base of \`${rawBase}\` and HEAD could not be resolved (missing/typoed base, stale ref, or unrelated history), so the review scope is untrustworthy. Fix the base ref (e.g. \`git fetch\`) and re-run.${err ? `\ngit error:\n${err}` : ''}`,
+  }
+}
+base = baseRes.sha.trim()
+log(`Diffing against ${base.slice(0, 12)} (merge-base of ${rawBase} and HEAD), so the base branch's drift since the fork isn't reviewed.`)
 
 for (let round = 1; ; round++) {
   const verdict = await codexReviews(round, lastClaude ? JSON.stringify(lastClaude) : null)
@@ -238,12 +265,24 @@ for (let round = 1; ; round++) {
     break
   }
 
-  const blocking = blockingOpen(verdict)
-  log(`Round ${round}: codex approved=${verdict.approved}, blocking/major open=${blocking.length}`)
+  const open = openFindings(verdict)
+  log(`Round ${round}: codex approved=${verdict.approved}, findings open=${open.length}`)
 
-  // Consensus — the normal exit: codex is satisfied and nothing blocking/major
-  // remains open.
-  if (verdict.approved && blocking.length === 0) {
+  // Consensus requires BOTH no open finding AND codex's explicit approval. An
+  // inconsistent verdict — `approved:false` with nothing open — is not consensus:
+  // codex declined to approve while leaving us nothing to route to Claude, so
+  // treating it as agreement would ship an unapproved change. There's no finding
+  // to debate, so re-running codex would just replay the same inconsistency;
+  // surface it as a reviewer error (the terminal abnormal path) instead of
+  // looping forever or falsely converging.
+  if (open.length === 0 && verdict.approved !== true) {
+    status = 'reviewer-error'
+    log(`Round ${round}: inconsistent verdict — approved=false with no open findings; aborting as reviewer-error.`)
+    break
+  }
+
+  // Consensus: codex approved AND every finding resolved (any severity).
+  if (open.length === 0) {
     break
   }
 
