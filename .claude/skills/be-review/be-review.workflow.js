@@ -1,7 +1,8 @@
 // The Workflow runtime requires `export const meta` to be the FIRST statement
-// and a PURE LITERAL (no interpolation), so 'opus' is inlined per phase. The
-// single MODEL socket lives just after meta; every other model reference reads
-// it lazily, well after meta is evaluated.
+// and a PURE LITERAL (no interpolation). meta.phases no longer assert a phase
+// model: each phase now spans mixed tiers, so the authoritative model is the
+// per-agent `model:` carried by each spawned agent. The MODEL socket lives just
+// after meta; every other model reference reads it lazily, after meta evaluates.
 export const meta = {
   name: "be-review",
   description:
@@ -11,37 +12,43 @@ export const meta = {
       title: "Setup",
       detail:
         "fan out one detached worktree per review track off the branch HEAD",
-      model: "opus",
     },
     {
       title: "Tracks",
       detail:
         "codex, lens, and police gauntlets each run to consensus, concurrently and isolated",
-      model: "opus",
     },
     {
       title: "Consolidate",
       detail:
         "cherry-pick each track’s commits onto the branch in order; reconcile the rare overlap",
-      model: "opus",
     },
     {
       title: "Report",
       detail:
         "post a detailed PR comment for each track plus the consolidation ledger",
-      model: "opus",
     },
     {
       title: "Cleanup",
       detail: "tear down the per-track worktrees",
-      model: "opus",
     },
   ],
 };
 
-// The model every orchestrated agent runs on. Structural review on /be runs on
-// Opus (the lens debate forces it, overriding its sonnet frontmatter); keep the
-// override to one socket so a model bump is a one-liner.
+// COST TIERS. Most agents this orchestrator spawns are mechanical (git/gh/file
+// shuffling) or synthesis (authoring a comment), NOT deep reasoning — yet the old
+// single socket ran everything on Opus (~5x Sonnet, ~10-15x Haiku). Split into
+// three tiers and run each agent on the cheapest model that does its job with no
+// quality loss on the parts that matter:
+//   MODEL (opus)   — deep reasoning: the lens lenses + claude-author rounds (the
+//                    lens debate FORCES Opus; that's load-bearing) and lens apply.
+//   SYNTH (sonnet) — competent-but-not-deep synthesis work: the reporter agents, the
+//                    consolidation cherry-pick/reconcile, and the police review +
+//                    apply passes (code-police is natively `model: sonnet` anyway).
+//   MECH (haiku)   — deterministic shell work: setup, every commit, cleanup, the
+//                    comment posters, the git status/HEAD checks, merge-base + the
+//                    codex runner. No judgement, just run the command and report.
+// Each is one socket so a model bump stays a one-liner; all overridable via args.
 const MODEL = "opus";
 
 // ---------------------------------------------------------------------------
@@ -87,7 +94,50 @@ const postComments = a.comment !== false;
 // empty) skips the agent so a no-op debate costs nothing. `--no-rich-comment`
 // (richComment: false) forces the deterministic comments.
 const richComment = a.richComment !== false;
+// The three cost tiers (see the MODEL comment above). `model` = deep reasoning;
+// `synthModel` = synthesis (Sonnet); `mechModel` = mechanical (Haiku).
 const model = a.model || MODEL;
+const synthModel = a.synthModel || "sonnet";
+const mechModel = a.mechModel || "haiku";
+
+// ---------------------------------------------------------------------------
+// Token instrumentation. `budget.spent()` is the turn's running OUTPUT-token
+// counter (shared across the main loop + all workflows). Snapshotting it at each
+// phase boundary gives a cost-distribution breakdown so you can see where the
+// tokens go (Tracks dominates; Report is the reporters; the mechanical phases are
+// cheap) — exactly what you need to know where to spend the next optimization.
+// CAVEAT: each bucket is the OUTPUT tokens emitted on the shared turn counter
+// during that phase's wall-clock window — NOT isolated to that phase's agents.
+// Phase boundaries are plain marks on one shared monotonic number, not
+// synchronization points: the Tracks phase dispatches all tracks concurrently
+// (parallel(...)), and those child workflows (codex/lens) draw on the same
+// `budget`, so any concurrent track and child-workflow output lands in whichever
+// window happens to be open. Treat the numbers as per-mark-interval spend, not
+// per-phase cost — don't read Tracks vs Report as an isolated comparison.
+// Guarded: `budget` may be absent in some runtimes.
+// ---------------------------------------------------------------------------
+const spentTokens = () => {
+  try {
+    return (
+      (typeof budget !== "undefined" && budget.spent && budget.spent()) || 0
+    );
+  } catch {
+    /* budget API absent or threw — instrumentation is best-effort, return 0 */
+    return 0;
+  }
+};
+const tokensByPhase = {};
+let _tokMark = spentTokens();
+function markPhaseTokens(phaseName) {
+  const now = spentTokens();
+  const delta = now - _tokMark;
+  _tokMark = now;
+  // each phase name is called exactly once at its boundary
+  tokensByPhase[phaseName] = delta;
+  log(
+    `💸 ${phaseName}: +${delta.toLocaleString()} output tokens (run total ${now.toLocaleString()})`,
+  );
+}
 // The review tracks to run AND the order they consolidate in. codex first (it
 // changes the most — bug fixes), then the structural lenses, then police, so an
 // overlap surfaces as a conflict picking the later, lighter-touch track.
@@ -172,8 +222,15 @@ const CODEX_SKILLDIR = ".claude/skills/codex-debate";
 // The diff base reviewers actually use is the MERGE-BASE (resolved by Setup),
 // not the raw `${base}` tip — see SETUP_SCHEMA.mergeBase. DIFF is an arrow, so it
 // reads `mergeBase` lazily at call time (Tracks phase, after Setup has set it).
-const DIFF = (wt) =>
-  `Inspect the FULL change in the worktree at \`${wt}\`: run \`git -C ${wt} diff ${mergeBase}\` (committed + unstaged) and \`git -C ${wt} status --short\` (untracked/new files do NOT appear in the diff), then Read every new/changed file (use ABSOLUTE paths under \`${wt}\`) plus enough surrounding code to judge it in context. Ignore the gitignored ${scratchList} scratch dirs if they appear.`;
+const DIFF = (wt, paths) => {
+  // Empty paths => full diff; non-empty => the SAME instruction narrowed to those
+  // pathspecs. One socket, two wires: full-review and touched-files re-review share
+  // the 'status --short / Read ABSOLUTE paths / surrounding code / ignore scratch dirs'
+  // tail so they can't drift. `paths` are already shell-quoted pathspec args.
+  if (paths?.length)
+    return `Inspect the change in the worktree at \`${wt}\` SCOPED to these files: run \`git -C ${wt} diff ${mergeBase} -- ${paths.join(" ")}\`, then Read those files (use ABSOLUTE paths under \`${wt}\`) plus enough surrounding code to judge them in context. Ignore the gitignored ${scratchList} scratch dirs if they appear.`;
+  return `Inspect the FULL change in the worktree at \`${wt}\`: run \`git -C ${wt} diff ${mergeBase}\` (committed + unstaged) and \`git -C ${wt} status --short\` (untracked/new files do NOT appear in the diff), then Read every new/changed file (use ABSOLUTE paths under \`${wt}\`) plus enough surrounding code to judge it in context. Ignore the gitignored ${scratchList} scratch dirs if they appear.`;
+};
 
 const rationaleBlock = rationale
   ? `\nAuthor's note on deliberate decisions (do not flag these as defects unless the reasoning is itself wrong):\n${rationale}\n`
@@ -344,7 +401,7 @@ Return \`branchHead\`, \`mergeBase\`, \`cleanTree\`, \`dirtyStatus\`, and, for e
 const setup = await agent(setupPrompt, {
   label: "setup:worktrees",
   phase: "Setup",
-  model,
+  model: mechModel,
   schema: SETUP_SCHEMA,
 });
 const branchHead = (setup?.branchHead || "").trim();
@@ -424,6 +481,7 @@ if (!branchHead || liveTracks.length === 0) {
 // ---------------------------------------------------------------------------
 // Phase 2 — run every track's gauntlet to consensus, concurrently & isolated
 // ---------------------------------------------------------------------------
+markPhaseTokens("Setup");
 phase("Tracks");
 
 // The police track. /code-police is a skill, not a workflow, so its cold passes
@@ -446,7 +504,7 @@ async function policeTrack(wt) {
     {
       label: "police:diff-size",
       phase: "Tracks",
-      model,
+      model: mechModel,
       schema: {
         type: "object",
         properties: { tiny: { type: "boolean" } },
@@ -487,20 +545,35 @@ async function policeTrack(wt) {
   const POLICE_MAX_ROUNDS = 4;
   const applied = [];
   let totalFindings = 0;
-  let policeRound = 0;
   let sweepsRun = 0;
   let lastRoundFindings = 0;
-  for (; policeRound < POLICE_MAX_ROUNDS; policeRound++) {
-    sweepsRun++; // one review pass per iteration, counted BEFORE any break/cap exit so the reported sweep count is exact (not derived from the loop index)
+  let noOpApplyExit = false; // true if the loop stopped because a sweep's fixes changed no files (a no-op apply exit, NOT round-cap exhaustion) — keeps the exit log honest
+  // Files the PREVIOUS sweep's fixes touched (absolute paths under `wt`). Sweep 1
+  // reviews the FULL diff; sweeps 2+ re-review ONLY these files — for regressions or
+  // partial fixes the just-applied edits introduced, NOT new pre-existing nits in
+  // untouched code (issue #1163). Re-scanning the whole diff every sweep is what made
+  // police grind to the cap on its endless nit-tail; narrowing to touched-files-for-
+  // regressions converges (typically ~2 sweeps) while keeping the load-bearing "a fix
+  // can introduce or only partially resolve an issue" guarantee "until clean" exists for.
+  let touchedFiles = [];
+  /** @type {'no-touched-files' | null} */
+  let earlyBreakReason = null;
+  for (let policeRound = 0; policeRound < POLICE_MAX_ROUNDS; policeRound++) {
+    sweepsRun++; // one review sweep per iteration, counted BEFORE any break/cap exit so the reported count is exact
+    const firstSweep = policeRound === 0;
+    const rel = relPaths(wt, touchedFiles); // unquoted, for the touched-count log
+    const scope = firstSweep
+      ? DIFF(wt)
+      : `Re-review the fixes the previous sweep just applied. Limit the DIFF to the touched files so you don't re-raise unrelated nits: ${DIFF(wt, [relPathspec(wt, touchedFiles)])} But you are NOT confined to reading only those files — Read freely any surrounding, caller, dependent, contract, or generated-output files you need (ABSOLUTE paths under \`${wt}\`) to judge whether those edits broke something. Raise a finding ONLY when the problem is rooted in the previous sweep's edits (a regression they introduced, or an issue they only partially resolved), even if the breakage surfaces in an untouched file.`;
     const reviews = await parallel(
       passes.map(
         (p) => () =>
           agent(
-            `You are the **code-police ${p.key}** reviewer on a fresh, cold context — the implementer is biased to rationalize their own diff, so you start from "assume the code is wrong until proven right" and NEVER talk yourself out of a finding. First Read \`${wt}/.claude/skills/code-police/SKILL.md\` (and \`${wt}/.agency/code-police.md\` if it exists) for the rules and reviewing principles, then ${DIFF(wt)}\n${rationaleBlock}\nReview through ${p.brief}. Emit high-confidence findings only; an empty list is a fine verdict for a clean diff. Each finding: a title, a file:line location, the problem, a concrete implementable fix, and a severity.`,
+            `You are the **code-police ${p.key}** reviewer on a fresh, cold context — the implementer is biased to rationalize their own diff, so you start from "assume the code is wrong until proven right" and NEVER talk yourself out of a finding. First Read \`${wt}/.claude/skills/code-police/SKILL.md\` (and \`${wt}/.agency/code-police.md\` if it exists) for the rules and reviewing principles, then ${scope}\n${rationaleBlock}\n${firstSweep ? `Review through ${p.brief}. Emit high-confidence findings only; an empty list is a fine verdict for a clean diff.` : `A previous sweep already reviewed the whole change; do NOT re-raise pre-existing issues in untouched code. Look ONLY for problems the just-applied fixes INTRODUCED or left PARTIALLY resolved, through ${p.brief}. An empty list is the expected, good result.`} Each finding: a title, a file:line location, the problem, a concrete implementable fix, and a severity.`,
             {
               label: `police:${p.key}:r${policeRound + 1}`,
               phase: "Tracks",
-              model,
+              model: synthModel,
               schema: POLICE_FINDINGS_SCHEMA,
             },
           ),
@@ -515,9 +588,10 @@ async function policeTrack(wt) {
     );
     lastRoundFindings = findings.length;
     log(
-      `police: round ${policeRound + 1} — ${findings.length} finding(s) across ${passes.length} passes`,
+      `police: sweep ${policeRound + 1} (${firstSweep ? "full diff" : `regression check on ${rel.length} touched file(s)`}) — ${findings.length} finding(s)`,
     );
-    if (!findings.length) break; // clean sweep on the updated worktree → done
+    if (!findings.length) break; // clean sweep → done
+    const sweepTouched = new Set();
 
     // Apply each finding as its own commit, sequentially (same-file edits can't be
     // parallel-applied). Every edit and git command targets the absolute worktree.
@@ -527,11 +601,29 @@ async function policeTrack(wt) {
         {
           label: `police-apply:${f.id}`,
           phase: "Tracks",
-          model,
+          model: synthModel,
           schema: IMPL_SCHEMA,
         },
       );
-      const files = impl?.filesChanged ?? [];
+      // Normalize+validate `filesChanged` ONCE here — its absolute-under-`wt` shape
+      // is an unenforced cross-agent contract (the schema only types it `string[]`).
+      // Run the shared abs->rel core, then MANDATORILY drop any entry that, after
+      // stripping `${wt}/`, still starts with `/` (an absolute path NOT under wt) or
+      // with `./`/`../` (a relative path that doesn't anchor to wt). Leading-dot dirs
+      // like `.apm/`/`.claude/` are valid wt-relative files this PR edits — keep them.
+      // A stray path that survived would silently scope the next sweep's regression
+      // diff against something git doesn't recognize (reviewing nothing), so dropping
+      // one is logged loudly. The canonical relative list feeds both the touched-file
+      // set and commitFix.
+      const rawFiles = impl?.filesChanged ?? [];
+      const files = relPaths(wt, rawFiles).filter(
+        (rel) => !rel.startsWith("/") && !/^\.\.?\//.test(rel),
+      );
+      if (files.length < rawFiles.length)
+        log(
+          `police: ${f.id} returned a path not under the worktree (${rawFiles.join(", ")}) — regression scope may miss it`,
+        );
+      files.forEach((x) => sweepTouched.add(x)); // next sweep re-reviews only these
       let sha = null;
       if (commit && files.length) {
         sha =
@@ -560,20 +652,35 @@ async function policeTrack(wt) {
       );
     }
     totalFindings += findings.length;
+    touchedFiles = [...sweepTouched];
+    // No fix actually changed a file (all uncommitted/empty) → there's nothing for
+    // a regression sweep to re-review, so stop rather than re-run an identical pass.
+    if (!touchedFiles.length) {
+      noOpApplyExit = true;
+      earlyBreakReason = "no-touched-files";
+      break;
+    }
   }
-  // `clean` only if the FINAL sweep found nothing. If we exhausted the round cap
-  // with findings still open, the worktree isn't verified-clean — report
-  // `incomplete` so the caller (and the PR comment) doesn't read it as consensus.
+  // `clean` only if the FINAL sweep found nothing. If we ended with findings still
+  // open, the worktree isn't verified-clean — report `incomplete` so the caller
+  // (and the PR comment) doesn't read it as consensus.
   const reachedClean = lastRoundFindings === 0;
   const status = !totalFindings
     ? "clean"
     : reachedClean
       ? "consensus"
       : "incomplete";
-  if (!reachedClean)
-    log(
-      `police: hit round cap (${POLICE_MAX_ROUNDS}) with findings still open — reporting incomplete.`,
-    );
+  if (!reachedClean) {
+    if (earlyBreakReason === "no-touched-files") {
+      log(
+        `police: stopped early — last sweep's findings produced no file changes to re-review; reporting incomplete with findings still open.`,
+      );
+    } else {
+      log(
+        `police: hit round cap (${POLICE_MAX_ROUNDS}) with findings still open — reporting incomplete.`,
+      );
+    }
+  }
   return {
     status,
     findings: totalFindings,
@@ -583,14 +690,26 @@ async function policeTrack(wt) {
   };
 }
 
+// The single source for the abs->rel->quote transform: turn absolute worktree
+// paths into a git pathspec safe to interpolate into a shell command. `relPaths`
+// strips the worktree prefix (git -C / DIFF want paths relative to `wt`);
+// `relPathspec` additionally single-quotes each (escaping embedded quotes) and
+// joins them. Both the sweep-scope branch and commitFix go through here so a
+// change to the quoting or prefix rule lives in exactly one place.
+const relPaths = (wt, files) =>
+  files.map((f) => f.replace(`${wt}/`, "").replace(/^\/+/, ""));
+const relPathspec = (wt, files) =>
+  relPaths(wt, files)
+    .map((f) => `'${f.replace(/'/g, `'\\''`)}'`)
+    .join(" ");
+
 // Mechanical committer shared by the police track: stages EXACTLY the listed
 // files in worktree `wt` and commits with the given message — all via `git -C`
 // so it never depends on the shell cwd. The workflow can't run git itself, so a
 // thin agent does. (codex/lens commit via their own workflows.)
 async function commitFix(wt, id, subject, body, files) {
   // Files may arrive as absolute worktree paths; git -C wants them relative to wt.
-  const rel = files.map((f) => f.replace(`${wt}/`, "").replace(/^\/+/, ""));
-  const fileArgs = rel.map((f) => `'${f.replace(/'/g, `'\\''`)}'`).join(" ");
+  const fileArgs = relPathspec(wt, files);
   const msgPath = `${SCRATCH}/commit-msg-${id}.txt`;
   const message = `${subject}\n\n${body}`;
   const prompt = `${mechanicalPreamble("COMMITTER")} Do exactly these steps and nothing else — do not edit files, do not push, do not stage anything beyond the listed files.
@@ -605,7 +724,7 @@ ${message}
   return agent(prompt, {
     label: `police-commit:${id}`,
     phase: "Tracks",
-    model,
+    model: mechModel,
     schema: {
       type: "object",
       additionalProperties: false,
@@ -635,6 +754,8 @@ const trackThunk = {
         base: mergeBase,
         skillDir: CODEX_SKILLDIR,
         commit,
+        model, // claude-author rounds: deep reasoning
+        mechModel, // codex runner + per-round commit: mechanical
       },
     )
       .then((r) => ({ track: "codex", ...r }))
@@ -646,7 +767,14 @@ const trackThunk = {
   lens: () =>
     workflow(
       { scriptPath: LENS_SCRIPT },
-      { repoPath: wtDir("lens"), base: mergeBase, rationale, model, commit },
+      {
+        repoPath: wtDir("lens"),
+        base: mergeBase,
+        rationale,
+        model,
+        mechModel,
+        commit,
+      },
     )
       .then((r) => ({ track: "lens", ...r }))
       .catch((e) => ({
@@ -774,7 +902,7 @@ ${rounds}`;
 
 function lensComment(t) {
   if (!t || t.status === "track-error")
-    return `## ⚖️ Lowy ⇄ Hickey lens debate\n\n**Track error:** ${esc(t?.error) || "did not run"}.`;
+    return `## [⚖️ Lowy ⇄ Hickey lens debate](https://kolu.dev/blog/hickey-lowy/)\n\n**Track error:** ${esc(t?.error) || "did not run"}.`;
   const appliedFor = (id) => (t.applied || []).find((x) => x.id === id)?.commit;
   const rows = (t.settled || [])
     .map(
@@ -788,7 +916,7 @@ function lensComment(t) {
         .map((u) => `- ${esc(u.title)} (${esc(u.location)})`)
         .join("\n")
     : "";
-  return `## ⚖️ Lowy ⇄ Hickey lens debate
+  return `## [⚖️ Lowy ⇄ Hickey lens debate](https://kolu.dev/blog/hickey-lowy/)
 
 **Outcome:** \`${t.status}\` after ${t.rounds || 0} round(s). Independent review: ${
     Object.entries(t.reviews || {})
@@ -803,14 +931,14 @@ ${rows || "| — | — | — | — | — |"}${un}`;
 
 function policeComment(t) {
   if (!t || t.status === "track-error")
-    return `## 👮 Code-police\n\n**Track error:** ${esc(t?.error) || "did not run"}.`;
+    return `## [👮 Code-police](https://agency.srid.ca/)\n\n**Track error:** ${esc(t?.error) || "did not run"}.`;
   const rows = (t.applied || [])
     .map(
       (x) =>
         `| ${esc(x.severity)} | ${esc(x.title)} | ${esc((x.files || []).join(", "))} | ${sha9(x.commit)} |`,
     )
     .join("\n");
-  return `## 👮 Code-police
+  return `## [👮 Code-police](https://agency.srid.ca/)
 
 **${t.findings || 0} finding(s)** across the ${(t.passes || []).join(" / ") || "code-police"} passes over ${t.rounds || 1} review sweep(s)${t.status === "clean" ? " — clean diff" : ""}.${t.status === "incomplete" ? ` ⚠️ **Did not reach a clean sweep within the round cap** — the worktree may still have open issues; re-run /code-police on it.` : ""}${preservedBanner(t)}
 
@@ -963,7 +1091,7 @@ HARD RULES:
     const out = await agent(prompt, {
       label: `report:${slug}`,
       phase: "Report",
-      model,
+      model: synthModel,
       schema: {
         type: "object",
         additionalProperties: false,
@@ -1001,7 +1129,9 @@ HARD RULES:
     // Don't swallow the thrown agent error: log which slug fell back and why, so a
     // broken reporter is diagnosable instead of silently posting the baseline
     // (police police-r1-rules-1 / police-r1-fact-check-1).
-    log(`Report: ${slug} reporter agent failed (${String(e)}) — falling back to the deterministic baseline.`);
+    log(
+      `Report: ${slug} reporter agent failed (${String(e)}) — falling back to the deterministic baseline.`,
+    );
     return baseline;
   }
 }
@@ -1026,15 +1156,67 @@ async function authorBody(slug, data, baseline, guidance) {
 // decodes it to the file mechanically and never sees it as prose, so no body content
 // can be confused with a workflow instruction. The deterministic baseline is itself a
 // valid body and rides the same opaque path (it's the fallback when authoring fails).
-// UTF-8-safe base64, runtime-agnostic: Node's Buffer if present, else TextEncoder +
-// btoa (handles multi-byte chars, which a bare btoa(string) would corrupt).
+// UTF-8-safe base64. The Workflow runtime has NEITHER `Buffer` NOR `TextEncoder`
+// NOR `btoa` (the old `new TextEncoder()` fallback threw `ReferenceError:
+// TextEncoder is not defined` and crashed the whole Report phase), so the fallback
+// is a self-contained pure-JS encoder that hand-rolls UTF-8 byte emission and a
+// base64 alphabet — no runtime globals. The `Buffer` fast-path is kept behind a
+// `typeof` guard (which never throws) for runtimes that do have it; the pure path
+// is byte-for-byte identical output. UTF-8 is computed manually rather than via
+// `encodeURIComponent`, which throws `URIError` on lone surrogate halves; here, as
+// in Buffer/TextEncoder, an unpaired surrogate is replaced with U+FFFD so the
+// encoder is total over every JS string and never crashes the Report phase.
 function toBase64(s) {
-  const str = String(s)
-  if (typeof Buffer !== 'undefined') return Buffer.from(str, 'utf8').toString('base64')
-  const bytes = new TextEncoder().encode(str)
-  let bin = ''
-  for (const b of bytes) bin += String.fromCharCode(b)
-  return btoa(bin)
+  const str = String(s);
+  if (typeof Buffer !== "undefined")
+    return Buffer.from(str, "utf8").toString("base64");
+  // UTF-8 bytes as a binary string, decoding surrogate pairs and substituting
+  // U+FFFD for any unpaired surrogate (matching Buffer/TextEncoder semantics).
+  let bin = "";
+  const emit = (cp) => {
+    if (cp < 0x80) bin += String.fromCharCode(cp);
+    else if (cp < 0x800)
+      bin += String.fromCharCode(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+    else if (cp < 0x10000)
+      bin += String.fromCharCode(
+        0xe0 | (cp >> 12),
+        0x80 | ((cp >> 6) & 0x3f),
+        0x80 | (cp & 0x3f),
+      );
+    else
+      bin += String.fromCharCode(
+        0xf0 | (cp >> 18),
+        0x80 | ((cp >> 12) & 0x3f),
+        0x80 | ((cp >> 6) & 0x3f),
+        0x80 | (cp & 0x3f),
+      );
+  };
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const next = str.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        emit(0x10000 + ((c - 0xd800) << 10) + (next - 0xdc00));
+        i++;
+      } else emit(0xfffd); // unpaired high surrogate
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      emit(0xfffd); // unpaired low surrogate
+    } else emit(c);
+  }
+  const CH = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = "";
+  for (let i = 0; i < bin.length; i += 3) {
+    const n = Math.min(3, bin.length - i);
+    const a = bin.charCodeAt(i);
+    const b = n > 1 ? bin.charCodeAt(i + 1) : 0;
+    const c = n > 2 ? bin.charCodeAt(i + 2) : 0;
+    out +=
+      CH[a >> 2] +
+      CH[((a & 3) << 4) | (b >> 4)] +
+      (n > 1 ? CH[((b & 15) << 2) | (c >> 6)] : "=") +
+      (n > 2 ? CH[c & 63] : "=");
+  }
+  return out;
 }
 
 async function postComment(slug, body) {
@@ -1047,7 +1229,11 @@ async function postComment(slug, body) {
    \`printf %s '${b64}' | base64 -d > ${file}\`
 3. Post it to THIS branch's PR: \`cd ${repoPath} && gh pr comment --body-file ${file}\`. (\`gh\` resolves the PR from the current branch.) If there is NO open PR for the branch, do nothing and report "no PR".
 4. Return the comment URL gh prints, or "no PR".`;
-  return agent(prompt, { label: `comment:${slug}`, phase: "Report", model });
+  return agent(prompt, {
+    label: `comment:${slug}`,
+    phase: "Report",
+    model: mechModel,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,6 +1248,12 @@ if (!commit) {
   log(
     `--no-commit: skipping Consolidate + Cleanup. Per-track fixes are UNCOMMITTED in their worktrees; inspect them there: ${liveTracks.map((t) => `git -C ${wtDir(t)} diff`).join(" ; ")}`,
   );
+  markPhaseTokens("Tracks");
+  log(
+    `💸 token breakdown (output, by phase): ${Object.entries(tokensByPhase)
+      .map(([k, v]) => `${k}=${v.toLocaleString()}`)
+      .join("  ")}`,
+  );
   return {
     status: "no-commit",
     branchHead,
@@ -1074,6 +1266,7 @@ if (!commit) {
     dropped: [],
     note: "commit=false: each track left its fixes uncommitted in its worktree and nothing was consolidated. The worktrees are PRESERVED for inspection — see the `worktrees` field below for each track’s path — and re-run with commit enabled to consolidate.",
     worktrees: liveTracks.map((t) => ({ track: t, path: wtDir(t) })),
+    tokensByPhase,
   };
 }
 
@@ -1083,6 +1276,7 @@ if (!commit) {
 // surfaces as a cherry-pick conflict the agent reconciles by honoring BOTH
 // changes (it has both commit messages = both debates' rationale).
 // ---------------------------------------------------------------------------
+markPhaseTokens("Tracks");
 phase("Consolidate");
 
 // BRANCH-DRIFT GATE. The Tracks phase can run for many minutes; the consolidator
@@ -1102,7 +1296,7 @@ const driftCheck = await agent(
   {
     label: "consolidate:drift-check",
     phase: "Consolidate",
-    model,
+    model: mechModel,
     schema: {
       type: "object",
       additionalProperties: false,
@@ -1136,6 +1330,12 @@ if (branchMoved || branchDirty) {
       note: `NOT consolidated — ${why}, so the consolidator's "branch is at ${branchHead.slice(0, 9)}" assumption no longer holds. The track's worktree was PRESERVED at ${wtDir(t)}; after resolving the drift, replay its commits with \`git -C ${repoPath} cherry-pick $(git -C ${wtDir(t)} rev-list --reverse ${branchHead}..HEAD)\`.`,
     };
   }
+  markPhaseTokens("Consolidate");
+  log(
+    `💸 token breakdown (output, by phase): ${Object.entries(tokensByPhase)
+      .map(([k, v]) => `${k}=${v.toLocaleString()}`)
+      .join("  ")}`,
+  );
   return {
     status: "consolidation-aborted",
     branchHead,
@@ -1149,6 +1349,7 @@ if (branchMoved || branchDirty) {
     preservedTracks: liveTracks,
     note: `consolidation aborted: ${why}. Cherry-picking onto the changed base would review against an untrustworthy scope, so nothing was consolidated and every track worktree was PRESERVED (see each track's note for the recovery cherry-pick).${dirty ? `\nOffending entries:\n${dirty}` : ""}`,
     worktrees: liveTracks.map((t) => ({ track: t, path: wtDir(t) })),
+    tokensByPhase,
   };
 }
 
@@ -1167,13 +1368,17 @@ if (branchMoved || branchDirty) {
 // never torn down. A dirty/unknown track is surfaced in the result for the human.
 const cleanCheck = liveTracks.length
   ? await agent(
-      `${mechanicalPreamble("CLEANLINESS CHECKER")} For EACH track below, run \`git -C <path> status --short\` against its worktree and report whether it is fully clean. IGNORE only lines under each track's own gitignored debate scratch dirs (${trackScratchList}); ANY other staged, unstaged, or untracked entry means the track left uncommitted work — set clean=false and report those lines. Report a row for EVERY track listed, even if its worktree looks empty or the command errors (if \`git status\` fails, set clean=false and put the error in dirtyStatus). Do not edit anything. Tracks and their worktrees:
+      `${mechanicalPreamble("CLEANLINESS CHECKER")} For EACH track below, run \`git -C <path> status --short\` against its worktree and report whether it is fully clean. IGNORE only lines under each track's own gitignored debate scratch dirs (${trackScratchList}); ANY other staged, unstaged, or untracked entry means the track left uncommitted work — set clean=false and report those lines.
+
+ONE NORMALIZATION FIRST (issue #1164): \`apm.lock.yaml\` is a generated lockfile whose \`generated_at:\` timestamp \`just ai::apm\` rewrites on every run, so a track that touched APM skills (which forces a regen) routinely leaves it \` M apm.lock.yaml\` as pure no-op churn. For any track whose status shows \`apm.lock.yaml\` modified (staged OR unstaged), run \`git -C <path> diff HEAD -- apm.lock.yaml\` (the \`HEAD\` form catches a staged churn diff that a plain \`git diff\` would hide): if the ONLY added or removed lines (starting with \`+\` or \`-\`, excluding the \`+++\`/\`---\` file headers) contain \`generated_at:\` (a timestamp), run \`git -C <path> checkout HEAD -- apm.lock.yaml\` to discard that churn from BOTH the index and the working tree, and do NOT count it as dirty. If \`apm.lock.yaml\` has ANY other change (a real dependency edit), keep it as a dirty entry. This \`checkout HEAD\` of the timestamp-only lockfile is the ONLY edit you may make; do not touch anything else. Re-run \`git -C <path> status --short\` after the discard so your verdict reflects the normalized tree.
+
+Report a row for EVERY track listed, even if its worktree looks empty or the command errors (if \`git status\` fails, set clean=false and put the error in dirtyStatus). Tracks and their worktrees:
 ${liveTracks.map((t) => `  - ${t}: ${wtDir(t)}`).join("\n")}
 For each track return { track, clean (boolean), dirtyStatus (the offending \`status --short\` lines verbatim, or "" if clean) }.`,
       {
         label: "consolidate:clean-check",
         phase: "Consolidate",
-        model,
+        model: mechModel,
         schema: {
           type: "object",
           additionalProperties: false,
@@ -1283,7 +1488,7 @@ const headCheck = await agent(
   {
     label: "consolidate:precondition",
     phase: "Consolidate",
-    model,
+    model: mechModel,
     schema: {
       type: "object",
       additionalProperties: false,
@@ -1302,6 +1507,12 @@ if (currentHead !== branchHead) {
   log(
     `Consolidate: ABORTING — branch HEAD is ${sha9(currentHead) || "(unknown)"} but the tracks forked from ${sha9(branchHead)}. The branch has drifted (likely an already-consolidated re-run); cherry-picking now would double-apply every fix. Worktrees PRESERVED.`,
   );
+  markPhaseTokens("Consolidate");
+  log(
+    `💸 token breakdown (output, by phase): ${Object.entries(tokensByPhase)
+      .map(([k, v]) => `${k}=${v.toLocaleString()}`)
+      .join("  ")}`,
+  );
   return {
     status: "consolidation-precondition-failed",
     branchHead,
@@ -1314,6 +1525,7 @@ if (currentHead !== branchHead) {
     dropped: [],
     note: `consolidation precondition failed: the branch in \`${repoPath}\` is at \`${currentHead || "(unknown)"}\` but the review tracks forked from \`${branchHead}\`. The HEAD has advanced past the shared fork point — likely a re-run in an already-consolidated worktree — so cherry-picking the track commits would stack them a SECOND time and double-apply every fix. Nothing was consolidated and the per-track worktrees are PRESERVED. Reset the branch to \`${branchHead}\` (\`git -C ${repoPath} reset --hard ${branchHead}\`) or start from a clean worktree, then re-run.`,
     worktrees: liveTracks.map((t) => ({ track: t, path: wtDir(t) })),
+    tokensByPhase,
   };
 }
 
@@ -1338,7 +1550,7 @@ Do NOT push and do NOT merge — leave the consolidated commits on the local bra
 const consolidation = await agent(consolidatePrompt, {
   label: "consolidate:cherry-pick",
   phase: "Consolidate",
-  model,
+  model: synthModel,
   schema: CONSOLIDATE_SCHEMA,
 });
 const picks = consolidation?.picks ?? [];
@@ -1353,6 +1565,7 @@ log(
 // ledger. This is the review trail the whole gauntlet exists to leave; it runs
 // here (not in the caller) so it ALWAYS happens. `--no-comment` suppresses it.
 // ---------------------------------------------------------------------------
+markPhaseTokens("Consolidate");
 phase("Report");
 
 const comments = {};
@@ -1421,6 +1634,7 @@ if (postComments) {
 // never reported on, OR a crashed `track-error` track whose committed-but-
 // unreplayed fixes were deliberately excluded from consolidation. Fail closed.
 // ---------------------------------------------------------------------------
+markPhaseTokens("Report");
 phase("Cleanup");
 
 const teardownTracks = consolidateOrder;
@@ -1433,7 +1647,7 @@ if (teardownTracks.length) {
     `${mechanicalPreamble("CLEANUP RUNNER")} Remove EACH of these worktrees, then prune; ignore errors if one is already gone. Do NOT touch any other path.
 ${teardownTracks.map((t) => `  - \`git -C ${repoPath} worktree remove --force ${wtDir(t)}\``).join("\n")}
 Then: \`git -C ${repoPath} worktree prune\`. Leave the gitignored \`${SCRATCH}\` directory (it holds commit-message + comment scratch); do not delete the branch's commits. Return "done".`,
-    { label: "cleanup:worktrees", phase: "Cleanup", model },
+    { label: "cleanup:worktrees", phase: "Cleanup", model: mechModel },
   );
 } else {
   log(
@@ -1468,6 +1682,12 @@ if (incompleteTracks.length) {
     `Done: status=consolidation-incomplete — ${incompleteTracks.length} track(s) consolidated but their review did not finish (${incompleteTracks.map((t) => `${t}=${tracks[t]?.status}`).join(", ")}); re-run the gauntlet (or that track) before treating the change as fully reviewed.`,
   );
 }
+markPhaseTokens("Cleanup");
+log(
+  `💸 token breakdown (output, by phase): ${Object.entries(tokensByPhase)
+    .map(([k, v]) => `${k}=${v.toLocaleString()}`)
+    .join("  ")}`,
+);
 return {
   status,
   branchHead,
@@ -1478,6 +1698,13 @@ return {
   consolidation,
   reconciled,
   dropped,
+  // OUTPUT tokens (from budget.spent()) emitted on the shared turn counter during
+  // each phase's wall-clock window — NOT isolated to that phase's agents. Concurrent
+  // track and child-workflow output lands in whichever window is open, so this is
+  // per-mark-interval spend, not isolated per-phase cost; don't read Tracks vs Report
+  // as a clean comparison. Still useful for tuning the model tiers and spotting where
+  // the bulk of the tokens go.
+  tokensByPhase,
   // Tracks whose fixes were NOT consolidated onto the branch (preserved worktrees);
   // empty in the common case. Non-empty ⇒ status is 'consolidation-incomplete'.
   preservedTracks,
