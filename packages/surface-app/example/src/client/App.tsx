@@ -9,11 +9,12 @@
 import {
   type ConnectionStatus,
   SurfaceAppProvider,
+  surfaceAppProbe,
   useSurfaceApp,
 } from "@kolu/surface-app/solid";
 import { createSignal, Show } from "solid-js";
 import { buildInfo, type ExampleBuildInfo } from "../common/surface";
-import { app, ws } from "./wire";
+import { clients, ws } from "./wire";
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   live: "live",
@@ -24,9 +25,10 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 
 function Shell() {
   const pwa = useSurfaceApp<ExampleBuildInfo>();
-  // app-specific cell — composed alongside surface-app's buildInfo, same wire,
-  // same client. The server pushes it live; Solid re-renders on each delta.
-  const stats = app.cells.serverStats.use({
+  // app-specific cell — a SIBLING surface (`demo`) over the same wire as
+  // surface-app's buildInfo. The server pushes it live; Solid re-renders on
+  // each delta.
+  const stats = clients.demo.cells.serverStats.use({
     authority: "server",
     onError: (err) => console.error("serverStats subscription error:", err),
   });
@@ -113,10 +115,11 @@ function Shell() {
           </div>
           <p class="muted small">
             This panel reads an <b>app-specific</b> <code>serverStats</code>{" "}
-            cell (the server pushes it live); the rail above reads surface-app's{" "}
-            <code>buildInfo</code>. Both compose into one{" "}
-            <code>defineSurface</code>, over one wire. Open a second tab — the{" "}
-            <b>clients</b> count rises in both.
+            cell on the sibling <code>demo</code> surface (the server pushes it
+            live); the rail above reads surface-app's <code>buildInfo</code> on
+            the sibling <code>surfaceApp</code> surface. Two independent
+            surfaces, one wire. Open a second tab — the <b>clients</b> count
+            rises in both.
           </p>
         </section>
 
@@ -135,11 +138,17 @@ function Shell() {
 export default function App() {
   return (
     <SurfaceAppProvider<ExampleBuildInfo>
-      controlPlane={app}
+      controlPlane={clients.surfaceApp}
       clientCommit={__SURFACE_APP_COMMIT__}
       buildInfo={buildInfo}
       ws={ws}
-      probe={() => app.rpc.surface.surfaceApp.info({})}
+      // The probe rides the SCOPED `surfaceApp` client: its `.rpc` is the
+      // `{ surface: link.surface.surfaceApp }` slice, so `surface.identity.info`
+      // resolves at the wire path `/surface/surfaceApp/identity/info`. The key
+      // is consumed by the scope and does NOT reappear in the path. `.rpc` is
+      // typed `unknown` (the dynamic combined link can't be expanded per-key),
+      // so the caller pins the probe call shape here.
+      probe={() => surfaceAppProbe(clients.surfaceApp)}
       // Turnkey `{ ws, probe }` mode: `onError` covers BOTH the buildInfo
       // stream and a failed identity probe (a broken probe would otherwise
       // leave the connection status stuck silently).

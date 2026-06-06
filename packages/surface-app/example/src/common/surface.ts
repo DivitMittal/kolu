@@ -1,14 +1,15 @@
 /**
- * The app's reactive surface — surface-app's build-identity cell composed with
- * the app's OWN live cell. `...buildInfo.cells` is surface-app-specific (the
- * shell's build identity); `serverStats` is app-specific (live server state).
- * One `defineSurface`, both kinds of state, one wire — this is the composition
- * the example exists to show.
+ * The app's reactive surfaces — surface-app's build-identity surface served as a
+ * SIBLING of the app's OWN live surface, multiplexed over one transport. They
+ * are NOT merged: surface-app is already a complete surface (its `buildInfo`
+ * cell + `identity.info` restart probe), so the app serves it under the
+ * `surfaceApp` key alongside its own `demo` surface (the live `serverStats`
+ * cell). One transport, two independent surfaces, each namespaced by its key —
+ * this is the composition the example exists to show.
  */
 
-import { defineSurface } from "@kolu/surface/define";
+import { composeSurfaceContracts, defineSurface } from "@kolu/surface/define";
 import {
-  composeSurfaces,
   defineBuildInfo,
   surfaceAppSurfaceWith,
 } from "@kolu/surface-app/surface";
@@ -43,19 +44,28 @@ export const EMPTY_STATS: ServerStats = {
   connections: 0,
 };
 
-// One surface, composed in a single call: surface-app's fragment (the shell's
-// build identity `buildInfo` cell — extended here with `bootId` — plus the
-// `surface.surfaceApp.info` restart probe) merged with the app's OWN spec
-// (`serverStats`). No separate `...buildInfo.cells` + `...serverIdentity.procedures`
-// spreads — `surfaceAppSurfaceWith(buildInfo)` carries both halves.
-export const surface = defineSurface(
-  composeSurfaces(surfaceAppSurfaceWith(buildInfo), {
-    cells: {
-      serverStats: {
-        // app-specific — live server stats
-        schema: ServerStatsSchema,
-        default: EMPTY_STATS,
-      },
-    },
-  }),
-);
+/** surface-app's standalone surface, extended with the example's `bootId` axis.
+ *  Served as a sibling under the `surfaceApp` key — its `buildInfo` cell drives
+ *  the rail and its `identity.info` probe drives the connection lifecycle. */
+export const surfaceAppSurface = surfaceAppSurfaceWith(buildInfo);
+
+/** The app's OWN surface — just the live `serverStats` cell. A complete surface
+ *  in its own right, served as a sibling under the `demo` key. */
+export const demoSurface = defineSurface({
+  cells: {
+    serverStats: { schema: ServerStatsSchema, default: EMPTY_STATS },
+  },
+});
+
+/** The two siblings, keyed: `surfaceApp` (the @kolu/surface-app surface) and
+ *  `demo` (this example's own). Both server (`implementSurfaces`) and client
+ *  (`surfaceClients`) iterate this same map, so the keys can't drift. */
+export const surfaces = {
+  surfaceApp: surfaceAppSurface,
+  demo: demoSurface,
+} as const;
+
+/** The combined wire contract — `{ surface: { surfaceApp, demo } }`. The server
+ *  wraps `implementSurfaces`' router with `implement(contract).router(...)`; the
+ *  client types its `websocketLink` off `typeof contract`. */
+export const contract = composeSurfaceContracts(surfaces);

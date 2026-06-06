@@ -89,7 +89,7 @@ export function createServerLifecycle<
 >(opts: {
   ws: WsLike;
   probe: () => Promise<P>;
-  /** Surface a failed identity probe. A broken `surfaceApp.info` otherwise leaves
+  /** Surface a failed identity probe. A broken `identity.info` otherwise leaves
    *  the UI stuck in its prior state with no diagnostic — pass this to log it.
    *  The next `open` still retries; this is observation, not a transition. */
   onProbeError?: (err: unknown) => void;
@@ -156,6 +156,23 @@ export function createServerLifecycle<
     },
     dispose,
   };
+}
+
+/** surface-app's own `identity.info` restart probe, as a typed call on a surface
+ *  client's `.rpc`. A client whose surface registers surface-app under a key
+ *  exposes the probe at the SCOPED wire path `surface.identity.info` (the key is
+ *  consumed by the scope and does not reappear). `.rpc` is typed `unknown` (the
+ *  dynamic combined link can't be expanded per-key — see `SurfaceClient.rpc`), so
+ *  the structural cast lives HERE once, beside the surface that defines the probe,
+ *  instead of being hand-pinned at every `createServerLifecycle({ probe })` site. */
+export function surfaceAppProbe(client: {
+  rpc: unknown;
+}): Promise<ServerProbe> {
+  return (
+    client.rpc as {
+      surface: { identity: { info: (input: object) => Promise<ServerProbe> } };
+    }
+  ).surface.identity.info({});
 }
 
 /** The environment facts that decide PWA install state — passed in so the
@@ -346,7 +363,7 @@ export function SurfaceAppProvider<
   const server = () => cell.value();
   // The connection status. Prefer a caller-supplied `status` accessor (the app
   // already derived the lifecycle once — read it, don't re-derive it: a second
-  // `createServerLifecycle` would double the `surfaceApp.info` probe per reconnect
+  // `createServerLifecycle` would double the `identity.info` probe per reconnect
   // and let two observers disagree). Otherwise derive it here from `ws`+`probe`
   // (the turnkey shape), or stay permanently `"live"` when neither is given.
   const status: Accessor<ConnectionStatus> = props.status
