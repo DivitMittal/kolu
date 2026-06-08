@@ -1,6 +1,11 @@
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
-import { createPtyHost, getScreenText, type PtyHost } from "./ptyHost.ts";
+import {
+  createPtyHost,
+  getScreenText,
+  HEADLESS_TERM_ID,
+  type PtyHost,
+} from "./ptyHost.ts";
 
 // @xterm packages ship CJS only — same interop as ptyHost.ts.
 const require = createRequire(import.meta.url);
@@ -257,10 +262,8 @@ describe("createPtyHost", () => {
       env: shellEnv,
       cwd: "/tmp",
     });
-    await waitFor(() =>
-      host.getScreenText(id).includes("xterm-headless(kolu)"),
-    );
-    expect(host.getScreenText(id)).toContain("xterm-headless(kolu)");
+    await waitFor(() => host.getScreenText(id).includes(HEADLESS_TERM_ID));
+    expect(host.getScreenText(id)).toContain(HEADLESS_TERM_ID);
   });
 
   it("consumes XTVERSION with Ps > 0 without writing a reply", async () => {
@@ -276,7 +279,7 @@ describe("createPtyHost", () => {
       cwd: "/tmp",
     });
     await waitFor(() => host.getScreenText(id).includes("SENTINEL_DONE"));
-    expect(host.getScreenText(id)).not.toContain("xterm-headless");
+    expect(host.getScreenText(id)).not.toContain(HEADLESS_TERM_ID);
   });
 
   it("routes write() to the child and lists live PTYs", async () => {

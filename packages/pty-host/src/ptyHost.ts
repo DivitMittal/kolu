@@ -47,6 +47,12 @@ const { Terminal } =
 const { SerializeAddon } =
   require("@xterm/addon-serialize") as typeof import("@xterm/addon-serialize");
 
+/** The terminal-identity string the headless PTY reports in its XTVERSION
+ *  (CSI > q) reply. The DCS reply is built from this — see the XTVERSION
+ *  handler in {@link createPtyHost} — so the byte layout lives in one place.
+ *  Exported so tests assert against the same source rather than a copy. */
+export const HEADLESS_TERM_ID = "xterm-headless(kolu)";
+
 /** Opaque PTY identifier. */
 export type PtyId = string;
 
@@ -494,7 +500,7 @@ export function createPtyHost(opts: PtyHostOptions): PtyHost {
           // sequence so it never leaks downstream as a no-op CSI.
           const ps = params[0];
           if (typeof ps === "number" && ps > 0) return true;
-          proc.write("\x1bP>|xterm-headless(kolu)\x1b\\");
+          proc.write(`\x1bP>|${HEADLESS_TERM_ID}\x1b\\`);
           return true;
         },
       ),
