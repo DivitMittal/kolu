@@ -15,6 +15,18 @@
  * any future coalescing we still anchor every predicate to the full payload
  * (`^…$`) rather than matching a substring — a chunk that merely *contains* a
  * response-shaped sequence is left untouched and forwarded to the PTY.
+ *
+ * INVARIANT (client-suppressed ⇒ server-answered): every sequence class this
+ * module suppresses MUST be answered by the headless server, or a TUI that
+ * blocks on the query hangs forever (we drop the browser's reply and nothing
+ * else replies). This is the reciprocal of the forwarding decision in
+ * `pty-host/src/ptyHost.ts`: the headless `onData` forwarder relays the
+ * server's own query answers, and its XTVERSION handler exists precisely
+ * because the headless xterm has no built-in answerer for that one class. The
+ * converse also holds — OSC 52 (clipboard) is NOT in the headless-answered set
+ * (the headless terminal has no clipboard provider), so it is deliberately left
+ * forwarded here rather than suppressed. Keep the two sides in step: before
+ * suppressing a new class here, confirm the headless server answers it.
  */
 
 // CSI responses, anchored to the whole payload:
