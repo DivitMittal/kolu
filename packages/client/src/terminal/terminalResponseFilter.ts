@@ -25,8 +25,18 @@
 //   size     CSI Ps ; Ps ; Ps t     window/text-area reports
 const CSI_RESPONSE = /^\x1b\[[?>=]?[\d;]*(?:\$y|[cnRt])$/;
 
-// OSC responses: ESC ] … (BEL | ST). Colour/clipboard query answers.
-const OSC_RESPONSE = /^\x1b\][\s\S]*?(?:\x07|\x1b\\)$/;
+// OSC *colour* responses, anchored to the colour report classes the headless
+// server actually answers — NOT every OSC packet:
+//   OSC 4 ; index ; rgb:… (BEL|ST)   palette colour report
+//   OSC 10–19 ; rgb:… (BEL|ST)       dynamic colours (fg/bg/cursor/…)
+// These are the only OSC replies the browser xterm synthesises that duplicate a
+// headless-side answer, so they're the garbage we drop. Critically this does
+// NOT match OSC 52 (clipboard): with `ClipboardAddon`/`SafeClipboardProvider`
+// loaded, the OSC 52 *read* reply (`OSC 52 ; c ; <base64> …`) is generated
+// only in the browser from the real system clipboard — the headless terminal
+// has no clipboard provider and never answers it — so that reply must reach the
+// PTY and is deliberately left forwarded.
+const OSC_COLOUR_RESPONSE = /^\x1b\](?:4|1[0-9]);[\s\S]*?(?:\x07|\x1b\\)$/;
 
 // DCS responses, anchored to the whole payload and to the response introducers
 // xterm actually emits — NOT every `ESC P … ST` packet:
@@ -40,7 +50,7 @@ const DCS_RESPONSE = /^\x1bP(?:>\||[01]\$r)[\s\S]*?\x1b\\$/;
 export function isTerminalQueryResponse(data: string): boolean {
   return (
     CSI_RESPONSE.test(data) ||
-    OSC_RESPONSE.test(data) ||
+    OSC_COLOUR_RESPONSE.test(data) ||
     DCS_RESPONSE.test(data)
   );
 }

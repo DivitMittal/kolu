@@ -245,6 +245,40 @@ describe("createPtyHost", () => {
     expect(await firstEvent(host.subscribeTitle(id))).toBe("my title");
   });
 
+  it("answers XTVERSION (CSI > q) so a querying child is unblocked", async () => {
+    host = createPtyHost({ log: silentLog });
+    // Emit the XTVERSION query (CSI > 0 q) and idle. The headless handler writes
+    // the DCS reply (`ESC P > | xterm-headless(kolu) ESC \\`) to the child's
+    // PTY; the cooked TTY echoes that input straight back into the mirror, so
+    // the model string appearing on screen proves the child received the reply.
+    const { id } = host.spawn({
+      shell: "/bin/sh",
+      args: ["-c", "printf '\\033[>0q'; sleep 1"],
+      env: shellEnv,
+      cwd: "/tmp",
+    });
+    await waitFor(() =>
+      host.getScreenText(id).includes("xterm-headless(kolu)"),
+    );
+    expect(host.getScreenText(id)).toContain("xterm-headless(kolu)");
+  });
+
+  it("consumes XTVERSION with Ps > 0 without writing a reply", async () => {
+    host = createPtyHost({ log: silentLog });
+    // CSI > 1 q is not a version request; the handler consumes it but must NOT
+    // synthesize a DCS reply. A SENTINEL printed after the query gives the
+    // mirror something to settle on, after which the model string must be
+    // absent — proving no reply was written (and thus nothing echoed back).
+    const { id } = host.spawn({
+      shell: "/bin/sh",
+      args: ["-c", "printf '\\033[>1qSENTINEL_DONE'; sleep 1"],
+      env: shellEnv,
+      cwd: "/tmp",
+    });
+    await waitFor(() => host.getScreenText(id).includes("SENTINEL_DONE"));
+    expect(host.getScreenText(id)).not.toContain("xterm-headless");
+  });
+
   it("routes write() to the child and lists live PTYs", async () => {
     host = createPtyHost({ log: silentLog });
     // A long-lived shell reading commands from its stdin (the PTY): a
